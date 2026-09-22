@@ -1,0 +1,77 @@
+[project]
+name = "hypermind-track-b"
+version = "0.1.0"
+description = "JARVIS / Hypermind Track B — configurable, self-hostable personal-agent runtime (foundation branch)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.6,<3.0",
+    "pydantic-settings>=2.2",
+    "sqlalchemy>=2.0.29",
+    "aiosqlite>=0.20",
+    "alembic>=1.13",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "import-linter>=2.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["server*", "shared*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.importlinter]
+root_packages = ["server", "shared"]
+
+# Encodes 16_REPOSITORY_MODULE_BOUNDARIES.md §2 as an enforceable dependency
+# graph: a lower layer never imports an upper layer; sibling modules within
+# the same layer (the "|" delimiter = independent) never import each other
+# either — REPO-T4/T7.
+[[tool.importlinter.contracts]]
+name = "Track B server layering (16 §2)"
+type = "layers"
+containers = ["server"]
+layers = [
+    "dashboard",
+    "agent | modeltools | tools | memory | vault | scheduler | voice",
+    "gateway | auth | graph | capabilities | security | net | fs",
+    "config",
+]
+
+# 16 §3 (the most important rule): server.agent must never import
+# server.secrets' resolution — REPO-T1, SECRET-002, INV-6.
+[[tool.importlinter.contracts]]
+name = "Agent never imports raw secrets resolution (16 §3, REPO-T1)"
+type = "forbidden"
+source_modules = ["server.agent"]
+forbidden_modules = ["server.secrets"]
+
+# 16 §5: dashboard is read-only observability — it cannot import secret
+# resolution (DASH-002).
+[[tool.importlinter.contracts]]
+name = "Dashboard cannot import secrets (16 §5, DASH-002, REPO-T6)"
+type = "forbidden"
+source_modules = ["server.dashboard"]
+forbidden_modules = ["server.secrets"]
+
+# 16 §4: shared/schemas is the only thing both sides import — it must
+# never import server-side code (that would invert the dependency
+# direction the whole module-boundary model relies on).
+[[tool.importlinter.contracts]]
+name = "shared/schemas never imports server (16 §1/§4, REPO-T3)"
+type = "forbidden"
+source_modules = ["shared"]
+forbidden_modules = ["server"]
