@@ -1,12 +1,22 @@
-"""memory — placeholder package (foundation branch).
+"""Memory / context — 11_MEMORY_CONTEXT_VISIBILITY.md.
 
-Not implemented in the `foundation` branch. This package exists only so that:
-  1. the repository layout matches 00_CANONICAL_PRD.md §45 / 16_REPOSITORY_MODULE_BOUNDARIES.md §1, and
-  2. module-boundary (import-linter) contracts about this package are meaningful
-     for later branches (e.g. "server.agent must never import server.secrets").
+This branch implements the **authorized hydration boundary** the runtime calls
+(11 §3, GRAPH-004), not the Mem0 store itself. Mem0 lives in its own vector
+store (`hypermind_memories`, STORE-001b) and is `11`'s branch; it must never be
+folded into the relational database (VAULT-003/MEM-001), so this package defines
+the `MemoryStore` port that branch implements and applies the visibility rule
+around it.
 
-Do not add implementation logic here from the `foundation` branch. The subsystem
-document that owns this package's real implementation is named below.
-
-Owning subsystem doc: 11_MEMORY_CONTEXT_VISIBILITY.md
+Until a store is configured, hydration degrades explicitly — FAIL-008,
+"long-term memory temporarily unavailable" — and the task proceeds on session
+context. That is `P3`: absent, not erroring.
 """
+
+from server.memory.hydration import (
+    AuthorizedContextHydrator,
+    HydratedContext,
+    MemoryCandidate,
+    MemoryStore,
+)
+
+__all__ = ["AuthorizedContextHydrator", "HydratedContext", "MemoryCandidate", "MemoryStore"]

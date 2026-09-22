@@ -88,6 +88,12 @@ _RESOURCE_OPERATION_TIERS: dict[tuple[ResourceType, Operation], RiskCategory] = 
     # all; it is never an automatic act.
     (ResourceType.CAPABILITY_GRANT, Operation.CREATE): RiskCategory.CONSEQUENTIAL,
     (ResourceType.CAPABILITY_GRANT, Operation.DELETE): RiskCategory.CONSEQUENTIAL,
+    # A resource-less tool operation (`TOOL_ACTION`, always `CREATE`) has no
+    # resource axis of its own, so the lowest tier here lets the capability
+    # operation's own tier govern alone under the max() composition below — a
+    # `consequential` send stays consequential, a `low_read` query stays
+    # automatic. `[PROPOSED]`, docs/DECISION_REGISTER.md §2.
+    (ResourceType.TOOL_ACTION, Operation.CREATE): RiskCategory.LOW_READ,
 }
 
 

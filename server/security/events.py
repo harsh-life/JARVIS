@@ -76,6 +76,22 @@ class AuditAction(str, Enum):
     SUPERUSER_AUTHENTICATED = "superuser.authenticated"
     SUPERUSER_REJECTED = "superuser.rejected"
 
+    # ── agent runtime (05) ──────────────────────────────────────────────
+    AGENT_TASK_SUBMITTED = "agent.task.submitted"
+    AGENT_TASK_PAUSED = "agent.task.paused"
+    AGENT_TASK_COMPLETED = "agent.task.completed"
+    AGENT_TASK_FAILED = "agent.task.failed"
+    AGENT_TASK_CANCELLED = "agent.task.cancelled"
+    AGENT_PROPOSAL_REJECTED = "agent.proposal.rejected"
+    AGENT_TOOL_EXECUTED = "agent.tool.executed"
+    AGENT_TOOL_FAILED = "agent.tool.failed"
+    CAPABILITY_ACTIVATED = "capability.activated"
+    CAPABILITY_ACTIVATION_REFUSED = "capability.activation.refused"
+    CAPABILITY_DEACTIVATED = "capability.deactivated"
+
+    # ── usage / rate / budget (13) ──────────────────────────────────────
+    USAGE_LIMIT_EXCEEDED = "usage.limit.exceeded"
+
 
 # 12 §5 emits through a port that speaks plain strings (server/secrets is
 # below server/security and cannot import this enum). This is the one

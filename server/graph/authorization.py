@@ -35,6 +35,7 @@ from typing import Any, Mapping
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.graph.predicate import readable  # re-exported: the one RAUTH-004 predicate
 from server.graph.ports import (
     CapabilityChecker,
     ConfirmationVerifier,
@@ -60,45 +61,9 @@ from shared.schemas.enums import (
     MembershipRole,
     PermissionDecisionValue,
     RiskCategory,
-    Visibility,
 )
 
 logger = logging.getLogger("hypermind.graph.authorization")
-
-
-# ── the read predicate (RAUTH-004) ──────────────────────────────────────────
-
-
-def readable(
-    *, user_id: uuid.UUID, resource: ResourceDescriptor, is_active_member_of_resource_graph: bool
-) -> bool:
-    """RAUTH-004's read predicate, verbatim and in one place.
-
-        readable(user, resource) :=
-            (resource.visibility == graph AND active_member(user, resource.graph_id))
-            OR resource.owner_user_id == user
-
-    `[LOCKED]` (RAUTH-002) "No other path to readability exists." In particular
-    `graph_id` alone never authorizes: the membership flag passed in is only
-    consulted when `visibility` is `graph`.
-
-    Note the membership argument is about **`resource.graph_id`**, not about the
-    graph the request nominated. Those differ whenever a request omits its graph
-    context or names a different graph, and checking the request's graph here
-    would let a member of graph X read a graph-visible resource scoped to graph
-    Y. The caller resolves membership against the resource's own graph
-    (`_is_member_of_resource_graph` below).
-    """
-
-    if resource.owner_user_id == user_id:
-        return True
-    if (
-        resource.visibility is Visibility.GRAPH
-        and resource.graph_id is not None
-        and is_active_member_of_resource_graph
-    ):
-        return True
-    return False
 
 
 # ── requests and outcomes (04 §1) ───────────────────────────────────────────

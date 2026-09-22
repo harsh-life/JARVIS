@@ -1,12 +1,31 @@
-"""agent — placeholder package (foundation branch).
+"""The agent runtime — 05_AGENT_RUNTIME.md.
 
-Not implemented in the `foundation` branch. This package exists only so that:
-  1. the repository layout matches 00_CANONICAL_PRD.md §45 / 16_REPOSITORY_MODULE_BOUNDARIES.md §1, and
-  2. module-boundary (import-linter) contracts about this package are meaningful
-     for later branches (e.g. "server.agent must never import server.secrets").
+The model proposes; deterministic infrastructure decides and executes; the human
+confirms where the risk model requires it (P1).
 
-Do not add implementation logic here from the `foundation` branch. The subsystem
-document that owns this package's real implementation is named below.
-
-Owning subsystem doc: 05_AGENT_RUNTIME.md
+`server.agent` imports no authorization, capability, or secrets module (CI
+contracts in pyproject). Everything it needs from the Security Core arrives
+through the Protocols in `ports.py`, satisfied at the composition root
+(`server/composition/`) by the existing `AuthorizationEngine`,
+`ConfirmationService`, `CapabilityGrantService`, and `AuditLogger`.
 """
+
+from server.agent.bounds import ConcurrencyGate, ConcurrencyLimits, RuntimeBounds
+from server.agent.runtime import (
+    AgentRuntime,
+    ConfirmationMismatch,
+    StepUpNeeded,
+    TaskNotAwaiting,
+    TaskNotFound,
+)
+
+__all__ = [
+    "AgentRuntime",
+    "ConcurrencyGate",
+    "ConcurrencyLimits",
+    "ConfirmationMismatch",
+    "RuntimeBounds",
+    "StepUpNeeded",
+    "TaskNotAwaiting",
+    "TaskNotFound",
+]

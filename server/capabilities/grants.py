@@ -237,6 +237,15 @@ def _candidate_principal_ids(context: CapabilityCheckContext) -> set[uuid.UUID]:
     }
     if context.graph_id is not None:
         ids.add(context.graph_id)
+    # A TASK-scoped grant is keyed on the task id (01 §7.1). Without this, a
+    # task grant could never be a candidate and the scope would be unusable — the
+    # runtime's on-demand activation depends on it. A task id that is not a UUID
+    # contributes nothing rather than widening the query.
+    if context.task_id:
+        try:
+            ids.add(uuid.UUID(context.task_id))
+        except ValueError:
+            pass
     return ids
 
 
@@ -257,7 +266,14 @@ def _scope_matches(row: CapabilityGrant, context: CapabilityCheckContext) -> boo
         # a graph, so using it outside would widen it.
         return context.graph_id is not None and row.principal_id == context.graph_id
     if scope is CapabilityScopeType.TASK:
-        return context.task_id is not None and str(row.principal_id) == context.task_id
+        # Bound to the task *and* to the user who consented to it. A task id is
+        # server-generated, but the grant must not be usable by another principal
+        # even if one ever presented the same id: the consent was that user's.
+        return (
+            context.task_id is not None
+            and str(row.principal_id) == context.task_id
+            and row.granted_by == context.principal.user_id
+        )
 
     # Unrecognised scope type: deny (FAIL-CORE-003). Reached only if the enum
     # grows without this function being updated, which is exactly when a
