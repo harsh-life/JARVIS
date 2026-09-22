@@ -1,0 +1,78 @@
+# CI — the mechanical half of 16 §6 and 17 §2.
+#
+# 16 §6 `[LOCKED]`: "a boundary violation (e.g. `agent`->raw-`secrets`, or a
+# server key in `android/`) is a **CI failure**, not a review nicety — because
+# under heavy code generation, 'the reviewer will catch it' is not a reliable
+# control."
+#
+# 17 §2 lists REPO-T7 ("the dependency rules are enforced in CI, and a
+# deliberate violation fails the build") in the release-blocking set. A test that
+# runs `lint-imports` only satisfies that hook if something runs the test on
+# every push — which is what this workflow is for.
+#
+# Deliberately minimal: it runs exactly the three checks a contributor runs
+# locally (docs/RUNNING_SECURITY_CORE.md §10), no more. Nothing here needs a
+# `config.yaml`, a KEK, or any credential: the suites build their own throwaway
+# config and generate a fresh key per test (17 §6 — "No fixture contains a real
+# secret"), so CI requires no secrets at all. That is itself a property worth
+# keeping: a CI job that needed the owner's credentials would contradict
+# HOST-001.
+
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # pyproject requires >=3.11; pin the floor so a syntax or typing
+          # feature newer than the declared minimum fails here rather than on a
+          # self-hoster's machine (HOST-001 — a fresh clone must run).
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Module boundary contracts (16 §8 — REPO-T1/T4/T6/T7)
+        # First, and its own step: a boundary violation should be legible as
+        # exactly that in the checks list, not buried in a test summary.
+        run: lint-imports --config pyproject.toml
+
+      - name: Tests
+        run: python -m pytest tests/ -q
+
+      - name: Migrations round-trip
+        # 15 §3 / STORE-004: migrations must be reproducible, and `downgrade
+        # base` must actually work — a one-way migration is discovered at the
+        # worst possible time.
+        env:
+          HYPERMIND_DATABASE_URL: sqlite+aiosqlite:///./ci-check.db
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: BR-T2 blast-radius measurement (14 §4)
+        # Re-measured on every run, with the table in the log. 14 §4's
+        # deliverable is the measurement, so it is recorded as CI evidence
+        # rather than as a claim in a document nobody re-runs.
+        run: python -m pytest tests/security_core/test_od_a1_br_t2.py -q -s
