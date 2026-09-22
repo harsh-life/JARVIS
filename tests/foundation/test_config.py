@@ -67,7 +67,7 @@ def test_literal_secret_rejected_at_load(tmp_path: Path) -> None:
             agent:
               provider: "openai"
               model: "gpt-4"
-              secret_ref: "sk-thisIsALiteralLookingApiKeyNotAReference"
+              secret_ref: "NOT-A-SECRET-REF-literal-value-for-CFG-T6-do-not-use"
             """
         )
     )
