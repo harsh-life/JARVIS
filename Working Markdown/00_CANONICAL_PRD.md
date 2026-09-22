@@ -536,11 +536,13 @@ hypermind-track-b/
 
 `[OPEN — OWNER unless noted]` Every unresolved decision flagged across `01`–`17`/`26`, consolidated. Each remains open **here** exactly as its owning subsystem doc states it — this document does not resolve any of them; it only makes them discoverable in one place.
 
+**Owner decisions of 2026-09-22** (OD-A1, OD-D1, OD-E1, OD-TOOL-1, and the owner-named OD-F1 confirmation policy) are recorded, with their exact scope and limits, in `docs/DECISION_REGISTER.md`; the affected rows below are marked. Those are the owner's decisions, recorded here — not resolutions made by an implementer.
+
 | ID | Question | Owning doc | Status / recommendation |
 |---|---|---|---|
-| **OD-A1** | Cross-user isolation under single-laptop application RCE | `01`,`03`,`04`,`09`,`10`,`11`,`12`,`14`,`17` | **The primary open gate** — §31/§38; rec (a) accept-for-pilot-with-disposable-data + hard gate on real data |
-| OD-D1 | Device-credential / SecretStore key-custody crypto specifics | `01`,`03`,`12` | Rec: asymmetric device credential + AEAD + external KEK (`12` §3) — primitives still `[IMPL]` |
-| OD-E1 | Graph roles beyond owner/member | `01`,`04` | `[FUTURE]`; enum extends without schema break |
+| **OD-A1** | Cross-user isolation under single-laptop application RCE | `01`,`03`,`04`,`09`,`10`,`11`,`12`,`14`,`17` | **RESOLVED FOR PILOT — ACCEPTED RESIDUAL** (owner, option (a)). Not an isolation claim (INV-20 holds); cross-user logical isolation stays mandatory; (b)/(c) are future hardening. Measurement: `docs/OD_A1_BR_T2.md` |
+| OD-D1 | Device-credential / SecretStore key-custody crypto specifics | `01`,`03`,`12` | **RESOLVED** (owner) — asymmetric device credential + AES-256-GCM AEAD + external KEK, as implemented against `12` |
+| OD-E1 | Graph roles beyond owner/member | `01`,`04` | **RESOLVED FOR MVP** (owner) — `owner`/`member` only; system admin is the separate superuser principal; richer roles `[FUTURE]` |
 | OD-02 | Exact agent-runtime bound numeric values | `05` | `[IMPL]`; existence of every bound is locked |
 | OD-AUTH-1 | Cross-provider account linking (Google + future providers) | `03` | `[FUTURE]`, non-blocking |
 | OD-AUTH-2 | Access-token form (JWT vs opaque) | `03` | Rec opaque, for instant revocation at pilot scale |
@@ -553,7 +555,7 @@ hypermind-track-b/
 | OD-RT-3 | AgentConfiguration resolution precedence (user vs graph scope) | `01`,`05` | Must be deterministic + documented before multi-scope configs ship |
 | OD-MT-1 | Default local model choice | `06` | Rec small Qwen-class |
 | OD-MT-2 | Whether any task justifies a cloud primary by default | `06` | Default local |
-| OD-TOOL-1 | Exact risk-tier assignment per operation | `07` | `[IMPL]`; owner signs the tier table |
+| OD-TOOL-1 | Exact risk-tier assignment per operation | `07` | **RATIFIED AT THE SEMANTIC-CAPABILITY LEVEL** (owner); concrete names/tiers `[PROPOSED]` in `docs/CAPABILITY_MATRIX.md`, owner signs the tier table |
 | OD-TOOL-2 | Provisional/untrusted-tool enablement gate specifics | `07` | `[IMPL]` |
 | OD-TOOL-3 | Which MCP servers (if any) are enabled at pilot | `07` | Default none |
 | OD-AND-1 | Full capability→operation→primitive table | `08` | `[IMPL]`; owner signs |
