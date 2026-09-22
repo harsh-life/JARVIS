@@ -21,3 +21,21 @@ contract didn't declare. See `contracts.py` for the boundary types.
 """
 
 from __future__ import annotations
+
+from shared.schemas.execution import (
+    EgressPolicy,
+    ExecutionError,
+    ExecutionErrorCode,
+    ExecutionRequest,
+    ExecutionResult,
+    ResourceScope,
+)
+
+__all__ = [
+    "EgressPolicy",
+    "ExecutionError",
+    "ExecutionErrorCode",
+    "ExecutionRequest",
+    "ExecutionResult",
+    "ResourceScope",
+]

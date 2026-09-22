@@ -11,6 +11,16 @@ an already-authorized `ToolInvocation` and hands to a primitive (`server/fs`,
 `server/net`, `server/execution/process.py`, `server/execution/android.py`),
 and what that primitive hands back.
 
+**Why `shared/schemas/` and not `server/execution/`.** `server/fs` and
+`server/net` sit *below* `server/execution` in the module-boundary layering
+(`pyproject.toml`'s `[tool.importlinter]`: `execution` may import `net | fs`,
+not the reverse — 16 §2's "a lower layer never imports an upper layer"), yet
+both need these exact types to report a failure. The same situation is why
+`shared/schemas/agent.py` holds `ToolInvocation` rather than `server/agent`:
+"three modules that may not import each other all speak it." Foundation —
+importable by every layer, imported by none of them — is the only place
+that works.
+
 The one invariant every type here exists to protect: **nothing in this
 module can assert its own authority.** `ExecutionRequest` carries no
 `authorized`, `role`, or `capability` field a caller could set to claim
@@ -19,9 +29,10 @@ permission — it carries only the already-vetted `resource_scope` a
 `ExecutionRequest.from_invocation`, never by hand from raw agent/model
 input. If a caller wants to widen what an `ExecutionRequest` may do, there
 is no field to set; the only lever is a real `CapabilityGrant`, and that
-lever is not reachable from this package (`server.execution` does not, and
-by the module-boundary contracts in `pyproject.toml` cannot, import
-`server.capabilities` or `server.graph`).
+lever is not reachable from any module that imports this one (`server.fs`,
+`server.net`, `server.execution` do not, and by the module-boundary
+contracts in `pyproject.toml` cannot, import `server.capabilities` or
+`server.graph`).
 """
 
 from __future__ import annotations

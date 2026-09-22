@@ -1,4 +1,4 @@
-"""server/execution/contracts.py — the execution layer's own typed boundary.
+"""shared/schemas/execution.py — the execution layer's own typed boundary.
 
 These are narrow unit tests for the contract types themselves: that an
 `ExecutionRequest` is a faithful, authority-free copy of an already-authorized
@@ -14,7 +14,7 @@ import uuid
 
 import pytest
 
-from server.execution.contracts import (
+from shared.schemas.execution import (
     ExecutionError,
     ExecutionErrorCode,
     ExecutionRequest,
