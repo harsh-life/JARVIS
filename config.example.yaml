@@ -1,0 +1,63 @@
+# Hypermind Track B — configuration template (15_CONFIGURATION_SELF_HOSTING.md).
+#
+# Copy this file to config.yaml (git-ignored) and edit it — never commit
+# config.yaml. No value in this file, or in config.yaml, is ever a literal
+# secret: every credential is a `secret_ref` in the form
+#   env:SOME_ENV_VAR_NAME          (resolved from that env var at use)
+#   secretstore:<handle>           (resolved via the SecretStore, 12_SECRETSTORE.md
+#                                   — not implemented in the foundation branch)
+# A literal-looking secret value here is a load-time validation failure by
+# design (SECRET-004), not a warning.
+
+server:
+  host: "127.0.0.1"
+  port: 8000
+  base_url: "http://127.0.0.1:8000"
+  tunnel:
+    provider: "cloudflare"
+    # config_ref: "env:CLOUDFLARE_TUNNEL_TOKEN"
+
+agent:
+  provider: "ollama"
+  model: "qwen2.5:3b-instruct"
+  # secret_ref: "env:AGENT_MODEL_API_KEY"   # unset/omit for a keyless local provider
+  generation_policy: {}
+
+models_as_tools: []
+
+tools: []
+
+memory:
+  mem0:
+    collection: "hypermind_memories"
+    path: "./data/mem0_storage"
+    embedder: "bge-small-en-v1.5"
+
+vault:
+  collection: "hypermind_vault"    # MUST differ from memory.mem0.collection (VAULT-003)
+  git_backed: true
+  path: "./data/vault"
+
+# Disabled by default (INTEL-003) — Track B is fully functional this way.
+intelligence:
+  enabled: false
+
+voice: {}
+
+security:
+  oidc:
+    client_id: "REPLACE_WITH_YOUR_OWN_GOOGLE_OIDC_CLIENT_ID"
+    issuer: "https://accounts.google.com"
+  rate_limits:
+    per_user_requests_per_minute: 60
+    per_device_requests_per_minute: 60
+  budgets:
+    per_user_daily_cost_limit: 0.0
+    global_daily_cost_limit: 0.0
+  capability_defaults: {}
+
+secrets:
+  store: "encrypted_local"
+  kek_source: "env:HYPERMIND_KEK"   # the KEK *source*, never the KEK itself
+
+database_url: "sqlite+aiosqlite:///./data/hypermind.db"

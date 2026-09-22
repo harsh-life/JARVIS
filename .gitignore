@@ -12,3 +12,26 @@ node_modules/
 *.key
 
 .DS_Store
+
+# Foundation branch: local config/data — never the config *template*
+# (config.example.yaml stays tracked; config.yaml is the active, per-host
+# config and must never be committed — 15_CONFIGURATION_SELF_HOSTING.md §4).
+config.yaml
+config.local.yaml
+/data/
+
+# Python tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.coverage
+htmlcov/
+
+# SQLite databases (local dev/test artifacts, never committed)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
