@@ -93,11 +93,9 @@ approval and becomes a task-scoped grant that is revoked when the task ends.
 
 ## 4. What is intentionally missing
 
-- **Filesystem, network, and Android tool adapters.** `file.*`, `device.*`,
-  `app.*` and `system.restricted` exist as capabilities but have no adapter, so the
-  runtime rejects them as `unsupported_platform`. The tool registry refuses any
-  tool that declares a filesystem or network need until `09`/`10` exist to enforce
-  it. That is the boundary working, not a gap in it.
+- **Filesystem, network, `system.restricted`, and Android tool adapters exist
+  now** — the execution branch built them; see `docs/RUNNING_EXECUTION.md`.
+  They are no longer a gap in the runtime.
 - **Mem0.** The hydration boundary is built; the store is `11`'s. Without one,
   every task notes "long-term memory temporarily unavailable" (FAIL-008) and runs
   on session context.

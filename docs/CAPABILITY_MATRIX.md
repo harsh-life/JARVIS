@@ -9,7 +9,9 @@ label; nothing here becomes `[LOCKED]` just by appearing in this table.
 **Code of record:** `server/capabilities/registry.py` (capabilities, operations,
 tiers), `server/capabilities/risk.py` (tier → disposition),
 `server/capabilities/floor.py` (absolute floor), `server/tools/platforms.py`
-(platform adapters).
+(platform adapters), `server/fs/` (09), `server/net/` (10),
+`server/execution/` (process + Android dispatch, `system.restricted` and 08's
+server-side half).
 
 **Labels.** `[LOCKED]` fixed by the canonical PRD or a locked subsystem clause ·
 `[PROPOSED]` derived here, pending owner ratification · `[FUTURE]` owned by a
@@ -82,13 +84,14 @@ capability is **rejected** on that platform (`unsupported_platform`) · 🚫 nev
 
 | Owner's semantic class | Capability | Operations → tier | Server | Linux | Android | Scope keys / boundary | Sensitive data | Label |
 |---|---|---|---|---|---|---|---|---|
-| read_files | `file.read` | `read_file`, `list_directory`, `stat` → low_read | ⛔ `09` | ⛔ `09` | ⛔ `08` | `sandbox_root`; **fs:** `09` sandbox root, path derived never accepted raw; **net:** none | reads the principal's own files only — visibility (D4) still gates every `resource_ref` (TL-T3) | name `[LOCKED]` (07 §2) · ops/tiers `[PROPOSED]` · adapters `[FUTURE]` |
-| write_files | `file.write` | `write_file`, `create_file` → low_write · `delete_file` → consequential · `bulk_delete` → high_irreversible | ⛔ `09` | ⛔ `09` | ⛔ `08` | `sandbox_root`; **fs:** `09` | writes are owner-only (D3) | name `[LOCKED]` · ops/tiers `[PROPOSED]` · adapters `[FUTURE]` |
-| access_device_context | `device.read` | `read_screen`, `read_battery`, `read_notification` → low_read | 🚫 | ⛔ | ⛔ `08` | `package_name` | screen content is the principal's transient task data, never auto-persisted (08 §8) | name `[LOCKED]` · ops/tiers `[PROPOSED]` · adapter `[FUTURE]` |
-| control_ui | `device.ui_control` | `tap`, `swipe` → low_write · `input_text`, `global_action` → consequential | 🚫 | ⛔ desktop adapter not planned | ⛔ `08` (Accessibility) | `package_name` | can compose into a send — see §5.1 | name `[LOCKED]` · ops/tiers `[PROPOSED]` · adapter `[FUTURE]` |
-| control_ui (per app) | `app.interact` | `read_screen_element` → low_read · `tap`, `swipe`, `launch_activity` → low_write · `input_text` → consequential | 🚫 | 🚫 | ⛔ `08` (Accessibility) | `package_name` (per-app grid, PRD §13) | see §5.1 | name + op set `[LOCKED]` (07 §3 example) · tiers `[PROPOSED]` · adapter `[FUTURE]` |
-| execute_process | `system.restricted` | `run_shell_command` → high_irreversible | ⛔ | ⛔ | ⛔ `08` Shizuku | none; isolated from every other capability (08 §6) | the highest-risk surface; never folded into ordinary capabilities | name `[LOCKED]` · **not exposed at MVP** (OD-AND-3 rec) · adapters `[FUTURE]` |
+| read_files | `file.read` | `read_file`, `list_directory`, `stat` → low_read | ✅ `server/fs`, `server/tools/platforms.py` | ⛔ | ⛔ `08` | `sandbox_root` (a **label**, not a path — see `server/fs/__init__.py`); **fs:** `09` sandbox root, path derived never accepted raw; **net:** none | addressed by `sandbox_root` label + `relative_path`, not by a `FileResource.resource_ref` — individual-file D3/D4 visibility inside a shared sandbox is not wired by this branch (no DB session reaches an adapter); cross-*user* isolation is structural (root derivation) regardless | name `[LOCKED]` (07 §2) · ops/tiers `[PROPOSED]` · **adapter execution branch** |
+| write_files | `file.write` | `write_file`, `create_file` → low_write · `delete_file` → consequential · `bulk_delete` → high_irreversible | ✅ `server/fs`, `server/tools/platforms.py` | ⛔ | ⛔ `08` | `sandbox_root` (label); **fs:** `09` | same addressing note as `file.read` above | name `[LOCKED]` · ops/tiers `[PROPOSED]` · **adapter execution branch** |
+| access_device_context | `device.read` | `read_screen`, `read_battery`, `read_notification` → low_read | 🚫 | ⛔ | ✅\* `server/execution/android.py` | `package_name` | \*dispatch adapter exists and is registered; every call fails `device_unavailable` — no `android/` client exists in this repository (`UnavailableDeviceTransport`, `docs/RUNNING_EXECUTION.md` §4) | name `[LOCKED]` · ops/tiers `[PROPOSED]` · adapter **dispatch-only** |
+| control_ui | `device.ui_control` | `tap`, `swipe` → low_write · `input_text`, `global_action` → consequential | 🚫 | ⛔ desktop adapter not planned | ⛔\*\* | `package_name` | can compose into a send — see §5.1. \*\*mapping table exists (`server/execution/android.py`) but no tool factory registers it yet (only `app.interact`/`device.read` do) | name `[LOCKED]` · ops/tiers `[PROPOSED]` · adapter `[FUTURE]` |
+| control_ui (per app) | `app.interact` | `read_screen_element` → low_read · `tap`, `swipe`, `launch_activity` → low_write · `input_text` → consequential | 🚫 | 🚫 | ✅\* `server/execution/android.py` | `package_name` (per-app grid, PRD §13) | see §5.1; \*same dispatch-only caveat as `device.read` above | name + op set `[LOCKED]` (07 §3 example) · tiers `[PROPOSED]` · adapter **dispatch-only** |
+| execute_process | `system.restricted` | `run_shell_command` → high_irreversible | ✅ `server/execution/process.py`, `server/tools/platforms.py` | ✅ (same adapter) | ⛔ `08` Shizuku | none; isolated from every other capability (08 §6) | the highest-risk surface; never folded into ordinary capabilities. Registered but **closed by default** — `execution.process.allowed_executables` is empty until an operator opts executables in (`docs/RUNNING_EXECUTION.md` §5) | name `[LOCKED]` · ops/tiers `[PROPOSED]` · **adapter execution branch** |
 | (LLM-as-tool) | `model.invoke` | `invoke` → low_read | ✅ `server/modeltools` | ⛔ | 🚫 | `model_tool_id`; **net:** the provider endpoint only (`10` will enforce); **secrets:** the provider key resolved at the models boundary by handle | the prompt carries the principal's authorized context to the configured provider; the output is **untrusted data** (06 §4) | **`[PROPOSED]` — added by the runtime branch** (06 requires every model-tool to be capability-gated, MODELTOOL-001, and no canonical name existed) |
+| network_access | `net.request` | `get` → low_read · `post` → consequential | ✅ `server/net`, `server/tools/platforms.py` | ⛔ | 🚫 | none; the tool's own operator-configured `EgressPolicy` narrows destinations, never a grant-level scope key | registered but **closed by default** — `execution.network.default_destinations`/`default_internet` are empty/false until an operator opts a destination in; egress itself is default-deny regardless (`10` §1) | **`[PROPOSED]` — added by the execution branch**, which owns `10` (moved from §3.2 below now that the egress boundary exists to back it) |
 
 ### 3.2 Semantic classes with no registry entry yet
 
@@ -98,8 +101,7 @@ owning branch builds the boundary it depends on.
 
 | Owner's semantic class | Proposed concrete name | Why not in the registry | Owning branch | Label |
 |---|---|---|---|---|
-| network_access | `net.request` (`get` → low_read, `post` → consequential) | the capability is only meaningful once `10`'s default-deny egress enforces declared destinations; a network tool without `10` would be exactly the bypass NET-005 forbids | `10` | `[PROPOSED]` / `[FUTURE]` |
-| send_communications | `comm.send` (`send_message` → consequential, `send_payment` → high_irreversible) | today "send" is reachable only as `app.interact`/`device.ui_control` UI primitives (see §5.1); a semantic send capability needs a real adapter to bind to | `08` | `[PROPOSED]` / `[FUTURE]` |
+| send_communications | `comm.send` (`send_message` → consequential, `send_payment` → high_irreversible) | today "send" is reachable only as `app.interact`/`device.ui_control` UI primitives (see §5.1); a semantic send capability needs a real device transport to bind to (this branch's `UnavailableDeviceTransport` dispatches the mapping but performs nothing) | `08`, once a real `android/` client exists | `[PROPOSED]` / `[FUTURE]` |
 | manage_applications | `app.launch` (`launch_app` → low_write) | named in 08 §2's table; not in the registry because no adapter exists and `app.interact.launch_activity` already covers launch within a granted app | `08` | name `[LOCKED]` (08 §2) · registry entry `[FUTURE]` |
 | memory (agent-proposed writes) | `memory.write` (`remember` → low_write, `share_fact` → consequential) | context **hydration** is runtime-owned and is not a capability (§4); agent-*proposed* memory writes need `11`'s Mem0 store | `11` | `[PROPOSED]` / `[FUTURE]` |
 | reminders | `scheduler.create` (`create_reminder` → low_write) | needs the scheduler (`22`) and SCHED-001's non-empty `task_reason` | scheduler | `[PROPOSED]` / `[FUTURE]` |
@@ -184,6 +186,13 @@ device adapter exists to exercise it.
 
 - Every operation → tier assignment in §3.1 (OD-TOOL-1's "owner signs the tier table").
 - `model.invoke` as the capability name and `low_read` as its tier.
+- `net.request` as the capability name and its `get`/`post` tiers (added by the
+  execution branch, same unratified status as `model.invoke`'s addition above).
 - The floor's reserved names (§3.3).
 - Tier-4 "strong" = confirmation + step-up (§2).
 - The activation mechanism in §4.
+- `execution.filesystem.containment_mode`/`execution.network.enforcement_mode`
+  staying on the `mediated`/`mediated_proxy` (syscall-level, not kernel-level)
+  posture rather than the `mount_isolated`/`netns_filtered` mechanisms 09 §8/
+  10 §3 recommend for a real deployment (`docs/RUNNING_EXECUTION.md` §3) — an
+  operational/infrastructure decision, not a code change.

@@ -57,6 +57,21 @@ intelligence:
 
 voice: {}
 
+# Execution branch (09 filesystem sandbox, 10 network egress, system.restricted
+# process execution, 08's server-side Android dispatch). Every default here is
+# the most restrictive one — see docs/RUNNING_EXECUTION.md.
+execution:
+  filesystem:
+    base_root: "./data/sandboxes"
+    containment_mode: "mediated"   # the only mode this branch implements
+  network:
+    enforcement_mode: "mediated_proxy"   # the only mode this branch implements
+    default_destinations: []             # net.request has nowhere to go until you list one
+    default_internet: false
+    default_private_net: false
+  process:
+    allowed_executables: []              # system.restricted runs nothing until you list one
+
 security:
   oidc:
     client_id: "REPLACE_WITH_YOUR_OWN_GOOGLE_OIDC_CLIENT_ID"

@@ -119,6 +119,23 @@ names remain `[PROPOSED]` until the owner signs them.
 
 ---
 
+## 2A. Execution-branch proposals (`[PROPOSED]`, pending ratification)
+
+| ID | Decision needed | Proposed value | Where |
+|---|---|---|---|
+| OD-FS-1 | Filesystem containment mechanism (09 §8) | **`mediated`** — real, `dir_fd`-walking, `O_NOFOLLOW`-at-every-hop path resolution, TOCTOU-resistant by construction (the containment check *is* the syscall that does the work, not a separate stat performed earlier). `09` §8's `[REC]` `mount_isolated` mode (mount-namespace isolation) is not implemented — this branch has no privilege to create one in its development environment. `FilesystemSandbox` refuses to start if configured for `mount_isolated` rather than silently run the weaker mode under that name. | `server/fs/paths.py`, `server/config/schema.py`'s `FilesystemSandboxConfig.containment_mode` |
+| OD-NET-1 | Network egress enforcement mechanism (10 §3) | **`mediated_proxy`** — a hand-built HTTP/1.1 client that resolves, classifies every candidate IP, and connects only to the checked IP (DNS-rebinding defense), rather than `netns_filtered` (kernel-level, `[REC]`). Same refuse-rather-than-misrepresent posture as OD-FS-1. | `server/net/client.py`, `NetworkEgressConfig.enforcement_mode` |
+| OD-NET-3 | DNS-rebinding mitigation mechanism | Resolve once, classify every candidate address, connect to the exact IP that passed classification — never a second, independent resolution between check and connect. | `server/net/client.py` |
+| (new) | `sandbox_root` scope-value semantics | Treated as an opaque **label** the operation is authorized against, never a filesystem path — even though 09 §1's own illustrative example writes it as one (`"sandbox_root": "/…"`). The physical root is always derived from the request's own authorized `user_id`/`graph_id`; the label only selects a sub-sandbox *within* that principal's own area. Accepting the scope value as a literal path would be exactly the "raw path from a client" 09 §1 forbids. | `server/fs/paths.py::allocate_root`, `server/fs/__init__.py` |
+| (new) | fs operation addressing | `file.read`/`file.write` operations are authorized as resource-less `TOOL_ACTION`s (capability + tier + `resource_scope`), addressed by `sandbox_root` label + `relative_path` — not by a `FileResource.resource_ref`. Wiring individual-`FileResource` D3/D4 visibility into a physical read needs a DB session no `ToolAdapter.execute` receives; that integration is left to `11`/a future branch, not invented here. | `server/tools/platforms.py` |
+| (new) | `net.request` capability | Added to the closed registry (`get` → low_read, `post` → consequential) now that `10`'s egress boundary exists to back it — `docs/CAPABILITY_MATRIX.md` §3.2 had withheld it for exactly this reason. Registered with a **closed-by-default** `EgressPolicy` (`execution.network.default_*` all empty/false); an operator opts a destination in. | `server/capabilities/registry.py`, `server/composition/execution_tools.py` |
+| (new) | `build_application`'s default tool set | `extra_tools=None` (production's default) now builds the real execution tools from `ExecutionConfig` rather than none at all — `file.read`/`file.write` become immediately usable once granted; `net.request`/`system.shell` register but stay inert (empty destination/executable allow-lists); the Android tools use `UnavailableDeviceTransport`. An explicit `extra_tools` list, as every test passes, still fully substitutes. | `server/composition/__init__.py`, `server/composition/execution_tools.py` |
+| (new) | `execution` module-boundary layer | Inserted between `graph \| capabilities` and `net \| fs` in the layering contract; `server.tools`/`server.modeltools`/`server.agent` are additionally barred from importing `subprocess`/`socket` directly (direct-import check only — `allow_indirect_imports = true`, since the legitimate dependency on `server.net`/`server.execution.process` necessarily uses them transitively). | `pyproject.toml`'s `[tool.importlinter]` |
+
+**OD-A1 note.** The owner's `docs/OD_A1_BR_T2.md` decision already anticipated this: "BR-T2 is re-run when `09`/`11` land." `09` has now landed; `11` (Mem0) has not. Re-running BR-T2 against the real filesystem sandbox, and any adjudication of a newly-reachable row outside the previously accepted class, is separate follow-up work this branch does not itself perform — OD-A1's pilot-acceptance decision (§1 above) is unchanged by this branch, not reopened by it.
+
+---
+
 ## 3. Genuinely unresolved owner decisions
 
 | ID | Question | Why it is the owner's |
