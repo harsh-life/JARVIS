@@ -16,13 +16,21 @@ from fastapi import APIRouter, FastAPI
 from server.config import AppConfig
 from server.gateway.errors import install_error_handlers
 from server.gateway.request_context import RequestIdMiddleware
-from server.gateway.routers import health
+from server.gateway.routers import auth, capabilities, graphs, health, sessions
+from server.gateway.security import SecurityCore, build_security_core
+from server.gateway.security_errors import install_security_error_handlers
 from server.storage import StorageBackend
 
 API_V1_PREFIX = "/api/v1"
 
 
-def create_app(*, config: AppConfig | None = None, storage: StorageBackend | None = None) -> FastAPI:
+def create_app(
+    *,
+    config: AppConfig | None = None,
+    storage: StorageBackend | None = None,
+    security: SecurityCore | None = None,
+    unlock_secrets_on_startup: bool = False,
+) -> FastAPI:
     """Build the FastAPI app.
 
     `storage` may be injected directly (tests construct their own throwaway
@@ -36,20 +44,41 @@ def create_app(*, config: AppConfig | None = None, storage: StorageBackend | Non
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+        if unlock_secrets_on_startup:
+            # 12 §3's unlock step. Any failure propagates and the server refuses
+            # to serve: a running Hypermind whose SecretStore is locked cannot
+            # register a device or verify a credential, so starting anyway would
+            # be the "degraded, silently-secretless mode" 12 §8 forbids.
+            from server.gateway.security import unlock_secret_store
+
+            await unlock_secret_store(app.state.security, app.state.storage)
         try:
             yield
         finally:
+            core: SecurityCore | None = getattr(app.state, "security", None)
+            if core is not None:
+                # Drop the unwrapped DEK rather than leaving it in the memory of
+                # a process that is shutting down (12 §3 — a restart requires a
+                # fresh unlock; nothing auto-unlocks from disk).
+                core.secret_store.lock()
             backend: StorageBackend | None = getattr(app.state, "storage", None)
             if backend is not None:
                 await backend.dispose()
 
-    app = FastAPI(title="Hypermind Track B — Gateway (foundation branch)", lifespan=_lifespan)
+    app = FastAPI(title="Hypermind Track B — Gateway", lifespan=_lifespan)
 
     app.add_middleware(RequestIdMiddleware)
     install_error_handlers(app)
+    # Installed after the foundation handlers so the security mappings take
+    # precedence for their own exception types (02 §1.7).
+    install_security_error_handlers(app)
 
     v1 = APIRouter(prefix=API_V1_PREFIX)
     v1.include_router(health.router)
+    v1.include_router(auth.router)
+    v1.include_router(sessions.router)
+    v1.include_router(graphs.router)
+    v1.include_router(capabilities.router)
     app.include_router(v1)
 
     # Storage is attached synchronously at construction time, not deferred
@@ -66,6 +95,21 @@ def create_app(*, config: AppConfig | None = None, storage: StorageBackend | Non
     else:
         raise RuntimeError(
             "create_app() requires either `config` or a pre-built `storage` backend"
+        )
+
+    # The security core is assembled here and attached alongside storage, for the
+    # same reason storage is: deterministic construction, not a lifespan side
+    # effect. It is built **locked** — the SecretStore cannot resolve anything
+    # until an operator supplies the KEK out-of-band via `unlock_secret_store`
+    # (12 §3). A caller may pass a pre-built core to supply a different OIDC
+    # provider (AUTH-001's replaceable identity provider).
+    if security is not None:
+        app.state.security = security
+    elif config is not None:
+        app.state.security = build_security_core(config)
+    else:
+        raise RuntimeError(
+            "create_app() requires either `config` or a pre-built `security` core"
         )
 
     return app

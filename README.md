@@ -19,14 +19,46 @@ HUMAN CONFIRMS WHERE REQUIRED
 
 Model output is never the security boundary.
 
-## Current state: `foundation` branch
+## Current state: `security-core` branch
 
-This branch implements only the technical substrate later branches build
-on: shared data contracts, configuration, persistence/migrations, and the
-API skeleton (versioning, request IDs, the error envelope, a health
-check). **There is no authentication, authorization, agent runtime, tool
-execution, or SecretStore yet.** See `docs/RUNNING_FOUNDATION.md` to run
-what exists today.
+Two branches are in:
+
+**`foundation`** — the technical substrate: shared data contracts,
+configuration, persistence/migrations, and the API skeleton (versioning,
+request IDs, the error envelope, a health check). See
+`docs/RUNNING_FOUNDATION.md`.
+
+**`security-core`** — the deterministic security authority every later
+branch must pass through:
+
+- **Authentication** (`03`): Google OIDC with issuer/audience/state/nonce/PKCE
+  validation, subject-keyed identity, Ed25519 device credentials with
+  rotation/revocation/replay protection, opaque access tokens with immediate
+  revocation, and step-up on sensitive operations.
+- **Authorization** (`04`): the five-dimension engine — membership, role,
+  ownership, visibility, capability — as the single place resource access is
+  decided, with anti-enumeration surfaces and fail-closed behaviour.
+- **Capabilities, risk tiers, the absolute floor, confirmation tokens** (`07`):
+  a closed capability registry with enumerated operations, a deterministic
+  tier table, prohibition by absence, and confirmations bound to one exact
+  action.
+- **SecretStore** (`12`): AES-256-GCM under an external KEK, handle-only
+  access, master-key/superuser separation, and fail-closed resolution.
+- **Audit primitives** (`01` §11.1) on every security-sensitive operation.
+
+See `docs/RUNNING_SECURITY_CORE.md` to run it.
+
+**There is still no agent runtime, tool execution, model provider,
+filesystem sandbox, network egress enforcement, or Android integration** —
+those are later branches, and they consume this one's interfaces rather
+than re-deriving them.
+
+### Before putting real data anywhere near this
+
+`docs/OD_A1_BR_T2.md` records the **measured** blast radius under simulated
+application-level RCE (BR-T2). The OD-A1 gate is **closed**: the pilot is
+cleared for disposable/test data only until the owner reviews that
+measurement. Passing unit tests do not imply real-user readiness.
 
 ## Repository layout
 
@@ -34,11 +66,18 @@ what exists today.
 server/    the modular-monolith FastAPI application (one package per subsystem)
 shared/    schemas/  — canonical Pydantic data contracts, importable by both
                         server/ and a future android/ client
-tests/     pytest suite
-docs/      operational docs (this branch: docs/RUNNING_FOUNDATION.md)
+tests/     pytest suite (tests/foundation/, tests/security_core/)
+docs/      RUNNING_FOUNDATION.md, RUNNING_SECURITY_CORE.md, OD_A1_BR_T2.md
 Working Markdown/   the architecture/PRD document package (source of truth)
 ```
 
+The two halves of the authorization engine are deliberately independent
+modules that never import each other (`16` §5): `server/graph` decides, and
+`server/capabilities` supplies the policy it consults, meeting only at the
+gateway composition root through the Protocols in `server/graph/ports.py`.
+Keeping them apart is what stops the half that evaluates a capability check
+from also being able to grant one.
+
 Module boundaries (who may import whom) are enforced mechanically via
-`import-linter` — see `pyproject.toml`'s `[tool.importlinter]` section and
-`docs/RUNNING_FOUNDATION.md`'s "Checking module boundaries" section.
+`import-linter` — see `pyproject.toml`'s `[tool.importlinter]` section.
+A boundary violation is a CI failure, not a review nicety (`16` §6).

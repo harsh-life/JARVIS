@@ -21,7 +21,18 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Uuid, text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Uuid,
+    text,
+)
 from sqlalchemy import JSON as SAJSON
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
@@ -400,6 +411,207 @@ class SpeakerContext(Base):
         CheckConstraint(
             "is_authorization_signal = 0",
             name="ck_speaker_contexts_never_auth_signal",
+        ),
+    )
+
+
+#
+# ─── security-core tables ────────────────────────────────────────────────
+#
+# 01_DATA_MODEL_SCHEMA.md enumerates Track B's *entities*; it does not
+# enumerate the protocol/security-infrastructure tables the mechanisms in
+# `03`/`07`/`12` need to exist at all (the same reasoning foundation used
+# for `idempotency_keys`, below). Each table here names the locked
+# requirement it exists to satisfy. None of them holds a secret in the
+# clear: credential-shaped values are stored as SHA-256 hashes of
+# high-entropy values (a leak yields nothing usable), and the SecretStore's
+# material is AEAD ciphertext whose key never lives in this database.
+#
+
+
+class SecretStoreKey(Base):
+    """The wrapped data-encryption key (12 §3 "key hierarchy").
+
+    `wrapped_dek` is the DEK sealed under the KEK. `[LOCKED]` (12 §3) the
+    KEK itself is **never** in this table, this database, or any file the
+    application writes — it is supplied out-of-band at unlock time
+    (server/secrets/kek.py). That separation is exactly what makes SS-T3
+    ("a DB/backup leak without the KEK yields no usable plaintext") true.
+    """
+
+    __tablename__ = "secret_store_keys"
+
+    key_id: Mapped[str] = mapped_column(String, primary_key=True)
+    wrapped_dek: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    wrap_nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SecretMaterial(Base):
+    """AEAD ciphertext of one secret value (12 §3).
+
+    Deliberately a *separate table* from `secret_references`: foundation
+    asserts by test that `secret_references` has no column capable of
+    holding a value, and that assertion stays true. The AAD binds the
+    ciphertext to its own handle, so a ciphertext cannot be swapped between
+    handles and still decrypt (12 §3 "a tampered ciphertext must fail").
+    """
+
+    __tablename__ = "secret_material"
+
+    secret_ref: Mapped[str] = mapped_column(
+        String, ForeignKey("secret_references.secret_ref"), primary_key=True
+    )
+    key_id: Mapped[str] = mapped_column(
+        String, ForeignKey("secret_store_keys.key_id"), nullable=False
+    )
+    nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class OIDCLoginState(Base):
+    """One in-flight OIDC login (03 §2.3 checks 5/6/7).
+
+    Holds the `state`, the `nonce` bound to it, and the PKCE `code_verifier`.
+    Single-use (`used_at`) and short-TTL (`expires_at`) — that is what makes
+    AUTH-T2 (replaying a used state fails) and the CSRF/replay rows of
+    03 §7 hold.
+    """
+
+    __tablename__ = "oidc_login_states"
+
+    state: Mapped[str] = mapped_column(String, primary_key=True)
+    nonce: Mapped[str] = mapped_column(String, nullable=False)
+    code_verifier: Mapped[str] = mapped_column(String, nullable=False)
+    redirect_uri: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class BootstrapToken(Base):
+    """03 §3.2 — short-lived, single-use, register-one-device-only, bound to
+    the user who just authenticated. Stored as a hash: the raw value exists
+    only in the callback response."""
+
+    __tablename__ = "bootstrap_tokens"
+
+    token_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AccessToken(Base):
+    """03 §5.2, resolving OD-AUTH-2 with the doc's `[REC]`: opaque token +
+    server lookup, so revocation is immediate rather than bounded by a JWT's
+    expiry.
+
+    A separate table rather than columns on `sessions`, so `01` §2.3's
+    Session entity keeps exactly the shape `01` defines. `issued_at` doubles
+    as the last-re-attestation timestamp for the step-up check (03 §5.5),
+    because a token is only ever issued against a freshly verified device
+    credential proof.
+    """
+
+    __tablename__ = "access_tokens"
+
+    token_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("sessions.session_id"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("devices.device_id"), nullable=False
+    )
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (Index("ix_access_tokens_session_id", "session_id"),)
+
+
+class DeviceProofNonce(Base):
+    """Replay defense for the device-credential proof (03 §4, SESSION-005).
+
+    The device signs a fresh nonce per refresh; a nonce is accepted at most
+    once inside the proof's freshness window, so a captured proof cannot be
+    replayed.
+    """
+
+    __tablename__ = "device_proof_nonces"
+
+    nonce: Mapped[str] = mapped_column(String, primary_key=True)
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("devices.device_id"), nullable=False
+    )
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class ConfirmationToken(Base):
+    """PERM-004 / 05 §4 — a confirmation is a security mechanism bound to one
+    exact action, not a reusable "the user said yes" flag.
+
+    `[LOCKED]` by 05 §4/§4.1: no timeout ever auto-approves — expiry here can
+    only ever turn into a denial. Single-use is enforced by `used_at` under a
+    conditional UPDATE, so two concurrent confirmations cannot both win.
+    """
+
+    __tablename__ = "confirmation_tokens"
+
+    token_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    principal_user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.user_id"), nullable=False
+    )
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("sessions.session_id"), nullable=True
+    )
+    task_id: Mapped[str] = mapped_column(String, nullable=False)
+    capability: Mapped[str | None] = mapped_column(String, nullable=True)
+    operation: Mapped[str] = mapped_column(String, nullable=False)
+    resource_type: Mapped[str] = mapped_column(String, nullable=False)
+    resource_ref: Mapped[str | None] = mapped_column(String, nullable=True)
+    arguments_hash: Mapped[str] = mapped_column(String, nullable=False)
+    risk_category: Mapped[RiskCategory] = mapped_column(
+        _sa_enum(RiskCategory, "confirmation_risk_category"), nullable=False
+    )
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (Index("ix_confirmation_tokens_principal", "principal_user_id", "task_id"),)
+
+
+class GraphAccessRequest(Base):
+    """04 §4.2 / 02 §4 — the pending half of GRAPH-008's request→approval
+    flow. `[LOCKED]` (04 §4.2) a request never becomes a membership by
+    itself; only an owner's explicit approval creates the GraphMembership."""
+
+    __tablename__ = "graph_access_requests"
+
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    graph_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("graphs.graph_id"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    message: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.user_id"), nullable=True
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_graph_access_requests_pending",
+            "graph_id",
+            "user_id",
+            unique=True,
+            sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending'"),
         ),
     )
 

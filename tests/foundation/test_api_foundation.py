@@ -18,6 +18,8 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from server.gateway.app import API_V1_PREFIX, create_app
+from server.gateway.security import build_security_core
+from tests.support import make_test_config
 from server.gateway.errors import install_error_handlers
 from server.gateway.request_context import RequestIdMiddleware
 from server.storage import SQLAlchemyStorageBackend
@@ -25,7 +27,11 @@ from server.storage import SQLAlchemyStorageBackend
 
 @pytest.fixture
 async def app_client(storage: SQLAlchemyStorageBackend):
-    app = create_app(storage=storage)
+    # security-core: the app now requires a security core alongside storage, so
+    # the factory is given one built from a test config. The core is constructed
+    # *locked* (12 §3), which is exactly the state the protocol-plumbing
+    # assertions below want — none of them touches a secret.
+    app = create_app(storage=storage, security=build_security_core(make_test_config()))
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
