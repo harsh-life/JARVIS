@@ -200,6 +200,80 @@ class VoiceConfig(StrictModel):
     tts: str | None = None
 
 
+class FilesystemSandboxConfig(StrictModel):
+    """09_FILESYSTEM_SANDBOX.md §1/§7/§10 (OD-FS-1/2/3). `[IMPL]`.
+
+    `base_root` is the *only* place on the host every sandbox root is
+    allocated under (`…/data/users/{user_id}/…`, `…/data/graphs/{graph_id}/…`,
+    `…/data/tasks/{task_id}/tmp/…`, 09 §1) — never a path the agent supplies.
+
+    `containment_mode` records 09 §8's open item (OD-FS-1) honestly rather
+    than silently defaulting: `mediated` is realpath-verified Python-level
+    containment (what this branch ships everywhere, including this
+    development environment, which has no privilege to create mount
+    namespaces); `mount_isolated` is 09 §8's `[REC]` physical-impossibility
+    mechanism for a real multi-tenant deployment, not implemented by this
+    branch. A tool contract's boundary is enforced either way — this field
+    only affects *how strong* the containment guarantee is, and every audit
+    event/test result records which mode produced it.
+    """
+
+    base_root: str = "./data/sandboxes"
+    containment_mode: str = Field(default="mediated", pattern="^(mediated|mount_isolated)$")
+    max_file_bytes: int = Field(default=25_000_000, gt=0)
+    max_sandbox_bytes: int = Field(default=250_000_000, gt=0)
+    max_archive_entries: int = Field(default=10_000, gt=0)
+    max_archive_uncompressed_bytes: int = Field(default=250_000_000, gt=0)
+
+
+class NetworkEgressConfig(StrictModel):
+    """10_NETWORK_EGRESS.md §1/§3/§9 (OD-NET-1). `[IMPL]`.
+
+    Baseline is default-deny (NET-001/003): with no network-capable tool
+    enabled, nothing here grants any egress. `enforcement_mode` records the
+    same honesty 09 §8 requires of the fs boundary: `mediated_proxy` is an
+    application-level egress gateway (DNS-then-checked-IP-pinned connect,
+    §5) — everything this branch ships and can run in this development
+    environment without host firewall/netns privileges; `netns_filtered` is
+    10 §3's `[REC]` kernel-level mechanism for real deployment, not built by
+    this branch. The *guarantee* (NET-005 — a compromised tool cannot reach
+    a denied destination via any mechanism) holds only as strongly as the
+    active mode; `mediated_proxy` holds it for any tool that goes through
+    this module's client, not against a tool that opens a raw socket of its
+    own — precisely the gap `netns_filtered` closes and this config field
+    exists to never let the weaker mode be mistaken for the stronger one.
+    """
+
+    enforcement_mode: str = Field(default="mediated_proxy", pattern="^(mediated_proxy|netns_filtered)$")
+    connect_timeout_seconds: float = Field(default=5.0, gt=0)
+    read_timeout_seconds: float = Field(default=10.0, gt=0)
+    max_response_bytes: int = Field(default=5_000_000, gt=0)
+    max_redirects: int = Field(default=3, ge=0)
+
+
+class ProcessExecutionConfig(StrictModel):
+    """The `system.restricted` executor's ceilings (08 §6 / 07 §5). No
+    executable is allowed unless a tool declares it — an empty default
+    allowlist means `run_shell_command` refuses everything until an operator
+    opts specific executables in (§7 of this branch's brief: 'if shell
+    execution exists at all, it must remain a separately governed high-risk
+    mechanism')."""
+
+    allowed_executables: list[str] = Field(default_factory=list)
+    default_timeout_seconds: float = Field(default=10.0, gt=0)
+    max_timeout_seconds: float = Field(default=60.0, gt=0)
+    max_output_bytes: int = Field(default=1_000_000, gt=0)
+
+
+class ExecutionConfig(StrictModel):
+    """The execution branch's own config surface — additive to 15 §2, not a
+    redesign of any existing section."""
+
+    filesystem: FilesystemSandboxConfig = Field(default_factory=FilesystemSandboxConfig)
+    network: NetworkEgressConfig = Field(default_factory=NetworkEgressConfig)
+    process: ProcessExecutionConfig = Field(default_factory=ProcessExecutionConfig)
+
+
 class OIDCConfig(StrictModel):
     client_id: str
     issuer: str
@@ -248,6 +322,7 @@ class AppConfig(StrictModel):
     vault: VaultConfig = Field(default_factory=VaultConfig)
     intelligence: IntelligenceConfig = Field(default_factory=IntelligenceConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
+    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     security: SecurityConfig
     secrets: SecretsStoreConfig
 

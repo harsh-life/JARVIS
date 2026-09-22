@@ -48,6 +48,10 @@ testpaths = ["tests"]
 
 [tool.importlinter]
 root_packages = ["server", "shared"]
+# Required for the "Tools/agent cannot reach raw process or socket primitives"
+# contract below, whose forbidden_modules (subprocess, socket) are stdlib, not
+# one of root_packages.
+include_external_packages = true
 
 # Encodes 16_REPOSITORY_MODULE_BOUNDARIES.md §2 as an enforceable dependency
 # graph: a lower layer never imports an upper layer — REPO-T4/T7.
@@ -99,6 +103,7 @@ layers = [
     "gateway",
     "auth",
     "graph | capabilities",
+    "execution",
     "net | fs",
     "security",
     "secrets",
@@ -198,3 +203,31 @@ name = "Runtime never depends on Intelligence/Decision providers (INTEL-003, 26)
 type = "forbidden"
 source_modules = ["server.agent", "server.tools", "server.memory"]
 forbidden_modules = ["server.intelligence"]
+
+# execution branch (09/10/07 §5) — a new layer, "execution", sits between
+# `graph | capabilities` and `net | fs` (see the layers contract above): tools
+# build an already-authorized ExecutionRequest and hand it to `server.execution`
+# (the process/Android primitives + the layer's own typed contracts), which in
+# turn calls `server.fs`/`server.net` for containment/egress. None of the three
+# may reach upward into authorization (already excluded by the layers contract,
+# since `graph | capabilities` sits above `execution`) or into secrets (below,
+# stated explicitly here — this branch's adapters resolve no secret of their
+# own; a tool that genuinely needs one resolves it itself, exactly as `06 §1`
+# already permits for `server.tools`).
+[[tool.importlinter.contracts]]
+name = "Execution/fs/net never import secrets (12 §2, OD-D1)"
+type = "forbidden"
+source_modules = ["server.execution", "server.fs", "server.net"]
+forbidden_modules = ["server.secrets"]
+
+# 09 §8 / 10 §3 (NET-005): the sandbox/egress boundary is worthless if an
+# adapter can reach the host filesystem or a raw socket without going through
+# it. `subprocess`/`socket` are the two stdlib doors that would let a tool
+# bypass `server.fs`/`server.net` entirely; they are confined to the one module
+# built to use them safely (`server.execution.process`, `server.net`'s egress
+# client) rather than being reachable from the adapter/runtime layer directly.
+[[tool.importlinter.contracts]]
+name = "Tools/agent cannot reach raw process or socket primitives (09 §8/10 §3, REPO-T5)"
+type = "forbidden"
+source_modules = ["server.tools", "server.modeltools", "server.agent"]
+forbidden_modules = ["subprocess", "socket"]

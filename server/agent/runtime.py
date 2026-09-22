@@ -702,10 +702,21 @@ class AgentRuntime:
             units=output.units, estimated_cost=output.estimated_cost,
             provider=output.provider, model=output.model, tool_id=handle.tool_id,
         )
+        # Execution-layer failures (sandbox_violation, egress_denied,
+        # platform_unsupported, timeout, ...) already arrive as a structured
+        # `ExecutionErrorCode` in `output.error` (server/execution/contracts.py).
+        # Folding it into the audited resource — rather than adding a parallel
+        # audit path for the execution boundary — keeps AGENT_TOOL_FAILED
+        # queryable by *which* boundary refused the call without letting
+        # `server/tools`/`server/fs`/`server/net` write audit events of their
+        # own (16 §5: only the runtime's SecurityPort records).
+        resource = f"tool:{handle.tool_id}.{operation}"
+        if not output.ok and output.error:
+            resource = f"{resource}:{output.error}"
         await self._event(
             env, state, AgentEvent.TOOL_EXECUTED if output.ok else AgentEvent.TOOL_FAILED,
             AuditResult.SUCCESS if output.ok else AuditResult.FAILURE,
-            resource=f"tool:{handle.tool_id}.{operation}", decision=PermissionDecisionValue.ALLOW,
+            resource=resource, decision=PermissionDecisionValue.ALLOW,
         )
         state.messages.append(ctx.tool_observation(
             handle.tool_id, operation, ok=output.ok, content=output.content, error=output.error,
