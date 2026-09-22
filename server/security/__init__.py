@@ -1,12 +1,28 @@
-"""security — placeholder package (foundation branch).
+"""Security primitives: the audit path and superuser separation.
 
-Not implemented in the `foundation` branch. This package exists only so that:
-  1. the repository layout matches 00_CANONICAL_PRD.md §45 / 16_REPOSITORY_MODULE_BOUNDARIES.md §1, and
-  2. module-boundary (import-linter) contracts about this package are meaningful
-     for later branches (e.g. "server.agent must never import server.secrets").
-
-Do not add implementation logic here from the `foundation` branch. The subsystem
-document that owns this package's real implementation is named below.
-
-Owning subsystem doc: 14_SECURITY_BLAST_RADIUS.md
+Scope note (16 §5): this package holds *cross-cutting security primitives*,
+not the authorization decision. The five-dimension engine lives in
+`server/graph/authorization.py` (04) and the capability/risk/floor policy in
+`server/capabilities/` (07), deliberately kept apart from each other and from
+this module — there is no single global "SecurityManager" that owns
+everything, because such a class is precisely where a boundary quietly
+disappears.
 """
+
+from server.security.audit import AuditLogger
+from server.security.events import AuditAction
+from server.security.superuser import (
+    SUPERUSER_TOKEN_ENV,
+    SuperuserAuthenticationFailed,
+    SuperuserNotConfigured,
+    authenticate_superuser,
+)
+
+__all__ = [
+    "SUPERUSER_TOKEN_ENV",
+    "AuditAction",
+    "AuditLogger",
+    "SuperuserAuthenticationFailed",
+    "SuperuserNotConfigured",
+    "authenticate_superuser",
+]

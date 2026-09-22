@@ -13,6 +13,7 @@ Two angles, both required:
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import textwrap
@@ -39,7 +40,17 @@ def test_real_repo_satisfies_its_own_module_boundary_contracts() -> None:
         text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Contracts: 4 kept, 0 broken." in result.stdout
+
+    # "0 broken" is the assertion that matters; the kept count grows as each
+    # branch adds contracts (foundation declared 4, security-core 7), so
+    # pinning it exactly would make every new boundary rule look like a
+    # regression. The floor keeps the inverse failure — a contract silently
+    # *disappearing* from pyproject — visible.
+    match = re.search(r"Contracts: (\d+) kept, (\d+) broken\.", result.stdout)
+    assert match is not None, result.stdout
+    kept, broken = int(match.group(1)), int(match.group(2))
+    assert broken == 0, result.stdout
+    assert kept >= 4, result.stdout
 
 
 def test_import_linter_detects_a_deliberate_violation(tmp_path: Path) -> None:
