@@ -249,6 +249,13 @@ class NetworkEgressConfig(StrictModel):
     read_timeout_seconds: float = Field(default=10.0, gt=0)
     max_response_bytes: int = Field(default=5_000_000, gt=0)
     max_redirects: int = Field(default=3, ge=0)
+    # The generic `net.request` tool's EgressPolicy (server/tools/platforms.py).
+    # Closed by default — same "existence locked, values [IMPL]" posture as
+    # `process.allowed_executables`: registering the tool does not by itself
+    # grant it anywhere to go (OD-NET-2 is `[OPEN — OWNER]`, "default minimal").
+    default_destinations: list[str] = Field(default_factory=list)
+    default_internet: bool = False
+    default_private_net: bool = False
 
 
 class ProcessExecutionConfig(StrictModel):

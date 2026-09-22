@@ -231,3 +231,12 @@ name = "Tools/agent cannot reach raw process or socket primitives (09 §8/10 §3
 type = "forbidden"
 source_modules = ["server.tools", "server.modeltools", "server.agent"]
 forbidden_modules = ["subprocess", "socket"]
+# Direct imports only. server.tools legitimately (and necessarily) depends
+# transitively on socket through server.net's egress client, and on
+# subprocess through server.execution.process — that dependency is the
+# point, not the bypass. What this contract exists to catch is an adapter
+# reaching for `import socket`/`import subprocess` itself instead of going
+# through server.fs/server.net/server.execution, which only a direct-import
+# check can distinguish from "uses a module that, three layers down, uses
+# one of these".
+allow_indirect_imports = true

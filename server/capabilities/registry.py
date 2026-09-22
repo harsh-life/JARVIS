@@ -40,8 +40,12 @@ OD-TOOL-1 was ratified by the owner at the *semantic-capability* level
 (docs/DECISION_REGISTER.md): capabilities are broad authorization classes the
 agent composes operations within, not command menus. The full matrix — owner's
 semantic classes, concrete names, per-platform adapters, and what is
-deliberately absent — is docs/CAPABILITY_MATRIX.md. The runtime branch added one
-entry, `model.invoke`, because it owns model-tools (06).
+deliberately absent — is docs/CAPABILITY_MATRIX.md. The runtime branch added
+one entry, `model.invoke`, because it owns model-tools (06). The execution
+branch added `net.request`, because it owns the egress boundary (10) that
+capability needed to exist before it could be granted. `memory`/`vault`/
+`scheduler` remain deliberately absent — their owning branches (`11`/scheduler)
+still do not exist.
 """
 
 from __future__ import annotations
@@ -194,6 +198,34 @@ def _registry() -> Mapping[str, CapabilityDefinition]:
         # its output is untrusted data (06 §4), and any action the agent proposes
         # from it is authorized separately. Cost is governed by budgets (13), not
         # by this tier. See docs/CAPABILITY_MATRIX.md §3.1.
+        # `[PROPOSED]` — added by the execution branch, which owns `10`. This is
+        # docs/CAPABILITY_MATRIX.md §3.2's `net.request`, moved from "no
+        # registry entry yet" to registered now that 10's egress enforcement
+        # exists to back it (the matrix's own stated reason it was withheld:
+        # "the capability is only meaningful once 10's default-deny egress
+        # enforces declared destinations; a network tool without 10 would be
+        # exactly the bypass NET-005 forbids"). `get` stays low_read; `post`
+        # is consequential because it is the tool family's write/exfiltration
+        # surface (10 §6) — pausing for confirmation is what stops a prompt-
+        # injected "post this data somewhere" from executing silently.
+        CapabilityDefinition(
+            name="net.request",
+            description=(
+                "Make an outbound HTTP(S) request through the egress boundary "
+                "(10) to a destination the tool's own contract — or the "
+                "operator's configured default policy — declares. Never an "
+                "unmediated socket; server/net enforces default-deny, "
+                "SSRF/metadata blocking, and DNS-rebinding-safe IP pinning "
+                "regardless of what this capability grants."
+            ),
+            operations=MappingProxyType(
+                {
+                    "get": RiskCategory.LOW_READ,
+                    "post": RiskCategory.CONSEQUENTIAL,
+                }
+            ),
+            scope_keys=frozenset(),
+        ),
         CapabilityDefinition(
             name="model.invoke",
             description=(

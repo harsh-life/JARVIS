@@ -21,6 +21,7 @@ from typing import Iterable
 from fastapi import FastAPI
 
 from server.agent import AgentRuntime, ConcurrencyGate, ConcurrencyLimits, RuntimeBounds
+from server.composition.execution_tools import build_execution_tools
 from server.composition.facade import AgentTaskFacade
 from server.composition.models import ProviderFactory, spec_from_entry
 from server.composition.secret_context import key_provider_for
@@ -119,20 +120,29 @@ def build_application(
     security: SecurityCore | None = None,
     unlock_secrets_on_startup: bool = False,
     provider_factory: ProviderFactory | None = None,
-    extra_tools: Iterable[ToolDefinition] = (),
+    extra_tools: Iterable[ToolDefinition] | None = None,
     memory_store: MemoryStore | None = None,
 ) -> FastAPI:
     """Assemble the full server: Security Core, runtime, tools, models, memory.
 
-    `provider_factory`, `extra_tools`, and `memory_store` are injection seams,
-    not test modes: production passes none of them and gets the configured
-    providers, the configured model-tools, and — until `11` supplies a Mem0
-    store — explicit FAIL-008 degradation for long-term memory.
+    `provider_factory` and `memory_store` are injection seams, not test
+    modes: production passes neither and gets the configured providers and
+    — until `11` supplies a Mem0 store — explicit FAIL-008 degradation for
+    long-term memory.
+
+    `extra_tools` changed meaning with the execution branch: passing `None`
+    (the default — production passes nothing) now gets the real execution
+    tools (`build_execution_tools`, from `ExecutionConfig`) rather than no
+    tools at all, since `server.fs`/`server.net`/`server.execution` now
+    exist to back them. A caller — a test, or a self-hoster who wants a
+    different tool set entirely — still fully substitutes by passing an
+    explicit list, exactly as `extra_tools=()` did before.
     """
 
     core = security or build_security_core(config)
     factory = provider_factory or build_provider
-    tools = build_tool_registry(config, provider_factory=factory, extra_tools=extra_tools)
+    tool_definitions = build_execution_tools(config) if extra_tools is None else extra_tools
+    tools = build_tool_registry(config, provider_factory=factory, extra_tools=tool_definitions)
 
     async def active_graph_ids(session, user_id):
         graphs = await core.graph_repository.graphs_for_user(session, user_id=user_id, limit=1000)

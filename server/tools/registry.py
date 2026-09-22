@@ -16,12 +16,22 @@ Registration is where Track B asserts a tool's contract rather than trusting it
 * each operation's resource binding is well-formed (an operation on an existing
   resource must name it, so D3/D4 apply);
 * it has at least one platform adapter — a capability is never presented as
-  available where nothing can execute it;
-* it declares **no filesystem or network requirement**, unless it is a
-  model-tool whose only egress is its configured provider endpoint. `09`/`10`
-  do not exist yet, so a tool that needs a filesystem or network boundary would
-  run without one. It is refused until the branch that enforces the boundary
-  exists (NET-005, FS-T9: a boundary that is not enforced is not a boundary).
+  available where nothing can execute it.
+
+**Execution branch update (09/10 now exist).** An earlier version of this
+module refused *any* tool declaring a filesystem or network requirement,
+because no boundary existed yet to enforce what it declared (NET-005, FS-T9:
+"a boundary that is not enforced is not a boundary"). `server/fs` and
+`server/net` are that boundary now, so the blanket refusal is gone — but the
+principle it encoded has not: this module still only *asserts a contract*,
+never enforcement. A registered `filesystem`/`network`-declaring tool's
+adapter is what must actually route through `server.fs`/`server.net`
+(`server/tools/platforms.py` does, for every adapter this branch ships); the
+registry has no way to verify that mechanically beyond what the
+`import-linter` contract already guarantees (`server.tools` cannot import
+`subprocess`/`socket` directly — see `pyproject.toml`), so getting a new
+adapter's plumbing right is still a code-review responsibility, not
+something registration proves for you.
 """
 
 from __future__ import annotations
@@ -148,22 +158,19 @@ class ToolRegistry:
             if not isinstance(platform, ExecutionPlatform):
                 raise ToolRegistrationError(f"{tool_id}: unknown platform {platform!r}")
 
-        if _declares_boundary(contract.filesystem, "roots", "read", "write"):
-            raise ToolRegistrationError(
-                f"{tool_id}: declares a filesystem requirement, but no filesystem sandbox "
-                "(09) exists to enforce it — refused rather than run unbounded"
-            )
-        if _declares_boundary(
-            contract.network, "required", "destinations", "internet", "private_net"
-        ) and not definition.is_model_tool:
-            raise ToolRegistrationError(
-                f"{tool_id}: declares a network requirement, but no egress boundary (10) "
-                "exists to enforce it — refused rather than run unbounded"
-            )
+        # A filesystem/network-declaring tool may register now that `server.fs`
+        # /`server.net` exist to back the declaration (see this module's
+        # docstring) — the blanket refusal that used to sit here is gone.
+        # `may_send_credentials` stays refused on its own: `server/net`'s
+        # client has no mechanism at all for attaching caller-supplied
+        # credentials to a request (10 §6's exfiltration controls are not
+        # built), so declaring it would assert a capability nothing can
+        # actually back, the same "refused rather than believed" principle
+        # TOOL-004 applies to every other over-claimed contract field.
         if _declares_boundary(contract.network, "may_send_credentials"):
             raise ToolRegistrationError(
-                f"{tool_id}: may_send_credentials cannot be granted without 10's "
-                "credential-exfiltration controls"
+                f"{tool_id}: may_send_credentials cannot be granted — server.net has no "
+                "mechanism to attach a credential to an outbound request (10 §6)"
             )
 
         handle = ToolHandle(
