@@ -22,6 +22,7 @@ contract didn't declare. See `contracts.py` for the boundary types.
 
 from __future__ import annotations
 
+from server.execution.process import ConstrainedProcessExecutor, ProcessOutcome
 from shared.schemas.execution import (
     EgressPolicy,
     ExecutionError,
@@ -32,10 +33,12 @@ from shared.schemas.execution import (
 )
 
 __all__ = [
+    "ConstrainedProcessExecutor",
     "EgressPolicy",
     "ExecutionError",
     "ExecutionErrorCode",
     "ExecutionRequest",
     "ExecutionResult",
+    "ProcessOutcome",
     "ResourceScope",
 ]
