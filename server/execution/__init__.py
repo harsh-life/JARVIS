@@ -22,6 +22,14 @@ contract didn't declare. See `contracts.py` for the boundary types.
 
 from __future__ import annotations
 
+from server.execution.android import (
+    PRIMITIVE_BY_OPERATION,
+    DeviceOperation,
+    DeviceTransport,
+    DeviceUnavailable,
+    UnavailableDeviceTransport,
+    build_operation,
+)
 from server.execution.process import ConstrainedProcessExecutor, ProcessOutcome
 from shared.schemas.execution import (
     EgressPolicy,
@@ -33,7 +41,11 @@ from shared.schemas.execution import (
 )
 
 __all__ = [
+    "PRIMITIVE_BY_OPERATION",
     "ConstrainedProcessExecutor",
+    "DeviceOperation",
+    "DeviceTransport",
+    "DeviceUnavailable",
     "EgressPolicy",
     "ExecutionError",
     "ExecutionErrorCode",
@@ -41,4 +53,6 @@ __all__ = [
     "ExecutionResult",
     "ProcessOutcome",
     "ResourceScope",
+    "UnavailableDeviceTransport",
+    "build_operation",
 ]
