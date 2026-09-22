@@ -1,12 +1,15 @@
-"""memory — placeholder package (foundation branch).
+"""Memory / context / visibility — 11_MEMORY_CONTEXT_VISIBILITY.md.
 
-Not implemented in the `foundation` branch. This package exists only so that:
-  1. the repository layout matches 00_CANONICAL_PRD.md §45 / 16_REPOSITORY_MODULE_BOUNDARIES.md §1, and
-  2. module-boundary (import-linter) contracts about this package are meaningful
-     for later branches (e.g. "server.agent must never import server.secrets").
-
-Do not add implementation logic here from the `foundation` branch. The subsystem
-document that owns this package's real implementation is named below.
+Still not implemented by this branch beyond the hydration *interface* the
+agent runtime needs to exist (`server/memory/hydrator.py`) — see that
+module's docstring for the explicit scope boundary. `server.memory` remains
+forbidden from importing `server.secrets` (pyproject's "Memory/vault never
+resolve secrets", GRAPH-009), which this package continues to honor: nothing
+here needs a secret, now or once `11` is implemented.
 
 Owning subsystem doc: 11_MEMORY_CONTEXT_VISIBILITY.md
 """
+
+from server.memory.hydrator import NullMemoryHydrator
+
+__all__ = ["NullMemoryHydrator"]

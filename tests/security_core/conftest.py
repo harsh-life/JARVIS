@@ -334,7 +334,12 @@ async def api(
         await core.secret_store.bootstrap(session, resolve_kek(f"env:{TEST_KEK_ENV_VAR}"))
         await session.commit()
 
-    app = create_app(storage=storage, security=core)
+    # `config=config` lets `create_app` build a `RuntimeCore` automatically
+    # (the runtime branch's addition) — these tests exercise auth/graph/
+    # capabilities endpoints, not the agent runtime, but `create_app` still
+    # requires *some* way to construct `app.state.runtime`, and `config` is
+    # already sitting right here from building `core` above.
+    app = create_app(storage=storage, security=core, config=config)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield Api(client=client, provider=provider, core=core, storage=storage)

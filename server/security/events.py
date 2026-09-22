@@ -76,6 +76,19 @@ class AuditAction(str, Enum):
     SUPERUSER_AUTHENTICATED = "superuser.authenticated"
     SUPERUSER_REJECTED = "superuser.rejected"
 
+    # ── agent runtime (05 §13 of this branch's instructions) ────────────
+    # A curated subset of `shared.schemas.runtime.RuntimeEventKind` — only
+    # the security-sensitive ones get a persisted AuditEvent; the rest stay
+    # observability-only (server.agent cannot reach server.storage at all,
+    # see pyproject's boundary contract, so it never writes one directly —
+    # the gateway-side event recorder adapter does this translation).
+    AGENT_TASK_CREATED = "agent.task.created"
+    AGENT_TOOL_INVOKED = "agent.tool.invoked"
+    AGENT_TOOL_FAILED = "agent.tool.failed"
+    AGENT_TASK_COMPLETED = "agent.task.completed"
+    AGENT_TASK_FAILED = "agent.task.failed"
+    AGENT_TASK_CANCELLED = "agent.task.cancelled"
+
 
 # 12 §5 emits through a port that speaks plain strings (server/secrets is
 # below server/security and cannot import this enum). This is the one

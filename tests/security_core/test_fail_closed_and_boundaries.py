@@ -384,6 +384,12 @@ async def test_no_decision_or_intelligence_provider_implementation_exists():
 
     Nothing in this branch may have started building it, and `intelligence`
     likewise stays an empty stub (INV-18/INTEL-003).
+
+    Runtime-branch update: `server/agent` is no longer asserted stub-only —
+    05_AGENT_RUNTIME.md is exactly what that package now implements, per the
+    runtime branch's own scope. The property this test actually guards
+    (no DecisionProvider/IntelligenceProvider code anywhere, `intelligence`
+    still untouched) is unchanged and still asserted below.
     """
 
     for path in sorted(Path("server").rglob("*.py")):
@@ -391,9 +397,11 @@ async def test_no_decision_or_intelligence_provider_implementation_exists():
         assert "DecisionProvider" not in code, path
         assert "IntelligenceProvider" not in code, path
 
-    # Both packages remain stubs: only their __init__.py exists.
+    # `intelligence` remains a stub: only its __init__.py exists (INTEL-003 —
+    # still out of scope for the runtime branch, per its own instructions:
+    # "MVP default remains intelligence.enabled = false... do not implement
+    # Track A internals").
     assert [p.name for p in Path("server/intelligence").glob("*.py")] == ["__init__.py"]
-    assert [p.name for p in Path("server/agent").glob("*.py")] == ["__init__.py"]
 
 
 async def test_no_track_a_dependency_exists():
@@ -410,11 +418,18 @@ async def test_no_filesystem_network_or_device_execution_bypass_was_added():
     sandbox, network egress, or Android execution path, so it cannot have opened a
     bypass of boundaries that do not exist yet.
 
-    Asserted as an absence: `fs`, `net`, `tools`, and `voice` remain stubs, and no
-    security-core module reaches for a raw socket or subprocess.
+    Runtime-branch update: `tools`, `modeltools`, and `memory` are no longer
+    asserted stub-only — 07's registry/dispatch machinery, 06's LLM-as-a-Tool
+    wrapper, and 11's hydration *interface* are exactly what the runtime
+    branch's own instructions scope it to implement ("DO NOT implement the
+    actual platform execution systems... unless strictly required as
+    interfaces"). `fs`, `net`, `voice`, `scheduler`, and `vault` — the actual
+    filesystem sandbox, network egress enforcement, and device/scheduling
+    execution — remain untouched, which is the property this test exists to
+    guard.
     """
 
-    for package in ("fs", "net", "tools", "voice", "modeltools", "scheduler", "memory", "vault"):
+    for package in ("fs", "net", "voice", "scheduler", "vault"):
         assert [p.name for p in Path(f"server/{package}").glob("*.py")] == [
             "__init__.py"
         ], package

@@ -1,12 +1,12 @@
-"""modeltools — placeholder package (foundation branch).
+"""LLM-as-a-Tool — 06_MODEL_PROVIDER_LLM_TOOL.md §3.
 
-Not implemented in the `foundation` branch. This package exists only so that:
-  1. the repository layout matches 00_CANONICAL_PRD.md §45 / 16_REPOSITORY_MODULE_BOUNDARIES.md §1, and
-  2. module-boundary (import-linter) contracts about this package are meaningful
-     for later branches (e.g. "server.agent must never import server.secrets").
-
-Do not add implementation logic here from the `foundation` branch. The subsystem
-document that owns this package's real implementation is named below.
-
-Owning subsystem doc: 06_MODEL_PROVIDER_LLM_TOOL.md
+See `server/modeltools/executor.py` for the implementation. Independent of
+`server.tools` under the layering contract (both occupy the same sibling
+band) — the gateway composition root registers a `ModelToolExecutor` into
+`server.tools.ToolRegistry` under its own `tool_id`; neither package imports
+the other.
 """
+
+from server.modeltools.executor import ModelToolExecutor
+
+__all__ = ["ModelToolExecutor"]

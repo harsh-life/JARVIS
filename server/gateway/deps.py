@@ -45,12 +45,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.auth.errors import AuthError, InvalidAccessToken
 from server.auth.sessions import ResolvedSession
 from server.capabilities.floor import AbsoluteFloorViolation
+from server.config.schema import AppConfig
 from server.gateway.errors import AppError
+from server.gateway.runtime import RuntimeCore
 from server.gateway.security import SecurityCore
 from server.graph.service import GraphOperationRefused
 from server.security.audit import AuditLogger
 from server.storage import StorageBackend
 from shared.schemas.authorization import Principal
+from shared.schemas.errors import ErrorCode
 
 BEARER_PREFIX = "Bearer "
 
@@ -61,6 +64,21 @@ def get_storage_backend(request: Request) -> StorageBackend:
 
 def get_security_core(request: Request) -> SecurityCore:
     return request.app.state.security
+
+
+def get_runtime_core(request: Request) -> RuntimeCore:
+    return request.app.state.runtime
+
+
+def get_app_config(request: Request) -> AppConfig:
+    config: AppConfig | None = getattr(request.app.state, "config", None)
+    if config is None:
+        # A deployment/test that built storage+security+runtime directly
+        # without an AppConfig cannot resolve an AgentConfiguration's
+        # server-wide default (`server/gateway/runtime.py`'s fallback) — an
+        # explicit 500 here is the honest failure, not a guess at defaults.
+        raise AppError(ErrorCode.INTERNAL_ERROR, "no AppConfig is available for this server")
+    return config
 
 
 def get_request_id(request: Request) -> uuid.UUID:

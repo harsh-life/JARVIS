@@ -16,7 +16,8 @@ from fastapi import APIRouter, FastAPI
 from server.config import AppConfig
 from server.gateway.errors import install_error_handlers
 from server.gateway.request_context import RequestIdMiddleware
-from server.gateway.routers import auth, capabilities, graphs, health, sessions
+from server.gateway.routers import agent, auth, capabilities, graphs, health, sessions
+from server.gateway.runtime import RuntimeCore, build_runtime_core, populate_tool_registry
 from server.gateway.security import SecurityCore, build_security_core
 from server.gateway.security_errors import install_security_error_handlers
 from server.storage import StorageBackend
@@ -29,6 +30,7 @@ def create_app(
     config: AppConfig | None = None,
     storage: StorageBackend | None = None,
     security: SecurityCore | None = None,
+    runtime: RuntimeCore | None = None,
     unlock_secrets_on_startup: bool = False,
 ) -> FastAPI:
     """Build the FastAPI app.
@@ -52,6 +54,22 @@ def create_app(
             from server.gateway.security import unlock_secret_store
 
             await unlock_secret_store(app.state.security, app.state.storage)
+
+            # This branch's addition: model-tool secrets (06 §3) can only be
+            # resolved once the SecretStore is unlocked, so this runs
+            # immediately after — never before, and never if the store
+            # stays locked (a deployment that skips startup-unlock gets an
+            # agent runtime with no model-tools registered, not a crash;
+            # tool-catalog discovery simply reports none available).
+            if getattr(app.state, "config", None) is not None:
+                async with app.state.storage.session() as _session:
+                    await populate_tool_registry(
+                        app.state.runtime,
+                        config=app.state.config,
+                        security=app.state.security,
+                        session=_session,
+                    )
+                    await _session.commit()
         try:
             yield
         finally:
@@ -79,6 +97,7 @@ def create_app(
     v1.include_router(sessions.router)
     v1.include_router(graphs.router)
     v1.include_router(capabilities.router)
+    v1.include_router(agent.router)
     app.include_router(v1)
 
     # Storage is attached synchronously at construction time, not deferred
@@ -111,5 +130,28 @@ def create_app(
         raise RuntimeError(
             "create_app() requires either `config` or a pre-built `security` core"
         )
+
+    # This branch's addition, same construction discipline as storage/security
+    # above: built synchronously, deterministically, and (per `RuntimeCore`'s
+    # own docstring) **empty** of model-tools until `populate_tool_registry`
+    # runs in lifespan startup.
+    if runtime is not None:
+        app.state.runtime = runtime
+    elif config is not None:
+        app.state.runtime = build_runtime_core(config)
+    else:
+        raise RuntimeError(
+            "create_app() requires either `config` or a pre-built `runtime` core"
+        )
+
+    # Stashed for `server/gateway/deps.py::get_app_config` — the agent
+    # endpoints need it to resolve a principal's default `AgentConfiguration`
+    # (`server/gateway/runtime.py::resolve_agent_configuration`). May be
+    # `None` when a caller supplied `storage`/`security`/`runtime` directly
+    # without a `config` (e.g. a test wiring its own throwaway objects); that
+    # is only fatal for a request that actually needs it, not for
+    # construction — mirrors how `security`/`storage` overrides already let a
+    # caller skip `config` entirely today.
+    app.state.config = config
 
     return app

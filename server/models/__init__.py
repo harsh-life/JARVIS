@@ -1,12 +1,24 @@
-"""models — placeholder package (foundation branch).
+"""ModelProvider adapters — 06_MODEL_PROVIDER_LLM_TOOL.md.
 
-Not implemented in the `foundation` branch. This package exists only so that:
-  1. the repository layout matches 00_CANONICAL_PRD.md §45 / 16_REPOSITORY_MODULE_BOUNDARIES.md §1, and
-  2. module-boundary (import-linter) contracts about this package are meaningful
-     for later branches (e.g. "server.agent must never import server.secrets").
+`server/models` may resolve its own declared `secret_ref` via `server.secrets`
+at the call boundary (12 §6's exception for tools/models, `pyproject.toml`'s
+"Memory/vault never resolve secrets" contract comment) — nothing in this
+package is reachable from `server.agent`, which is mechanically forbidden
+from importing it at all (they are independent siblings under the layering
+contract); the gateway composition root (`server/gateway/runtime.py`)
+constructs a provider here and hands it to the agent runtime as a
+`server.agent.ports.ModelInvoker`.
 
-Do not add implementation logic here from the `foundation` branch. The subsystem
-document that owns this package's real implementation is named below.
-
-Owning subsystem doc: 06_MODEL_PROVIDER_LLM_TOOL.md (ModelProvider adapters — distinct from server/storage's DB models)
+Importing this package registers every adapter it ships (currently: Ollama —
+06 §2's local-first default) into `server.models.provider`'s registry.
 """
+
+from server.models import ollama  # noqa: F401  (registers the Ollama adapter)
+from server.models.provider import (
+    ModelProvider,
+    ProviderFactory,
+    build_provider,
+    register_adapter,
+)
+
+__all__ = ["ModelProvider", "ProviderFactory", "build_provider", "register_adapter"]

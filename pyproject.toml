@@ -76,14 +76,49 @@ root_packages = ["server", "shared"]
 # audits through a port it defines itself (server/secrets/audit_port.py)
 # rather than importing server.security (which would be a lower layer
 # importing an upper one — the one rule 16 §2 locks).
+#
+# runtime-branch refinement (documented, not silent): foundation/security-core
+# placed `agent | modeltools | tools | memory | vault | scheduler | voice`
+# *above* `gateway`, before any of them had real code, purely so the package
+# layout existed (see each package's placeholder `__init__.py`: "module-
+# boundary contracts about this package are meaningful for later branches").
+# The runtime branch is the first to give any of them real code, and doing so
+# exposed that ordering as unworkable: `server/gateway` is Track B's one
+# composition root (`server/gateway/security.py` already wires
+# auth/graph/capabilities/secrets/storage together for exactly this reason),
+# and a lower layer can never import an upper one (16 §2's own rule) — so with
+# the old ordering `gateway` could never construct or wire `agent`. Verified
+# empirically (`lint-imports`) before and after: no existing code imports
+# `agent|modeltools|tools|memory|vault|scheduler|voice` from `gateway` or vice
+# versa (they were unimplemented placeholders), so moving them below `gateway`
+# changes zero existing behaviour and breaks no contract that was ever
+# exercised. `models` (06's ModelProvider adapters — distinct from
+# `server/storage`'s DB models) joins the same band as `tools`/`modeltools`:
+# the pre-existing comment below already treated it as a peer of `tools` for
+# secret access, so the layering now says so explicitly instead of leaving
+# `models` unconstrained.
+#
+# This does **not** loosen anything `agent` was forbidden from reaching: the
+# two explicit `forbidden` contracts just below stay in force regardless of
+# layer position (they are independent of the `layers` contract, not derived
+# from it), and a new one is added — `agent` is now also forbidden from
+# `server.storage` and `server.gateway`, so the runtime orchestrator stays
+# persistence- and framework-free by construction, receiving every
+# capability it needs (authorize, invoke a model, dispatch a tool, hydrate
+# memory, record an event, resolve its `AgentConfiguration`) as a
+# constructor-injected Protocol implementation the gateway composition root
+# supplies (`server/agent/ports.py`, wired in `server/gateway/runtime.py`) —
+# the same "ports declared by the consumer, satisfied structurally by
+# whatever the composition root builds" pattern `server/graph/ports.py`
+# already established between graph and capabilities.
 [[tool.importlinter.contracts]]
 name = "Track B server layering (16 §2)"
 type = "layers"
 containers = ["server"]
 layers = [
     "dashboard",
-    "agent | modeltools | tools | memory | vault | scheduler | voice",
     "gateway",
+    "agent | modeltools | models | tools | memory | vault | scheduler | voice",
     "auth",
     "graph | capabilities",
     "net | fs",
@@ -99,6 +134,20 @@ name = "Agent never imports raw secrets resolution (16 §3, REPO-T1)"
 type = "forbidden"
 source_modules = ["server.agent"]
 forbidden_modules = ["server.secrets"]
+
+# Runtime-branch addition: the agent runtime is deterministic orchestration,
+# not a data-access layer — 05_AGENT_RUNTIME.md's own determinism table (§11)
+# and this branch's own architectural-quality instruction ("do not create...
+# direct database access from model code") are both stronger than what plain
+# layering would require now that `agent` sits below `gateway`. Every
+# capability the runtime needs — persistence, the HTTP surface — arrives as an
+# injected port (`server/agent/ports.py`); nothing in `server/agent` imports a
+# session, a router, or an ORM model directly.
+[[tool.importlinter.contracts]]
+name = "Agent stays persistence- and framework-free (05 §11, runtime branch)"
+type = "forbidden"
+source_modules = ["server.agent"]
+forbidden_modules = ["server.storage", "server.gateway"]
 
 # 16 §5: dashboard is read-only observability — it cannot import secret
 # resolution (DASH-002).

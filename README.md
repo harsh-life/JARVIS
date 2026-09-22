@@ -19,9 +19,9 @@ HUMAN CONFIRMS WHERE REQUIRED
 
 Model output is never the security boundary.
 
-## Current state: `security-core` branch
+## Current state: `runtime` branch
 
-Two branches are in:
+Three branches are in:
 
 **`foundation`** — the technical substrate: shared data contracts,
 configuration, persistence/migrations, and the API skeleton (versioning,
@@ -48,10 +48,38 @@ branch must pass through:
 
 See `docs/RUNNING_SECURITY_CORE.md` to run it.
 
-**There is still no agent runtime, tool execution, model provider,
-filesystem sandbox, network egress enforcement, or Android integration** —
-those are later branches, and they consume this one's interfaces rather
-than re-deriving them.
+**`runtime`** — the propose→authorize→execute loop (`05`), never itself a
+security authority:
+
+- **Agent runtime** (`server/agent`): task lifecycle, deterministic context
+  assembly, deterministic proposal parsing (a model's raw output is data,
+  never free-text authorization), and the bounded loop — every ceiling 05 §3
+  requires (iterations, tool calls, model calls, model-tool nesting depth,
+  wall-clock timeout, budget) enforced by the runtime, breach always an
+  explicit failure, never a silent stop.
+- **Tool registry & dispatch** (`server/tools`): the registered-contract /
+  enabled-configuration chain (07 §1) up to the point of calling a concrete
+  executor — no filesystem/network/device primitive is implemented here.
+- **ModelProvider & LLM-as-a-Tool** (`server/models`, `server/modeltools`):
+  one normalized invoke interface (06 §1), a local-first Ollama adapter, and
+  model-tools flowing through the *same* capability-gated tool machinery as
+  any other tool.
+- **Memory hydration interface** (`server/memory`): the port `11`'s
+  visibility-filtered retrieval will implement; today an honest no-op, since
+  no branch has built Mem0 yet.
+
+Structurally isolated from Security Core: `server/agent` cannot import
+`server.graph`, `server.capabilities`, `server.secrets`, `server.storage`, or
+`server.gateway` (import-linter, mechanically enforced) — every authorization,
+persistence, and confirmation capability it needs arrives as a
+constructor-injected port (`server/agent/ports.py`), built by the gateway
+composition root (`server/gateway/runtime.py`) from the real Security Core
+objects. The model can propose; it cannot reach the engine.
+
+**There is still no filesystem sandbox, network egress enforcement, or
+Android integration** — those are the Execution branch's job (`08`/`09`/`10`),
+and the runtime consumes their eventual interfaces rather than re-deriving
+them.
 
 ### Before putting real data anywhere near this
 
@@ -66,7 +94,7 @@ measurement. Passing unit tests do not imply real-user readiness.
 server/    the modular-monolith FastAPI application (one package per subsystem)
 shared/    schemas/  — canonical Pydantic data contracts, importable by both
                         server/ and a future android/ client
-tests/     pytest suite (tests/foundation/, tests/security_core/)
+tests/     pytest suite (tests/foundation/, tests/security_core/, tests/runtime/)
 docs/      RUNNING_FOUNDATION.md, RUNNING_SECURITY_CORE.md, OD_A1_BR_T2.md
 Working Markdown/   the architecture/PRD document package (source of truth)
 ```

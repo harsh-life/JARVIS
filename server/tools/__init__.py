@@ -1,12 +1,12 @@
-"""tools — placeholder package (foundation branch).
+"""Tool registry & dispatch — 07_TOOL_CAPABILITY_EXECUTION.md §1/§8.
 
-Not implemented in the `foundation` branch. This package exists only so that:
-  1. the repository layout matches 00_CANONICAL_PRD.md §45 / 16_REPOSITORY_MODULE_BOUNDARIES.md §1, and
-  2. module-boundary (import-linter) contracts about this package are meaningful
-     for later branches (e.g. "server.agent must never import server.secrets").
-
-Do not add implementation logic here from the `foundation` branch. The subsystem
-document that owns this package's real implementation is named below.
-
-Owning subsystem doc: 07_TOOL_CAPABILITY_EXECUTION.md
+This branch (runtime) implements the registry/dispatch machinery only — see
+`server/tools/executor.py`'s module docstring for the explicit scope
+boundary against the Execution branch, which owns every concrete tool
+(filesystem, network, Android/device).
 """
+
+from server.tools.executor import ToolExecutor
+from server.tools.registry import RegisteredTool, ToolRegistry
+
+__all__ = ["RegisteredTool", "ToolExecutor", "ToolRegistry"]

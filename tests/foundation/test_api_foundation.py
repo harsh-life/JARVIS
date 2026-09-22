@@ -31,7 +31,11 @@ async def app_client(storage: SQLAlchemyStorageBackend):
     # the factory is given one built from a test config. The core is constructed
     # *locked* (12 §3), which is exactly the state the protocol-plumbing
     # assertions below want — none of them touches a secret.
-    app = create_app(storage=storage, security=build_security_core(make_test_config()))
+    # runtime branch: `config=` is also passed so `create_app` can build a
+    # `RuntimeCore` automatically — these tests don't touch agent endpoints,
+    # but `create_app` still needs some way to construct `app.state.runtime`.
+    config = make_test_config()
+    app = create_app(storage=storage, security=build_security_core(config), config=config)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client

@@ -165,6 +165,32 @@ def _registry() -> Mapping[str, CapabilityDefinition]:
             scope_keys=frozenset({"sandbox_root"}),
         ),
         CapabilityDefinition(
+            name="model_tool.invoke",
+            description=(
+                "Invoke a configured model-tool (06 §3 LLM-as-Tool) — an "
+                "agent runtime addition, pending owner ratification like the "
+                "rest of this table (OD-TOOL-1). Flows through the same "
+                "capability chain as any tool family (06 §3 [LOCKED]: "
+                "'the SAME tool machinery as any other tool'), scoped to "
+                "*which* model-tool by `resource_scope`. `invoke` is the only "
+                "enumerated operation: an agent that holds this capability "
+                "still cannot invoke a model-tool absent from its resolved "
+                "`AgentConfiguration.model_tools` (06 §3 discovery rule) — "
+                "that check is the runtime's, not this registry's."
+            ),
+            operations=MappingProxyType(
+                {
+                    # Calling an external model has a real cost/latency but no
+                    # irreversible effect by itself (06 §4: its output is
+                    # untrusted data returning to the agent's context, not an
+                    # action) — tiered LOW_WRITE rather than LOW_READ because,
+                    # unlike a pure read, it is metered spend (13 USAGE-001).
+                    "invoke": RiskCategory.LOW_WRITE,
+                }
+            ),
+            scope_keys=frozenset({"model_tool_id"}),
+        ),
+        CapabilityDefinition(
             name="system.restricted",
             description=(
                 "The high-risk family kept deliberately separate (07 §2, 08's "

@@ -57,6 +57,24 @@ class ServerConfig(StrictModel):
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
 
 
+class RuntimeBoundsSectionConfig(StrictModel):
+    """05 §3 (RATE-001): "the *existence and enforcement* of every ceiling is
+    locked... exact numeric values are OD-02 / [IMPL]." This branch's
+    concrete defaults — mirrors `shared.schemas.runtime.RuntimeBounds`, which
+    is what the runtime orchestrator actually enforces; this section is only
+    the configured input to it (`server/gateway/runtime.py` constructs one
+    from this section, never invents its own separate defaults)."""
+
+    max_iterations: int = Field(default=12, gt=0)
+    max_tool_calls: int = Field(default=8, gt=0)
+    max_model_calls: int = Field(default=12, gt=0)
+    max_model_tool_nesting_depth: int = Field(default=1, ge=0)
+    max_parse_retries: int = Field(default=2, ge=0)
+    wall_clock_timeout_seconds: float = Field(default=120.0, gt=0)
+    model_call_timeout_seconds: float = Field(default=30.0, gt=0)
+    max_cost: float = Field(default=0.0, ge=0.0)
+
+
 class AgentSectionConfig(StrictModel):
     """The primary agent's model selection (00_CANONICAL_PRD.md §19,
     P4 — swappable by configuration alone). Foundation does not implement
@@ -66,6 +84,7 @@ class AgentSectionConfig(StrictModel):
     model: str = "qwen2.5:3b-instruct"
     secret_ref: SecretRef | None = None
     generation_policy: dict = Field(default_factory=dict)
+    bounds: RuntimeBoundsSectionConfig = Field(default_factory=RuntimeBoundsSectionConfig)
 
 
 class ModelToolEntryConfig(StrictModel):
