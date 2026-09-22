@@ -90,6 +90,14 @@ class ResourceType(str, Enum):
     AGENTCONFIG = "agentconfig"
     CAPABILITY_GRANT = "capability_grant"
     SECRET_REFERENCE = "secret_reference"
+    # `[PROPOSED]` (runtime branch, docs/DECISION_REGISTER.md §2): a tool
+    # operation that targets no persisted resource — invoking a model-tool,
+    # tapping a UI element. Authorized only as `Operation.CREATE`, so the engine
+    # never loads it and it carries nothing readable: it is decided on
+    # membership, capability, the absolute floor and the risk tier alone. A tool
+    # that touches a real resource (a `FileResource`) declares that type instead
+    # and gets ownership (D3) and visibility (D4).
+    TOOL_ACTION = "tool_action"
 
 
 class DenialSurface(str, Enum):

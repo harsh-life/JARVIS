@@ -57,23 +57,107 @@ class ServerConfig(StrictModel):
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
 
 
+LOCAL_MODEL_PROVIDERS = frozenset({"ollama"})
+
+
+class ModelPricingConfig(StrictModel):
+    """Per-1k-token prices, in the same currency as `security.budgets`.
+
+    Required for every non-local provider (see `_require_pricing`): 13 §3 refuses
+    a paid call that would breach budget, and a call whose cost cannot be
+    projected cannot be checked — so an unpriced paid provider is a load-time
+    failure rather than a silently unbudgeted one.
+    """
+
+    input_per_1k_tokens: float = Field(default=0.0, ge=0.0)
+    output_per_1k_tokens: float = Field(default=0.0, ge=0.0)
+
+
+def _require_pricing(provider: str, pricing: "ModelPricingConfig | None", where: str) -> None:
+    if provider not in LOCAL_MODEL_PROVIDERS and pricing is None:
+        raise ValueError(
+            f"{where}: provider {provider!r} is not local, so it must declare "
+            "`pricing` — an unpriced paid call cannot be checked against a budget "
+            "(13 §3, fail-closed)"
+        )
+
+
+class ModelEntryConfig(StrictModel):
+    """One model selection (06 §1). `secret_ref` is a handle, never a key."""
+
+    provider: str
+    model: str
+    endpoint: str | None = None
+    secret_ref: SecretRef | None = None
+    timeout_seconds: float = Field(default=60.0, gt=0)
+    pricing: ModelPricingConfig | None = None
+    generation_policy: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _priced_if_paid(self) -> "ModelEntryConfig":
+        _require_pricing(self.provider, self.pricing, "model entry")
+        return self
+
+
+class AgentBoundsConfig(StrictModel):
+    """05 §3's hard ceilings. `[LOCKED]` that every one exists and is enforced;
+    the numbers are `[IMPL]` / OD-02, `[PROPOSED]` in
+    docs/DECISION_REGISTER.md §2."""
+
+    max_iterations: int = Field(default=12, gt=0)
+    max_model_calls: int = Field(default=16, gt=0)
+    max_tool_calls: int = Field(default=24, ge=0)
+    # OD-RT-1 — a model-tool is single-shot, so depth 1 is the natural cap; 0
+    # disables model-tools entirely.
+    max_model_tool_nesting_depth: int = Field(default=1, ge=0)
+    wall_clock_timeout_seconds: float = Field(default=120.0, gt=0)
+    # Paid spend allowed within one task. 0.0 → a paid call is refused.
+    per_task_budget: float = Field(default=0.0, ge=0.0)
+    max_parse_retries: int = Field(default=2, ge=0)
+    max_input_chars: int = Field(default=8000, gt=0)
+    max_observation_chars: int = Field(default=4000, gt=0)
+    max_context_chars: int = Field(default=24000, gt=0)
+    memory_top_k: int = Field(default=5, ge=0)
+
+
 class AgentSectionConfig(StrictModel):
     """The primary agent's model selection (00_CANONICAL_PRD.md §19,
-    P4 — swappable by configuration alone). Foundation does not implement
-    ModelProvider; this is only the declared selection."""
+    P4 — swappable by configuration alone), its optional deterministic fallback
+    (05 §5), and the runtime's bounds (05 §3)."""
 
     provider: str = "ollama"
     model: str = "qwen2.5:3b-instruct"
+    endpoint: str | None = None
     secret_ref: SecretRef | None = None
+    timeout_seconds: float = Field(default=60.0, gt=0)
+    pricing: ModelPricingConfig | None = None
     generation_policy: dict = Field(default_factory=dict)
+    # 05 §5: used only if configured, decided by the runtime, never the model.
+    fallback: ModelEntryConfig | None = None
+    bounds: AgentBoundsConfig = Field(default_factory=AgentBoundsConfig)
+
+    @model_validator(mode="after")
+    def _priced_if_paid(self) -> "AgentSectionConfig":
+        _require_pricing(self.provider, self.pricing, "agent")
+        return self
 
 
 class ModelToolEntryConfig(StrictModel):
     id: str
     provider: str
     model: str
+    description: str = ""
+    endpoint: str | None = None
     secret_ref: SecretRef | None = None
+    timeout_seconds: float = Field(default=60.0, gt=0)
+    pricing: ModelPricingConfig | None = None
+    generation_policy: dict = Field(default_factory=dict)
     enabled: bool = False
+
+    @model_validator(mode="after")
+    def _priced_if_paid(self) -> "ModelToolEntryConfig":
+        _require_pricing(self.provider, self.pricing, f"models_as_tools[{self.id}]")
+        return self
 
 
 class ToolEntryConfig(StrictModel):
@@ -122,8 +206,15 @@ class OIDCConfig(StrictModel):
 
 
 class RateLimitsConfig(StrictModel):
+    """13 §2. The per-minute rates apply to metered calls (model calls and tool
+    executions) and are evaluated against the usage ledger."""
+
     per_user_requests_per_minute: int = Field(default=60, gt=0)
     per_device_requests_per_minute: int = Field(default=60, gt=0)
+    global_requests_per_minute: int = Field(default=600, gt=0)
+    per_session_concurrent_tasks: int = Field(default=1, gt=0)
+    per_user_concurrent_tasks: int = Field(default=2, gt=0)
+    global_concurrent_tasks: int = Field(default=8, gt=0)
 
 
 class BudgetsConfig(StrictModel):

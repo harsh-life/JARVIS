@@ -1,9 +1,15 @@
 # OD-A1 / BR-T2 — measured blast radius under application-level RCE
 
-**Status:** `[OPEN — OWNER]` · **Gate:** release-blocking for real user data
+**Status:** **RESOLVED FOR PILOT — ACCEPTED RESIDUAL** (owner decision, option (a), 2026-09-22)
+**Previously:** `[OPEN — OWNER]` — superseded by the decision recorded in §6 and `docs/DECISION_REGISTER.md`
 **Experiment:** `tests/security_core/test_od_a1_br_t2.py`
 **Authority:** `14_SECURITY_BLAST_RADIUS.md` §4, `17_TEST_ACCEPTANCE_VALIDATION.md` §4
-**Branch that produced this measurement:** `security-core`
+**Branch that produced this measurement:** `security-core` (re-verified unchanged by `runtime`)
+
+> Accepting the residual is **not** a claim of isolation. The rows marked
+> REACHABLE below are exactly what the owner accepted, and the experiment keeps
+> asserting they stay reachable, so this document cannot silently become a false
+> "isolated" claim (INV-20).
 
 ---
 
@@ -94,9 +100,16 @@ three cannot be measured yet, because the subsystems do not exist:
 | **Filesystem sandbox** (`09`) | **PENDING** | No sandbox roots, no path resolution, no `FileResource` content on disk. FS-T5/FS-T9 are `09`'s to measure. |
 | Network egress exfiltration (`10`) | **PENDING** | No egress enforcement exists; NET-T8 is `10`'s to measure. |
 
-`[LOCKED]` these rows are **pending, not passing**. BR-T2 is not complete until
-`09` and `11` exist and are measured on the same basis. The gate in §6 depends on
-the whole measurement, not on the portion this branch could run.
+`[LOCKED]` these rows are **pending, not passing**. They are measured on the same
+basis when `09` and `11` exist. The owner's acceptance (§6) covers the *class* of
+residual — a compromised live process reaching what that process can already
+reach — so a pending row that turns out REACHABLE for that reason falls inside
+the accepted risk. A row reachable for any *other* reason goes back to the owner.
+
+The `runtime` branch adds no new in-process store: the agent's working transcript
+is volatile, and `agent_tasks` holds only owner-scoped lifecycle rows. Those rows
+are reachable under RCE on the same basis as row 2, and nothing about them changes
+the measured radius.
 
 ---
 
@@ -106,8 +119,8 @@ the whole measurement, not on the portion this branch could run.
 
 | Residual | Why it remains | Mitigation in place | Owner action |
 |---|---|---|---|
-| App RCE reads co-tenant rows and **in-memory** unlocked secrets | Single-process pilot; logical boundaries are application code (rows 2, 3, 6 above) | Logical isolation for all legitimate callers; at-rest encryption with external KEK; handle-only agent access | **Decide (a)/(b)/(c) below** |
-| In-process superuser minting | `SuperuserGrant` is process-local (row 11) | The credential itself is a separate env var from the KEK, so neither yields the other to an attacker who only reads config | Accept for pilot, or fold into (b)/(c) |
+| App RCE reads co-tenant rows and **in-memory** unlocked secrets | Single-process pilot; logical boundaries are application code (rows 2, 3, 6 above) | Logical isolation for all legitimate callers; at-rest encryption with external KEK; handle-only agent access | **Accepted for pilot — option (a)** (§6) |
+| In-process superuser minting | `SuperuserGrant` is process-local (row 11) | The credential itself is a separate env var from the KEK, so neither yields the other to an attacker who only reads config | **Accepted for pilot — option (a)** |
 | **Stolen device credential** before revocation | "Logged in until revoked" is the deliberate UX choice (SESSION-001, 03 §7) | Short access-token TTL (15 min); step-up on credential rotation; immediate revocation killing live tokens | Accept, or shorten TTL |
 | Stolen access token | Short TTL | Opaque tokens with server lookup → revocation is immediate, not TTL-bounded | Accept |
 | Mem0 / filesystem cross-user reach under RCE | Not yet measurable (§4) | — | Re-run BR-T2 after `09`/`11` |
@@ -125,8 +138,20 @@ From 14 §4 and PILOT-004:
 > reviewed and either accepted for the pilot's risk level or upgraded to
 > (b)/(c)**
 
-**Current position: the gate is CLOSED.** The pilot may run on **disposable or
-test data only**. Real user data requires the owner's decision below.
+**Current position: OD-A1 is decided — option (a), accepted for the pilot's risk
+level.** The owner reviewed this measurement and explicitly accepted the residual
+in §3 and §5. The pilot may proceed under that accepted risk model.
+
+What this does **not** do:
+
+- It does not claim isolation under application RCE. Rows 2, 3, 6 and 11 are
+  still reachable, and that is what was accepted.
+- It does not relax cross-user *logical* isolation, which stays mandatory and
+  tested (AZ-T1, AZ-T10, the runtime's confused-deputy tests).
+- It does not by itself make the build **real-user-ready**. 17 §5 requires the
+  whole release-blocking set to be green as well, and that set includes the `09`,
+  `10`, `11` and `08` suites whose subsystems do not exist yet. Until they do, the
+  pilot runs on **disposable or test data**, for that reason rather than OD-A1's.
 
 ### The owner's options (14 §4)
 
@@ -136,20 +161,19 @@ test data only**. Real user data requires the owner's decision below.
 | **(b) Per-user process isolation** | Each user's agent/tool/session in a separate process or container → RCE in one does not trivially read another's memory | More infra; still a shared DB unless (c) |
 | **(c) Per-user data-store isolation** | Separate DB/collection/encryption context per user → app RCE cannot read another's store without that user's key | Most isolation; most complexity for a student-scale pilot |
 
-14 §4's recommendation is **(a) for the pilot with disposable/test data**, with
-the hard gate above. This measurement supports that recommendation being *viable*
-— rows 7–10 show the at-rest and by-construction boundaries are real — while
-confirming that rows 2, 3, 6 and 11 are the price of (a).
+14 §4 recommended **(a)**. This measurement showed it was *viable* — rows 7–10
+show the at-rest and by-construction boundaries are real — and that rows 2, 3, 6
+and 11 are its price. **The owner chose (a)** and accepted that price for the
+pilot.
 
-**What would change the recommendation:** if the pilot's data stops being
-disposable, rows 2, 3 and 6 become a multi-user data-exposure risk, and (b) or
-(c) is required. That is a decision about the data, not about the code.
+**What would reopen it:** a deployment whose trust model changes — hostile or
+multi-tenant hosting, or a pilot population that should not trust the operator's
+process with each other's data. Then (b) or (c) is the upgrade path. Both are
+recorded as future hardening in `docs/DECISION_REGISTER.md` §4.
 
-### Not yet decided
+### Still to do (not blocking OD-A1)
 
-- **OD-A1 itself** — the owner has not reviewed this measurement. Nothing in this
-  branch may be read as having decided it.
-- Whether to upgrade to (b)/(c) before or after `09`/`11` are measured.
+- Re-run BR-T2 once `09` and `11` exist, and add their rows to §3 (§4 above).
 
 ---
 

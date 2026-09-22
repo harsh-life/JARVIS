@@ -16,7 +16,8 @@ from fastapi import APIRouter, FastAPI
 from server.config import AppConfig
 from server.gateway.errors import install_error_handlers
 from server.gateway.request_context import RequestIdMiddleware
-from server.gateway.routers import auth, capabilities, graphs, health, sessions
+from server.gateway.agent_port import AgentTaskPort
+from server.gateway.routers import agent, auth, capabilities, graphs, health, sessions
 from server.gateway.security import SecurityCore, build_security_core
 from server.gateway.security_errors import install_security_error_handlers
 from server.storage import StorageBackend
@@ -30,6 +31,7 @@ def create_app(
     storage: StorageBackend | None = None,
     security: SecurityCore | None = None,
     unlock_secrets_on_startup: bool = False,
+    agent_tasks: AgentTaskPort | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
 
@@ -79,7 +81,15 @@ def create_app(
     v1.include_router(sessions.router)
     v1.include_router(graphs.router)
     v1.include_router(capabilities.router)
+    v1.include_router(agent.router)
     app.include_router(v1)
+
+    # The agent runtime is assembled above this layer (server/composition/) and
+    # handed in through the `AgentTaskPort` Protocol: the gateway sits below
+    # `server.agent` in the layering (16 §2) and cannot import it. Without one,
+    # the agent endpoints answer `503 dependency_unavailable` explicitly.
+    app.state.agent_tasks = agent_tasks
+    app.state.intelligence_enabled = bool(config.intelligence.enabled) if config else False
 
     # Storage is attached synchronously at construction time, not deferred
     # to lifespan startup: deterministic initialization (§11), and it does

@@ -76,13 +76,26 @@ root_packages = ["server", "shared"]
 # audits through a port it defines itself (server/secrets/audit_port.py)
 # rather than importing server.security (which would be a lower layer
 # importing an upper one — the one rule 16 §2 locks).
+#
+# runtime refinement (documented, not silent): two layers are added.
+#   * `composition` on top — the composition root. The gateway must host the
+#     agent endpoints but sits below `agent`; the runtime must consult the
+#     authorization engine but may not import it (16 §5 / INV-8). Both are
+#     resolved by Protocols declared in the lower module
+#     (server/gateway/agent_port.py, server/agent/ports.py) and satisfied here.
+#     Nothing imports `composition` except the process entrypoint.
+#   * `models` (06's ModelProvider adapters) below the application band, so the
+#     runtime and model-tools can both use the normalized interface while the
+#     application-band siblings stay mutually independent.
 [[tool.importlinter.contracts]]
 name = "Track B server layering (16 §2)"
 type = "layers"
 containers = ["server"]
 layers = [
+    "composition",
     "dashboard",
     "agent | modeltools | tools | memory | vault | scheduler | voice",
+    "models",
     "gateway",
     "auth",
     "graph | capabilities",
@@ -151,3 +164,37 @@ name = "SecretStore never imports the identity layer (12 §4, SUPER-001)"
 type = "forbidden"
 source_modules = ["server.secrets"]
 forbidden_modules = ["server.security", "server.auth", "server.graph", "server.capabilities"]
+
+# 16 §5: "the agent-runtime's authorization path is not importable by tools to
+# self-approve" and "agent cannot import capabilities to *grant* itself
+# anything". Tools, model-tools, and model adapters may read the capability
+# *registry* (to validate a contract), but can never reach the grant service,
+# the confirmation service, the decision engine, or the runtime itself.
+[[tool.importlinter.contracts]]
+name = "Tools/models cannot reach the grant, confirmation, or decision paths (16 §5)"
+type = "forbidden"
+source_modules = ["server.tools", "server.modeltools", "server.models"]
+forbidden_modules = [
+    "server.capabilities.grants",
+    "server.capabilities.confirmation",
+    "server.graph",
+    "server.agent",
+]
+
+# 06 §1 / 16 §3: a model adapter's key arrives through an injected KeyProvider,
+# resolved at the composition root. The adapters themselves never import the
+# SecretStore — stricter than 16 §3's permission, and it keeps key resolution in
+# one reviewed place.
+[[tool.importlinter.contracts]]
+name = "Model adapters never import the SecretStore (06 §1, 16 §3)"
+type = "forbidden"
+source_modules = ["server.models", "server.modeltools"]
+forbidden_modules = ["server.secrets"]
+
+# INTEL-003 / 26: Track B works fully with the IntelligenceProvider disabled and
+# no DecisionProvider exists. The runtime must not depend on either.
+[[tool.importlinter.contracts]]
+name = "Runtime never depends on Intelligence/Decision providers (INTEL-003, 26)"
+type = "forbidden"
+source_modules = ["server.agent", "server.tools", "server.memory"]
+forbidden_modules = ["server.intelligence"]

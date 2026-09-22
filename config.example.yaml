@@ -21,7 +21,20 @@ agent:
   provider: "ollama"
   model: "qwen2.5:3b-instruct"
   # secret_ref: "env:AGENT_MODEL_API_KEY"   # unset/omit for a keyless local provider
+  # A non-local provider MUST declare pricing (13 §3 — an unpriced paid call
+  # cannot be budgeted, so it is a load-time failure):
+  # pricing: { input_per_1k_tokens: 0.0, output_per_1k_tokens: 0.0 }
+  # fallback: { provider: "ollama", model: "qwen2.5:1.5b-instruct" }   # 05 §5
   generation_policy: {}
+  # 05 §3 runtime ceilings — every one exists and is enforced; values are OD-02.
+  bounds:
+    max_iterations: 12
+    max_model_calls: 16
+    max_tool_calls: 24
+    max_model_tool_nesting_depth: 1
+    wall_clock_timeout_seconds: 120
+    per_task_budget: 0.0              # paid calls refused until raised
+    memory_top_k: 5
 
 models_as_tools: []
 
@@ -49,8 +62,12 @@ security:
     client_id: "REPLACE_WITH_YOUR_OWN_GOOGLE_OIDC_CLIENT_ID"
     issuer: "https://accounts.google.com"
   rate_limits:
-    per_user_requests_per_minute: 60
+    per_user_requests_per_minute: 60     # metered model + tool calls (13 §2)
     per_device_requests_per_minute: 60
+    global_requests_per_minute: 600
+    per_session_concurrent_tasks: 1
+    per_user_concurrent_tasks: 2
+    global_concurrent_tasks: 8
   budgets:
     per_user_daily_cost_limit: 0.0
     global_daily_cost_limit: 0.0
