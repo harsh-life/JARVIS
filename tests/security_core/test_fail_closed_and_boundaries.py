@@ -265,6 +265,50 @@ async def test_repo_t1_t4_t6_the_boundary_contracts_all_hold():
     assert match is not None and int(match.group(2)) == 0, result.stdout
 
 
+async def test_repo_t7_the_boundary_check_actually_runs_in_ci():
+    """REPO-T7 (16 §8) — "the dependency rules are enforced **in CI**, and a
+    deliberate violation fails the build".
+
+    The test above proves the contracts hold *when someone runs them*. This one
+    proves something runs them, which is the part 16 §6 `[LOCKED]`s: "a boundary
+    violation is a CI failure, not a review nicety — because under heavy code
+    generation, 'the reviewer will catch it' is not a reliable control."
+
+    Without this assertion, deleting the workflow would leave the whole suite
+    green while silently downgrading every boundary contract to a convention.
+    """
+
+    import yaml
+
+    workflow_dir = REPO_ROOT / ".github" / "workflows"
+    workflows = sorted(workflow_dir.glob("*.yml")) + sorted(workflow_dir.glob("*.yaml"))
+    assert workflows, "no CI workflow exists, so no boundary contract is enforced (16 §6)"
+
+    def steps_of(path):
+        parsed = yaml.safe_load(path.read_text())
+        for job in (parsed.get("jobs") or {}).values():
+            yield from (job.get("steps") or [])
+
+    commands = [
+        step.get("run", "")
+        for path in workflows
+        for step in steps_of(path)
+    ]
+    joined = "\n".join(commands)
+
+    assert "lint-imports" in joined, "CI does not run lint-imports (REPO-T7)"
+    assert "pytest" in joined, "CI does not run the test suite"
+
+    # And it must trigger on pull requests, or a violation reaches main unchecked.
+    triggers = set()
+    for path in workflows:
+        parsed = yaml.safe_load(path.read_text())
+        # PyYAML parses the bare key `on:` as the boolean True.
+        raw = parsed.get("on", parsed.get(True)) or {}
+        triggers.update(raw if isinstance(raw, (dict, list)) else [raw])
+    assert "pull_request" in triggers, f"CI does not run on pull requests: {triggers}"
+
+
 async def test_repo_t1_the_agent_package_cannot_reach_secret_resolution():
     """REPO-T1 (SECRET-002, INV-6) — release-blocking.
 

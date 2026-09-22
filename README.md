@@ -79,5 +79,8 @@ Keeping them apart is what stops the half that evaluates a capability check
 from also being able to grant one.
 
 Module boundaries (who may import whom) are enforced mechanically via
-`import-linter` — see `pyproject.toml`'s `[tool.importlinter]` section.
-A boundary violation is a CI failure, not a review nicety (`16` §6).
+`import-linter` — see `pyproject.toml`'s `[tool.importlinter]` section — and
+`.github/workflows/ci.yml` runs that check, the test suite, the migration
+round-trip, and the BR-T2 measurement on every pull request. A boundary
+violation is a CI failure, not a review nicety (`16` §6). CI requires no
+secrets of any kind.

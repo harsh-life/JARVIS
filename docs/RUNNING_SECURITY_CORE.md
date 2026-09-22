@@ -176,3 +176,10 @@ python3 -m pytest tests/security_core/test_od_a1_br_t2.py -q -s   # BR-T2 measur
 The last one prints the measured blast radius under simulated app-level RCE. Read
 `docs/OD_A1_BR_T2.md` before putting real data anywhere near this: the OD-A1 gate
 is **closed**, and the pilot is cleared for disposable data only.
+
+All four run in CI on every pull request (`.github/workflows/ci.yml`), which is
+what makes REPO-T7 true rather than aspirational — 16 §6 `[LOCKED]`s that a
+boundary violation is "a **CI failure**, not a review nicety". CI needs **no
+secrets**: every suite builds its own throwaway config and generates a fresh KEK
+per test, so a fresh clone runs the whole check set on nothing but the repo
+(HOST-001).
