@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import os
 import resource
+import shutil
 import signal
 from dataclasses import dataclass, field
 from typing import Mapping, Sequence
@@ -87,16 +88,38 @@ class ConstrainedProcessExecutor:
         max_output_bytes: int = 1_000_000,
     ) -> None:
         self._allowed = frozenset(allowed_executables)
+        # A bare (no "/") allow-list entry is resolved *once*, here, against
+        # the exact fixed PATH the child gets (_BASE_ENV["PATH"]) — never
+        # against the host's ambient $PATH — to the one absolute path it
+        # names today. That resolved path, plus the bare name itself (so a
+        # PATH-searched invocation still works), are the only two spellings
+        # accepted for that entry. Security review finding: matching on
+        # `os.path.basename(argv[0])` alone (a bare-name entry accepting
+        # *any* absolute path sharing that basename) let an operator who
+        # allow-listed "python3" unintentionally authorize an unrelated
+        # binary at a different path with the same basename — an
+        # `execve`-semantics bypass ("/"-containing argv[0] never goes
+        # through PATH search, so nothing constrained which such path could
+        # be supplied). Resolving to one concrete path closes that without
+        # losing the ergonomics of writing a bare name in config.
+        self._resolved_allowed = frozenset(
+            resolved
+            for name in allowed_executables
+            if "/" not in name
+            for resolved in (shutil.which(name, path=_BASE_ENV["PATH"]),)
+            if resolved
+        )
         self._default_timeout = default_timeout_seconds
         self._max_timeout = max_timeout_seconds
         self._max_output_bytes = max_output_bytes
 
     def _assert_allowed(self, executable: str) -> None:
-        # Both the exact argv[0] and its basename must be allow-listed — an
-        # operator who allow-listed "python3" did not thereby allow-list
-        # "/usr/bin/python3" or "/some/other/path/python3" implicitly; every
-        # accepted spelling is one the operator wrote down.
-        if executable in self._allowed or os.path.basename(executable) in self._allowed:
+        # Exact match only — a bare allow-list entry additionally matches
+        # the one absolute path it resolved to at construction time
+        # (`self._resolved_allowed`), never any other path that merely
+        # shares its basename. Every accepted spelling is one the operator
+        # either wrote down or that PATH resolution deterministically named.
+        if executable in self._allowed or executable in self._resolved_allowed:
             return
         raise ExecutionError(
             ExecutionErrorCode.UNAUTHORIZED_EXECUTABLE,

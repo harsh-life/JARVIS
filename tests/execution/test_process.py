@@ -54,10 +54,36 @@ async def test_allowlist_match_requires_exact_or_basename_not_substring():
         await ex.run(["/bin/echoevil"], cwd="/tmp")
 
 
-async def test_allowlisted_absolute_path_basename_is_accepted():
+async def test_a_decoy_absolute_path_sharing_an_allowlisted_basename_is_rejected():
+    """Security-review finding: matching on `os.path.basename(argv[0])` alone
+    let a bare allow-list entry like "echo" accept *any* absolute path whose
+    final component was "echo", regardless of where it actually lived — an
+    execve-semantics bypass, since a "/"-containing argv[0] never goes
+    through PATH search, so nothing constrained which such path could be
+    supplied. A bare entry now resolves, once, to the one absolute path the
+    executor's own fixed PATH names — a different path with a matching
+    basename is a different, unauthorized executable."""
+
     ex = executor(allowed_executables=["echo"])
-    result = await ex.run(["/bin/echo", "hi"], cwd="/tmp")
+    with pytest.raises(ExecutionError) as excinfo:
+        await ex.run(["/some/other/location/echo", "hi"], cwd="/tmp")
+    assert excinfo.value.code == ExecutionErrorCode.UNAUTHORIZED_EXECUTABLE
+
+
+async def test_a_bare_allowlisted_name_resolves_to_exactly_one_path():
+    import shutil
+
+    from server.execution.process import _BASE_ENV
+
+    ex = executor(allowed_executables=["echo"])
+    resolved = shutil.which("echo", path=_BASE_ENV["PATH"])
+    assert resolved is not None
+
+    result = await ex.run([resolved, "hi"], cwd="/tmp")
     assert result.metadata["exit_code"] == 0
+
+    bare_result = await ex.run(["echo", "hi"], cwd="/tmp")  # PATH-searched at exec time
+    assert bare_result.metadata["exit_code"] == 0
 
 
 # ── no shell, no injection ───────────────────────────────────────────────
