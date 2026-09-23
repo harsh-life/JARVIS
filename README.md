@@ -19,9 +19,9 @@ HUMAN CONFIRMS WHERE REQUIRED
 
 Model output is never the security boundary.
 
-## Current state: `runtime` branch
+## Current state: `execution` branch
 
-Three branches are in:
+Four branches are in:
 
 **`foundation`** — the technical substrate: shared data contracts,
 configuration, persistence/migrations, and the API skeleton (versioning,
@@ -62,13 +62,39 @@ branch must pass through:
 - **Memory hydration** (`11` §3): visibility pushed into the store query and
   re-checked with the engine's own predicate.
 
+**`execution`** — the mechanism through which an authorized tool operation
+becomes an actual operation on a target platform (`server/execution/`'s module
+docstring: "Runtime owns orchestration. Security Core owns authorization.
+Execution owns constrained execution."):
+
+- **Filesystem sandbox** (`09`): real, `dir_fd`-walking, `O_NOFOLLOW`-at-every-hop
+  path containment (not a `path.startswith(root)` check — see
+  `server/fs/paths.py`), zip/tar-slip-safe archive extraction, per-file and
+  per-sandbox size caps, least-privilege file modes.
+- **Network egress** (`10`): default-deny, per-tool destination allow-listing,
+  resolved-IP classification (metadata/loopback always blocked; private ranges
+  only with explicit policy) before every connection, and a checked-IP-is-the-
+  connected-IP guarantee against DNS rebinding (`server/net/client.py`).
+- **Process execution** (`system.restricted`, `08` §6): `argv`-only (never a
+  shell), a closed-by-default executable allow-list, a from-scratch
+  environment, POSIX resource limits, and whole-process-group cleanup on
+  timeout (`server/execution/process.py`).
+- **Android/Shizuku** (`08`), server-side half: the capability→operation→
+  primitive mapping and dispatch contract, with `UnavailableDeviceTransport`
+  as the only shipped transport — every call fails deterministically until a
+  real device channel is wired in (`android/` does not exist in this
+  repository yet).
+
 The owner's decisions (OD-A1, OD-D1, OD-E1, OD-F1, OD-TOOL-1) are recorded in
 `docs/DECISION_REGISTER.md`; the capability/risk/confirmation matrix is
-`docs/CAPABILITY_MATRIX.md`. See `docs/RUNNING_RUNTIME.md` to run it.
+`docs/CAPABILITY_MATRIX.md`. See `docs/RUNNING_RUNTIME.md` and
+`docs/RUNNING_EXECUTION.md` to run it.
 
-**Still not built:** filesystem sandbox (`09`), network egress (`10`), Mem0
-(`11`), Android integration (`08`). Their capabilities exist, but no adapter does,
-so the runtime refuses them rather than running them unbounded.
+**Still not built:** Mem0 (`11`), the scheduler, the Knowledge Vault, the
+dashboard, voice, and a real Android client (`android/`). Their capabilities
+(where any exist) are absent from the registry or, for Android, dispatch to a
+transport that refuses every call — the runtime and execution layer both
+refuse rather than run unbounded, not silently degrade.
 
 ### Before putting real data anywhere near this
 
@@ -85,7 +111,8 @@ the `09`/`10`/`11`/`08` suites that do not exist yet.
 server/    the modular-monolith FastAPI application (one package per subsystem)
 shared/    schemas/  — canonical Pydantic data contracts, importable by both
                         server/ and a future android/ client
-tests/     pytest suite (tests/foundation/, tests/security_core/, tests/runtime/)
+tests/     pytest suite (tests/foundation/, tests/security_core/, tests/runtime/,
+                          tests/execution/)
 docs/      RUNNING_*.md, OD_A1_BR_T2.md, CAPABILITY_MATRIX.md, DECISION_REGISTER.md
 Working Markdown/   the architecture/PRD document package (source of truth)
 ```
@@ -102,6 +129,17 @@ engine, the capability package, or the SecretStore at all. It reaches them only
 through the Protocols in `server/agent/ports.py`, which the top-level
 composition root (`server/composition/`) satisfies with the Security Core's own
 objects — so there is no second authorization path to drift.
+
+The execution layer (`server/execution`, `server/fs`, `server/net`) sits below
+`graph`/`capabilities` in the same dependency graph and cannot import either —
+it receives only an already-authorized `ExecutionRequest`
+(`shared/schemas/execution.py`) and has no field, method, or import path that
+could assert authority for itself. `server/tools`/`server/modeltools`/
+`server/agent` are additionally barred from importing `socket`/`subprocess`
+directly, so a tool adapter cannot open a raw connection or process that
+bypasses `server.fs`/`server.net`/`server.execution` — see
+`docs/RUNNING_EXECUTION.md` §3 for exactly what that guarantee does and does
+not cover.
 
 Module boundaries (who may import whom) are enforced mechanically via
 `import-linter` — see `pyproject.toml`'s `[tool.importlinter]` section — and

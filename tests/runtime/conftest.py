@@ -410,6 +410,7 @@ async def make_harness(tmp_path, monkeypatch) -> AsyncIterator[Callable]:
         models: dict[str, Any] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         extra_tools: list[ToolDefinition] | None = None,
+        use_real_execution_tools: bool = False,
     ) -> Harness:
         storage = SQLAlchemyStorageBackend(f"sqlite+aiosqlite:///{tmp_path / uuid.uuid4().hex}.db")
         await storage.init_models()
@@ -432,7 +433,21 @@ async def make_harness(tmp_path, monkeypatch) -> AsyncIterator[Callable]:
             return build_provider(spec, key_provider=key_provider, transport=transport)
 
         reads, writes, ui = RecordingAdapter("reads"), RecordingAdapter("writes"), RecordingAdapter("ui")
-        tools = extra_tools if extra_tools is not None else [*file_tools(reads, writes), android_ui_tool(ui)]
+        if extra_tools is not None:
+            tools = extra_tools
+        elif use_real_execution_tools:
+            # The execution branch's own integration test seam: the real
+            # server.fs/server.net/server.execution tools, built from this
+            # harness's own app_config (so e.g. execution.filesystem.base_root
+            # is whatever the test configured, never the production default),
+            # run through the full authorization chain exactly like every
+            # other tool — proving the wiring end to end rather than through
+            # a fake that merely records what it was asked to do.
+            from server.composition.execution_tools import build_execution_tools
+
+            tools = build_execution_tools(app_config)
+        else:
+            tools = [*file_tools(reads, writes), android_ui_tool(ui)]
         memory_store = InMemoryMemoryStore() if memory is True else (memory or None)
 
         app = build_application(

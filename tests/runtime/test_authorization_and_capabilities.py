@@ -323,7 +323,19 @@ async def test_a_scoped_grant_cannot_be_spent_outside_its_scope(h):
 
 async def test_tool_contract_validation_refuses_what_it_cannot_enforce():
     """TOOL-003/004, 07 §3: the registry asserts contracts rather than trusting
-    them — and refuses tools whose fs/net boundary nothing enforces yet."""
+    them.
+
+    Two cases that used to live here — a tool merely *declaring* a filesystem
+    or network need — are gone: the execution branch built `server.fs`/
+    `server.net`, so a fs/net-declaring tool is no longer refused for that
+    reason alone (see `server/tools/registry.py`'s module docstring). What
+    replaces "network need" below is `may_send_credentials`, which *is* still
+    refused — not because no boundary exists, but because `server.net`'s
+    client has no mechanism at all to attach a caller-supplied credential to
+    a request (10 §6), so declaring it would assert something nothing can
+    back, same TOOL-004 principle applied to the field that is actually still
+    true.
+    """
 
     from server.tools.registry import ToolDefinition, ToolRegistrationError, ToolRegistry
     from shared.schemas.agent import ExecutionPlatform, OperationSpec
@@ -341,10 +353,11 @@ async def test_tool_contract_validation_refuses_what_it_cannot_enforce():
         "under-declared risk": ToolDefinition(contract("t4", "file.write", RiskCategory.LOW_WRITE, False),
                                               {"bulk_delete": OperationSpec(ACTION, "create")}, adapter),
         "no adapter": ToolDefinition(contract("t5", "file.read", RiskCategory.LOW_READ, False), op, {}),
-        "network need": ToolDefinition(contract("t6", "file.read", RiskCategory.LOW_READ, False,
-                                                network={"required": True, "destinations": ["x"]}), op, adapter),
-        "filesystem need": ToolDefinition(contract("t7", "file.read", RiskCategory.LOW_READ, False,
-                                                   filesystem={"roots": ["/"], "read": True}), op, adapter),
+        "may_send_credentials still refused": ToolDefinition(
+            contract("t6", "net.request", RiskCategory.LOW_READ, False,
+                     network={"internet": True, "may_send_credentials": True}),
+            {"read_file": OperationSpec(ACTION, "create")}, adapter,
+        ),
         "resource op without ref": ToolDefinition(contract("t8", "file.read", RiskCategory.LOW_READ, False),
                                                   {"read_file": OperationSpec("fileresource", "read")}, adapter),
         "secret as resource": ToolDefinition(contract("t9", "file.read", RiskCategory.LOW_READ, False),
@@ -354,6 +367,34 @@ async def test_tool_contract_validation_refuses_what_it_cannot_enforce():
         with pytest.raises(ToolRegistrationError):
             ToolRegistry().register(definition, enabled=True)
         assert label
+
+
+async def test_fs_and_net_declaring_tools_now_register_successfully():
+    """The other half of the transition documented above: a tool declaring a
+    real filesystem or network requirement is registerable now that
+    server.fs/server.net exist to enforce it — it is no longer refused
+    merely for declaring the need."""
+
+    from server.tools.registry import ToolDefinition, ToolRegistry
+    from shared.schemas.agent import ExecutionPlatform, OperationSpec
+    from shared.schemas.enums import RiskCategory
+    from tests.runtime.conftest import ACTION, RecordingAdapter, contract
+
+    adapter = {ExecutionPlatform.SERVER: RecordingAdapter("x")}
+    fs_tool = ToolDefinition(
+        contract("fs1", "file.read", RiskCategory.LOW_READ, False, filesystem={"roots": True}),
+        {"read_file": OperationSpec(ACTION, "create")}, adapter,
+    )
+    net_tool = ToolDefinition(
+        contract("net1", "net.request", RiskCategory.LOW_READ, False,
+                 network={"internet": True, "destinations": ["example.com"]}),
+        {"get": OperationSpec(ACTION, "create")}, adapter,
+    )
+    registry = ToolRegistry()
+    registry.register(fs_tool, enabled=True)
+    registry.register(net_tool, enabled=True)
+    assert registry.resolve("fs1") is not None
+    assert registry.resolve("net1") is not None
 
 
 async def test_a_registered_but_disabled_tool_is_inert(make_harness):

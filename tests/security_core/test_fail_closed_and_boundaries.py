@@ -414,24 +414,43 @@ async def test_no_track_a_dependency_exists():
 
 
 async def test_no_filesystem_network_or_device_execution_bypass_was_added():
-    """§19 of the security-core scope, carried forward by the runtime branch — no
-    branch so far implements a filesystem sandbox, network egress, or Android
-    execution path, so none may have opened a bypass of boundaries that do not
-    exist yet.
+    """§19 of the security-core scope, carried forward by the runtime branch and
+    then by the execution branch, which is where this test's premise changes.
 
-    Asserted as an absence: `fs`, `net`, `voice`, `scheduler` and `vault` remain
-    stubs, and no server module reaches for a raw socket or subprocess. (`tools`,
-    `modeltools` and `memory` now hold the runtime's registry, model-tools, and
-    hydration boundary; `ToolRegistry.register` refuses any tool that declares a
-    filesystem or network need, until `09`/`10` exist to enforce it.)
+    Before the execution branch: no branch implemented a filesystem sandbox,
+    network egress, or Android execution path, so none could have opened a
+    bypass of boundaries that did not exist yet — asserted as a flat absence
+    (`fs`/`net` stayed `__init__.py`-only, and no server module anywhere
+    reached for a raw socket or subprocess).
+
+    The execution branch (09/10) is that boundary, so the absence check would
+    now be checking the wrong thing — of course `server/fs`/`server/net` are no
+    longer stubs; building them is this branch's job. What must still hold is
+    the sharper form of the same invariant: `subprocess`/`socket`/`os.system`
+    are confined to the modules chartered to mediate them
+    (`server/execution` for constrained process execution, `server/net` for
+    the egress client, `server/fs` for `shutil.rmtree` on a task's own
+    already-contained temp directory — never a raw path) — every *other*
+    module, especially the adapter/runtime layers a compromised or malicious
+    tool call could reach, stays exactly as bypass-free as before. The
+    module-boundary contract "Tools/agent cannot reach raw process or socket
+    primitives" (`pyproject.toml`) enforces the `tools`/`modeltools`/`agent`
+    half of this mechanically on every CI run; this test covers the rest of
+    the tree and the packages that remain genuinely out of this branch's
+    scope.
     """
 
-    for package in ("fs", "net", "voice", "scheduler", "vault"):
+    still_stubs = ("voice", "scheduler", "vault")
+    for package in still_stubs:
         assert [p.name for p in Path(f"server/{package}").glob("*.py")] == [
             "__init__.py"
         ], package
 
+    mediating_packages = (Path("server/fs"), Path("server/net"), Path("server/execution"))
+    forbidden_primitives = ("socket", "subprocess", "os.system", "shutil")
     for path in sorted(Path("server").rglob("*.py")):
+        if any(path == pkg or path.is_relative_to(pkg) for pkg in mediating_packages):
+            continue
         code = code_only(path)
-        for forbidden in ("socket", "subprocess", "os.system", "shutil"):
+        for forbidden in forbidden_primitives:
             assert forbidden not in code, f"{path}: {forbidden}"
