@@ -19,9 +19,9 @@ HUMAN CONFIRMS WHERE REQUIRED
 
 Model output is never the security boundary.
 
-## Current state: `execution` branch
+## Current state: `integration-hardening` branch
 
-Four branches are in:
+Five branches are in:
 
 **`foundation`** — the technical substrate: shared data contracts,
 configuration, persistence/migrations, and the API skeleton (versioning,
@@ -84,6 +84,40 @@ Execution owns constrained execution."):
   as the only shipped transport — every call fails deterministically until a
   real device channel is wired in (`android/` does not exist in this
   repository yet).
+
+**`integration-hardening`** — a review of the composed system against the
+canonical PRD and the locked decisions, fixing what only shows once the layers
+meet: kernel confinement (Landlock + seccomp) for `system.restricted`, failing
+closed where unavailable; graph admission only from a pending access request;
+per-user idempotency namespaces and no confirmation token in stored replays;
+stored model configs limited to SecretStore handles of class `model_api_key`;
+suspended users stopped mid-task; tool calls bound to the authorizing device;
+cancellable running tools; egress deadline/chunk bounds; per-principal fs
+quotas. End-to-end acceptance cases live in `tests/integration/`, and BR-T2 was
+re-run for the execution dimensions (`docs/OD_A1_BR_T2.md` §3b). Decisions are
+in `docs/DECISION_REGISTER.md` §2B.
+
+### Boundaries this codebase keeps distinct
+
+- **Authentication ≠ authorization.** A valid token identifies a principal; it
+  grants nothing. Every resource access still goes through the engine.
+- **Capability ≠ tool ≠ adapter.** A capability is a closed-registry permission;
+  a tool is a contract that declares which capability it needs; an adapter is
+  the code that runs it. Registering an adapter grants no capability.
+- **Model ≠ authority.** Model output is a proposal, parsed and authorized like
+  any untrusted input.
+- **Runtime ≠ execution.** The runtime orchestrates; execution performs the
+  already-authorized operation under its own constraints.
+- **Device ≠ trust root.** A phone is an execution target bound to a principal,
+  not a source of authority.
+- **SecretStore ≠ model context.** Secrets are resolved by handle at call time
+  and never enter a prompt or an observation.
+- **Sandbox ≠ path check.** Filesystem containment walks `dir_fd`s with
+  `O_NOFOLLOW`; `system.restricted` gets a kernel ruleset, not a prefix check.
+- **Logical isolation ≠ process isolation.** All users share one server
+  process. Code running inside it reaches what it can reach — the accepted
+  OD-A1 (a) residual. Nothing here is a claim of isolation under
+  application-level RCE, and the build is not production-ready.
 
 The owner's decisions (OD-A1, OD-D1, OD-E1, OD-F1, OD-TOOL-1) are recorded in
 `docs/DECISION_REGISTER.md`; the capability/risk/confirmation matrix is

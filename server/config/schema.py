@@ -270,6 +270,17 @@ class ProcessExecutionConfig(StrictModel):
     default_timeout_seconds: float = Field(default=10.0, gt=0)
     max_timeout_seconds: float = Field(default=60.0, gt=0)
     max_output_bytes: int = Field(default=1_000_000, gt=0)
+    # `landlock` (default): every child is confined by the kernel — no reads
+    # outside system directories and its own task temp, no sockets, no
+    # signalling the server (server/execution/confinement.py). Where the kernel
+    # cannot do that (macOS, pre-5.13 Linux), nothing runs. `unconfined` is an
+    # explicit operator opt-out: a child can then read anything the server's OS
+    # user can and open its own network connections — never choose it on a
+    # server holding other users' data.
+    confinement_mode: str = Field(default="landlock", pattern="^(landlock|unconfined)$")
+    # Extra read-only paths an allow-listed program needs (its own libraries or
+    # data outside /usr). Read-only, never writable.
+    read_only_paths: list[str] = Field(default_factory=list)
 
 
 class ExecutionConfig(StrictModel):

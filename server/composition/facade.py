@@ -19,15 +19,18 @@ from server.agent import (
 from server.agent.ports import Hydration, TaskEnvironment, UsageLimitReached
 from server.auth.errors import StepUpRequired
 from server.composition.models import ConfiguredModelResolver, ProviderFactory
-from server.composition.secret_context import CURRENT_SECRET_RESOLVER
+from server.composition.secret_context import CURRENT_SECRET_RESOLVER, SecretUnavailable
 from server.composition.security_port import RuntimeSecurityAdapter
 from server.composition.usage_port import RuntimeUsageAdapter
 from server.config.schema import AppConfig
 from server.gateway.errors import AppError
 from server.gateway.security import SecurityCore
 from server.memory.hydration import AuthorizedContextHydrator
+from server.secrets.audit_port import SecretAuditEvent
 from server.secrets.requester import SecretRequester
 from server.security.audit import AuditLogger
+from server.storage.models import SecretReference
+from shared.schemas.enums import AuditResult, SecretClass
 from server.security.usage import UsagePolicy
 from server.tools.registry import ToolRegistry
 from shared.schemas.agent import AgentResult, ToolSummary
@@ -93,6 +96,24 @@ class AgentTaskFacade:
         store = self._core.secret_store
 
         async def resolve(handle: str, requester: SecretRequester) -> str:
+            # This resolver exists only to hand a model adapter its API key
+            # (06 §1). A handle of any other class — a device credential, an
+            # OAuth token — is refused here even when the requester's scope
+            # would otherwise match, so a model configuration can never be
+            # pointed at a credential and ship it to a provider as a bearer
+            # token (12 §2 "never one outside its declared need", SS-T10).
+            reference = await session.get(SecretReference, handle)
+            if reference is not None and reference.class_ is not SecretClass.MODEL_API_KEY:
+                await audit.record_secret_event(
+                    SecretAuditEvent(
+                        action="secret.get",
+                        secret_ref=handle,
+                        requester=requester.describe(),
+                        result=AuditResult.BLOCKED,
+                        reason="not_a_model_api_key",
+                    )
+                )
+                raise SecretUnavailable()
             return await store.get(session, handle, requester, audit)
 
         token = CURRENT_SECRET_RESOLVER.set(resolve)

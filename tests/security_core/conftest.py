@@ -204,6 +204,14 @@ async def world(db, audit: AuditLogger, graph_service: GraphService) -> World:
         creator_user_id=alice.user_id,
         audit=audit,
     )
+    # GRAPH-008: membership is an owner's approval of the joiner's own request.
+    await graph_service.request_access(
+        db,
+        graph_id=graph.graph_id,
+        requester_user_id=bob.user_id,
+        message=None,
+        audit=audit,
+    )
     await graph_service.approve_member(
         db,
         graph_id=graph.graph_id,

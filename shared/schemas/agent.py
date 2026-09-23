@@ -98,6 +98,12 @@ class ToolInvocation:
     platform: ExecutionPlatform
     resource_ref: str | None = None
     resource_scope: Mapping[str, str] | None = None
+    # The device of the authenticated principal the task runs as — server-
+    # derived (03 §8), never from a proposal. A device-platform adapter must
+    # target exactly this device: capability grants can be device-scoped (the
+    # per-app grid is per phone, PRD §13), so dispatching to "some device of
+    # this user" would execute where the user never granted anything.
+    device_id: UUID | None = None
 
 
 @dataclass(frozen=True)

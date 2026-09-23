@@ -256,8 +256,29 @@ class FilesystemSandbox:
 
     # ── write ────────────────────────────────────────────────────────────
 
+    def _quota_root(self, root_real: str) -> str:
+        """The directory a quota is charged against: the *principal's* whole
+        area (`users/{user_id}/private` or `graphs/{graph_id}/shared`), not the
+        one label being written.
+
+        A label is caller-chosen (`sanitize_label`), so a per-label quota is a
+        per-anything quota: a principal could fill `max_sandbox_bytes` under as
+        many labels as it cared to name. Charging the parent area makes the
+        limit a real per-principal storage bound (13 §2 / 09 §7).
+        """
+
+        root = Path(root_real)
+        try:
+            relative = root.relative_to(self._base_root)
+        except ValueError:
+            return root_real
+        parts = relative.parts
+        if len(parts) == 4 and (parts[0], parts[2]) in {("users", "private"), ("graphs", "shared")}:
+            return str(root.parent)
+        return root_real
+
     def _check_quota(self, root_real: str, incoming_bytes: int) -> None:
-        if self._sandbox_usage(root_real) + incoming_bytes > self.max_sandbox_bytes:
+        if self._sandbox_usage(self._quota_root(root_real)) + incoming_bytes > self.max_sandbox_bytes:
             raise ExecutionError(
                 ExecutionErrorCode.RESOURCE_EXHAUSTED,
                 f"write would exceed the sandbox quota ({self.max_sandbox_bytes} bytes)",

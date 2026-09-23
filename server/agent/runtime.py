@@ -69,6 +69,7 @@ from shared.schemas.agent import (
     TERMINAL_STATUSES,
     ToolHandle,
     ToolInvocation,
+    ToolOutput,
 )
 from shared.schemas.authorization import Operation, Principal, ResourceType
 from shared.schemas.enums import AuditResult, PermissionDecisionValue, RiskCategory, UsageKind
@@ -247,9 +248,14 @@ class AgentRuntime:
             raise StepUpNeeded()
 
         async with self._concurrency.slot(state.principal):
-            await self._set_status(env, state, AgentTaskStatus.RUNNING)
+            # Claim the pending action before the first `await`: until it is
+            # cleared, a concurrent `/cancel` treats the task as paused and may
+            # finish it — and this approval must then not go on to execute.
             state.pending = None
+            await self._set_status(env, state, AgentTaskStatus.RUNNING)
             try:
+                if state.cancelled:
+                    return await self._finish(env, state, AgentTaskStatus.CANCELLED)
                 if not await env.security.principal_active(state.principal):
                     raise _Stop(AgentFailureCode.PRINCIPAL_REVOKED)
                 if pending.kind == "capability_activation":
@@ -274,10 +280,15 @@ class AgentRuntime:
             return self._result_from_row(row)
 
         state = self._states.get(task_id)
-        if state is not None and row.status == AgentTaskStatus.RUNNING.value:
-            # Running in another request: flag it; the loop stops before its
-            # next step (05 §9).
+        if state is not None and state.pending is None:
+            # Live in another request. Decided from the in-process state, not
+            # the row: the request driving the task holds its status change in
+            # an uncommitted transaction, so the row can still read "awaiting"
+            # while the approved action is running. Flag it and signal any
+            # in-flight tool call, which is aborted rather than left to its own
+            # timeout (05 §9).
             state.cancelled = True
+            state.cancel_event.set()
             return self._result_from_state(state, AgentTaskStatus.RUNNING)
 
         if state is None:
@@ -286,6 +297,7 @@ class AgentRuntime:
                 active_graph_id=row.graph_id,
             )
             await env.security.deactivate_task(principal=principal, task_id=task_id)
+            self._tools.release_task(task_id)
             updated = await update_task_row(
                 env.session, task_id, status=AgentTaskStatus.CANCELLED,
                 iterations=row.iterations, model_calls=row.model_calls, tool_calls=row.tool_calls,
@@ -293,6 +305,8 @@ class AgentRuntime:
             return self._result_from_row(updated)
 
         state.pending = None  # the paused action is dropped, never performed
+        state.cancelled = True
+        state.cancel_event.set()
         return await self._finish(env, state, AgentTaskStatus.CANCELLED)
 
     async def get(
@@ -686,12 +700,13 @@ class AgentRuntime:
         await self._precheck(env, state, handle.projected_cost_per_call)
 
         state.tool_calls += 1
-        output = await self._tools.run(
-            handle.tool_id, platform,
+        output = await self._run_cancellable(
+            state, handle.tool_id, platform,
             ToolInvocation(
                 tool_id=handle.tool_id, operation=operation, arguments=arguments,
                 user_id=state.principal.user_id, task_id=state.task_id, platform=platform,
                 resource_ref=resource_ref, resource_scope=scope,
+                device_id=state.principal.device_id,
             ),
             timeout=max(0.001, min(handle.timeout_seconds, remaining())),
         )
@@ -722,6 +737,38 @@ class AgentRuntime:
             handle.tool_id, operation, ok=output.ok, content=output.content, error=output.error,
             limit=self._bounds.max_observation_chars,
         ))
+
+    async def _run_cancellable(
+        self, state: TaskState, tool_id: str, platform: ExecutionPlatform,
+        invocation: ToolInvocation, *, timeout: float,
+    ) -> ToolOutput:
+        """Run one tool call, racing it against the task's cancel signal (05 §9:
+        "the runtime stops the loop, aborts any in-flight tool").
+
+        Without the race, `/cancel` only flags the task and the in-flight
+        operation runs to its own timeout. Cancelling the call's asyncio task is
+        what reaches the executor: `server.execution.process` answers a
+        cancellation by killing the child's whole process group.
+        """
+
+        if state.cancel_event.is_set():
+            return ToolOutput(ok=False, error="cancelled")
+        run = asyncio.ensure_future(self._tools.run(tool_id, platform, invocation, timeout=timeout))
+        waiter = asyncio.ensure_future(state.cancel_event.wait())
+        try:
+            await asyncio.wait({run, waiter}, return_when=asyncio.FIRST_COMPLETED)
+            if run.done():
+                return run.result()
+            run.cancel()
+            try:
+                await run
+            except asyncio.CancelledError:
+                pass
+            return ToolOutput(ok=False, error="cancelled")
+        finally:
+            waiter.cancel()
+            if not run.done():
+                run.cancel()
 
     @staticmethod
     def _bound_arguments(tool_id: str, operation: str, platform: ExecutionPlatform,
@@ -781,6 +828,7 @@ class AgentRuntime:
                       failure: AgentFailureCode | None = None) -> AgentResult:
         state.pending = None
         revoked = await env.security.deactivate_task(principal=state.principal, task_id=state.task_id)
+        self._tools.release_task(state.task_id)
         if revoked:
             await self._event(env, state, AgentEvent.CAPABILITY_DEACTIVATED, AuditResult.SUCCESS)
         await update_task_row(
@@ -809,6 +857,7 @@ class AgentRuntime:
         principal = Principal(user_id=row.user_id, device_id=row.device_id,
                               session_id=row.session_id, active_graph_id=row.graph_id)
         await env.security.deactivate_task(principal=principal, task_id=row.task_id)
+        self._tools.release_task(row.task_id)
         updated = await update_task_row(
             env.session, row.task_id, status=AgentTaskStatus.FAILED, iterations=row.iterations,
             model_calls=row.model_calls, tool_calls=row.tool_calls, failure_code=code.value,

@@ -37,6 +37,21 @@ router = APIRouter(tags=["graphs"])
 # 02 §1.8: "`limit` is capped server-side (RATE-001 spirit — no unbounded fetch)."
 MAX_PAGE_SIZE = 100
 
+MAX_IDEMPOTENCY_KEY_LENGTH = 200
+
+
+def _scoped_idempotency_key(principal: Principal, raw: str) -> str:
+    """The stored key is namespaced by the authenticated user.
+
+    `get_or_execute` returns a stored response *before* `execute` runs, so a
+    shared key namespace would hand user B user A's stored response — without
+    any authorization check — just by replaying A's key with the same body.
+    """
+
+    if len(raw) > MAX_IDEMPOTENCY_KEY_LENGTH:
+        raise AppError(ErrorCode.VALIDATION_FAILED, "Idempotency-Key is too long")
+    return f"{principal.user_id}:{raw}"
+
 
 class CreateGraphRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -107,7 +122,7 @@ async def create_graph(
         try:
             stored = await get_or_execute(
                 session,
-                idempotency_key=idempotency_key,
+                idempotency_key=_scoped_idempotency_key(principal, idempotency_key),
                 method="POST",
                 path="/api/v1/graphs",
                 body=body.model_dump(mode="json"),
@@ -211,7 +226,7 @@ async def approve_member(
         try:
             stored = await get_or_execute(
                 session,
-                idempotency_key=idempotency_key,
+                idempotency_key=_scoped_idempotency_key(principal, idempotency_key),
                 method="POST",
                 path=f"/api/v1/graphs/{graph_id}/members",
                 body=body.model_dump(mode="json"),

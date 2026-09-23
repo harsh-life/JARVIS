@@ -86,19 +86,57 @@ The shape of the result: **the at-rest and by-construction boundaries hold; the
 in-process logical boundaries do not.** That is exactly what 14 §4 predicted, now
 measured rather than assumed.
 
+### 3b. Execution dimensions (integration-hardening re-run)
+
+§4 below required a re-run once the filesystem sandbox (`09`) and egress
+boundary (`10`) existed. They do now, and so does a surface the original table
+could not see: the `system.restricted` process executor. The re-run lives in
+`tests/integration/test_br_t2_execution_rows.py` and runs in CI with `-s`, so the
+table is printed on every run and asserted in both directions.
+
+It separates two attacker models, because the owner's OD-A1 (a) acceptance
+covers only the first:
+
+* **app-RCE** — code running inside the server process (the accepted class).
+* **authorized** — an ordinary user driving the agent through paths the
+  deterministic layer *allows*, including a human-confirmed, step-up-fresh
+  `system.restricted` call. Anything reachable this way is **not** inside the
+  accepted class: it is a cross-user authorization failure and goes to the owner.
+
+| # | Attempt | Model | Result | Why |
+|---|---|---|---|---|
+| 12 | Read B's sandbox file through A's own `files.read` tool (`..` traversal) | authorized | contained | Roots derive from the server-side user id; `..` and symlinks are refused at every hop (09 §1/§2). |
+| 13 | Read B's sandbox file by opening its path in-process | app-RCE | **REACHABLE** | `mediated` containment is application code; the server's OS user owns every root (09 §8, OD-FS-1). Inside OD-A1 (a). |
+| 14 | Open a raw socket to an undeclared destination in-process | app-RCE | **REACHABLE** | `mediated_proxy` binds this codebase's adapters, not the process (10 §3, OD-NET-1). Inside OD-A1 (a). |
+| 15 | Read B's sandbox file from an approved `system.restricted` command | authorized | contained (Landlock hosts) | Landlock ruleset: reads only system dirs + the task's own temp root. **Before integration-hardening this row was REACHABLE** — the allow-listed program ran with the server's full filesystem view. |
+| 16 | Read the server's environment (`env:` KEK, superuser token) from an approved command | authorized | contained (Landlock hosts) | `/proc` is outside the ruleset. **Previously REACHABLE.** |
+| 17 | Row 15 under the explicit `confinement_mode: unconfined` opt-out | authorized | **REACHABLE** | The opt-out removes the kernel boundary. It is an operator decision recorded in `DECISION_REGISTER.md` §2B, not a default. |
+
+On a host without Landlock, rows 15–16 print `NOT MEASURED`: the default
+`landlock` mode then refuses to run any process at all (fail-closed), so there
+is nothing to measure. The previous 11 rows are unchanged (4 REACHABLE, 7
+contained).
+
+What the re-run does **not** change: rows 13 and 14 are the same residual class
+as rows 2 and 6 — a compromised live process reaches what that process can
+already reach. Confinement narrows what an *authorized* shell command can reach;
+it does nothing for code already inside the server. Logical isolation is not
+process isolation.
+
 ---
 
 ## 4. Dimensions still PENDING — not measured, not claimed
 
-14 §4's experiment covers "user B's memory, files, and secrets". Two of those
-three cannot be measured yet, because the subsystems do not exist:
+14 §4's experiment covers "user B's memory, files, and secrets". One of those
+three still cannot be measured, because the subsystem does not exist:
 
 | Dimension | Status | Why |
 |---|---|---|
 | Relational store (users, devices, graphs, files-as-rows, capability grants, secrets) | **MEASURED** — §3 above | `security-core` owns these tables |
 | **Mem0 / memory store** (`11`) | **PENDING** | No Mem0 integration exists in any branch yet. MEM-T1's cross-user query filter cannot be attacked before it is written. |
-| **Filesystem sandbox** (`09`) | **PENDING** | No sandbox roots, no path resolution, no `FileResource` content on disk. FS-T5/FS-T9 are `09`'s to measure. |
-| Network egress exfiltration (`10`) | **PENDING** | No egress enforcement exists; NET-T8 is `10`'s to measure. |
+| Filesystem sandbox (`09`) | **MEASURED** — §3b rows 12, 13, 15, 17 | In-process reach is REACHABLE (accepted class); authorized reach is contained |
+| Network egress exfiltration (`10`) | **MEASURED** — §3b row 14 (in-process); `system.restricted` sockets denied by Landlock TCP rules + seccomp `socket()` filter | In-process reach is REACHABLE (accepted class) |
+| Android device (`08`) | **PENDING** | No device client exists; `UnavailableDeviceTransport` refuses every call |
 
 `[LOCKED]` these rows are **pending, not passing**. They are measured on the same
 basis when `09` and `11` exist. The owner's acceptance (§6) covers the *class* of
@@ -123,7 +161,9 @@ the measured radius.
 | In-process superuser minting | `SuperuserGrant` is process-local (row 11) | The credential itself is a separate env var from the KEK, so neither yields the other to an attacker who only reads config | **Accepted for pilot — option (a)** |
 | **Stolen device credential** before revocation | "Logged in until revoked" is the deliberate UX choice (SESSION-001, 03 §7) | Short access-token TTL (15 min); step-up on credential rotation; immediate revocation killing live tokens | Accept, or shorten TTL |
 | Stolen access token | Short TTL | Opaque tokens with server lookup → revocation is immediate, not TTL-bounded | Accept |
-| Mem0 / filesystem cross-user reach under RCE | Not yet measurable (§4) | — | Re-run BR-T2 after `09`/`11` |
+| Filesystem / egress reach under **app** RCE | `mediated` fs and `mediated_proxy` egress are application code (§3b rows 13, 14) | Authorized paths contained; `system.restricted` kernel-confined by default (§3b rows 15, 16) | **Accepted for pilot — option (a)**; `mount_isolated`/`netns_filtered` remain future hardening |
+| `system.restricted` under `confinement_mode: unconfined` | Operator opt-out (§3b row 17) | Default is `landlock`, which fails closed where unavailable | Do not enable with real data; owner decision in `DECISION_REGISTER.md` §2B |
+| Mem0 cross-user reach under RCE | Not yet measurable (§4) | — | Re-run BR-T2 after `11` |
 
 Every residual above is documented with an owner action, and none is presented as
 solved.
@@ -173,14 +213,17 @@ recorded as future hardening in `docs/DECISION_REGISTER.md` §4.
 
 ### Still to do (not blocking OD-A1)
 
-- Re-run BR-T2 once `09` and `11` exist, and add their rows to §3 (§4 above).
+- ~~Re-run BR-T2 once `09` exists~~ — done in integration-hardening (§3b). Rows 13
+  and 14 fall inside the accepted class; no *authorized* path was found reachable
+  with the default `landlock` confinement.
+- Re-run BR-T2 once `11` (Mem0) and `08`'s device client exist, and add their rows.
 
 ---
 
 ## 7. How to re-run
 
 ```bash
-python3 -m pytest tests/security_core/test_od_a1_br_t2.py -q -s
+python3 -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py -q -s
 ```
 
 `-s` prints the measured table. The experiment asserts the measurement in **both**

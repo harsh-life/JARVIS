@@ -207,8 +207,30 @@ class GraphService:
         if role is MembershipRole.OWNER:
             raise GraphOperationRefused("single_owner_invariant")
 
+        # 04 §4.1 `[LOCKED]`: "a `private` graph has exactly one membership (its
+        # owner)". Approval is the only way membership grows, so it is the one
+        # place that invariant has to hold.
+        graph = await self._repo.get_graph(session, graph_id)
+        if graph is None or graph.type is not GraphType.SHARED:
+            raise GraphOperationRefused("private_graph_not_joinable")
+
         if await self._repo.is_active_member(session, graph_id=graph_id, user_id=user_id):
             raise GraphOperationRefused("already_a_member")
+
+        # GRAPH-008 / 04 §4.2: membership is "explicit owner approval of a join
+        # request" — the owner answers a request the joining user made. Without
+        # a pending request an owner could enrol anyone without their consent,
+        # making another user's context a target for graph-shared content.
+        pending = await session.execute(
+            select(GraphAccessRequest).where(
+                GraphAccessRequest.graph_id == graph_id,
+                GraphAccessRequest.user_id == user_id,
+                GraphAccessRequest.status == "pending",
+            )
+        )
+        request_row = pending.scalars().first()
+        if request_row is None:
+            raise GraphOperationRefused("no_pending_access_request")
 
         membership = GraphMembership(
             graph_id=graph_id,
@@ -219,18 +241,9 @@ class GraphService:
         )
         session.add(membership)
 
-        pending = await session.execute(
-            select(GraphAccessRequest).where(
-                GraphAccessRequest.graph_id == graph_id,
-                GraphAccessRequest.user_id == user_id,
-                GraphAccessRequest.status == "pending",
-            )
-        )
-        request_row = pending.scalars().first()
-        if request_row is not None:
-            request_row.status = "approved"
-            request_row.decided_at = utcnow()
-            request_row.decided_by = approver_user_id
+        request_row.status = "approved"
+        request_row.decided_at = utcnow()
+        request_row.decided_by = approver_user_id
 
         await session.flush()
 

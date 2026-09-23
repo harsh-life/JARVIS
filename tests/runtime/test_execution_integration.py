@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from tests.runtime.conftest import ask, call, failure_of, final, pending_of
+from tests.support import TEST_PROCESS_CONFINEMENT
 
 pytestmark = pytest.mark.asyncio
 
@@ -24,7 +25,7 @@ pytestmark = pytest.mark.asyncio
 def _config(tmp_path: Path, **execution_overrides) -> dict:
     base = {
         "filesystem": {"base_root": str(tmp_path / "sandboxes")},
-        "process": {"allowed_executables": ["echo"]},
+        "process": {"allowed_executables": ["echo"], "confinement_mode": TEST_PROCESS_CONFINEMENT},
     }
     base.update(execution_overrides)
     return {"execution": base}
@@ -126,7 +127,8 @@ async def test_shell_command_requires_confirmation_and_runs_in_a_real_process(ma
 
 async def test_unauthorized_executable_fails_as_an_observation_not_a_crash(make_harness, tmp_path):
     h = await make_harness(
-        config=_config(tmp_path, process={"allowed_executables": ["echo"]}),
+        config=_config(tmp_path, process={"allowed_executables": ["echo"],
+                                          "confinement_mode": TEST_PROCESS_CONFINEMENT}),
         use_real_execution_tools=True,
     )
     alice = await h.user("alice")

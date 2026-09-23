@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import ssl
+import time
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit
 
@@ -74,19 +75,26 @@ class EgressClient:
                 ExecutionErrorCode.EGRESS_DENIED,
                 "this tool has no declared network access (NET-001/003)",
             )
+        # One wall-clock budget for the whole call, redirects included. The
+        # per-`recv` read timeout alone lets a server that drips one byte just
+        # inside it hold this worker thread indefinitely — and `asyncio`'s
+        # tool timeout cannot cancel a thread, only stop awaiting it.
+        deadline = time.monotonic() + egress_policy.connect_timeout_seconds + egress_policy.read_timeout_seconds
         return self._request_following_redirects(
             url, egress_policy=egress_policy, method=method, body=body,
-            redirects_left=egress_policy.max_redirects,
+            redirects_left=egress_policy.max_redirects, deadline=deadline,
         )
 
     # ── redirect handling (each hop re-validated in full — 10 §5) ──────────
 
     def _request_following_redirects(
         self, url: str, *, egress_policy: EgressPolicy, method: str, body: bytes | None, redirects_left: int,
+        deadline: float,
     ) -> ExecutionResult:
         target, path_and_query = self._validate_and_resolve(url, egress_policy)
         status, headers, content = self._do_request(
             target, path_and_query, method=method, body=body, egress_policy=egress_policy,
+            deadline=deadline,
         )
         location = headers.get("location")
         if status in (301, 302, 303, 307, 308) and location:
@@ -97,7 +105,7 @@ class EgressClient:
             next_body = None if status in (301, 302, 303) else body
             return self._request_following_redirects(
                 next_url, egress_policy=egress_policy, method=next_method, body=next_body,
-                redirects_left=redirects_left - 1,
+                redirects_left=redirects_left - 1, deadline=deadline,
             )
         return ExecutionResult(
             content=content.decode("utf-8", errors="replace"),
@@ -166,16 +174,19 @@ class EgressClient:
 
     def _do_request(
         self, target: _ResolvedTarget, path_and_query: str, *,
-        method: str, body: bytes | None, egress_policy: EgressPolicy,
+        method: str, body: bytes | None, egress_policy: EgressPolicy, deadline: float,
     ) -> tuple[int, dict[str, str], bytes]:
         try:
             raw_sock = socket.create_connection(
-                (target.ip, target.port), timeout=egress_policy.connect_timeout_seconds
+                (target.ip, target.port),
+                timeout=min(egress_policy.connect_timeout_seconds, _remaining(deadline)),
             )
+        except socket.timeout as exc:
+            raise ExecutionError(ExecutionErrorCode.TIMEOUT, "network request timed out") from exc
         except OSError as exc:
             raise ExecutionError(ExecutionErrorCode.EGRESS_DENIED, f"connection failed: {exc}") from exc
 
-        raw_sock.settimeout(egress_policy.read_timeout_seconds)
+        raw_sock.settimeout(min(egress_policy.read_timeout_seconds, _remaining(deadline)))
         sock: socket.socket | ssl.SSLSocket = raw_sock
         try:
             if target.scheme == "https":
@@ -188,7 +199,10 @@ class EgressClient:
 
             payload = _build_request(method, target.host, path_and_query, body)
             sock.sendall(payload)
-            return _read_response(sock, max_bytes=egress_policy.max_response_bytes)
+            return _read_response(
+                _DeadlineSocket(sock, deadline, egress_policy.read_timeout_seconds),
+                max_bytes=egress_policy.max_response_bytes,
+            )
         except socket.timeout as exc:
             raise ExecutionError(ExecutionErrorCode.TIMEOUT, "network request timed out") from exc
         except ssl.SSLError as exc:
@@ -200,6 +214,27 @@ class EgressClient:
                 sock.close()
             except OSError:
                 pass
+
+
+def _remaining(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise ExecutionError(ExecutionErrorCode.TIMEOUT, "network request exceeded its total time budget")
+    return remaining
+
+
+class _DeadlineSocket:
+    """`recv` with each call's timeout clipped to the request's remaining
+    budget, so no sequence of individually-timely reads can outlast it."""
+
+    def __init__(self, sock, deadline: float, read_timeout: float) -> None:
+        self._sock = sock
+        self._deadline = deadline
+        self._read_timeout = read_timeout
+
+    def recv(self, size: int) -> bytes:
+        self._sock.settimeout(min(self._read_timeout, _remaining(self._deadline)))
+        return self._sock.recv(size)
 
 
 def _build_request(method: str, host: str, path_and_query: str, body: bytes | None) -> bytes:
@@ -293,6 +328,8 @@ def _read_chunked(sock, already: bytes, max_bytes: int) -> bytes:
     out = bytearray()
     while True:
         while b"\r\n" not in buffer:
+            if len(buffer) > _MAX_HEADER_BYTES:
+                raise ExecutionError(ExecutionErrorCode.EGRESS_DENIED, "malformed chunk header")
             chunk = sock.recv(_CHUNK_READ)
             if not chunk:
                 raise ExecutionError(ExecutionErrorCode.EGRESS_DENIED, "connection closed mid-chunk")
@@ -303,8 +340,14 @@ def _read_chunked(sock, already: bytes, max_bytes: int) -> bytes:
             size = int(line.split(b";", 1)[0].strip(), 16)
         except ValueError as exc:
             raise ExecutionError(ExecutionErrorCode.EGRESS_DENIED, "malformed chunk size") from exc
+        if size < 0:
+            raise ExecutionError(ExecutionErrorCode.EGRESS_DENIED, "malformed chunk size")
         if size == 0:
             break
+        # The declared size is checked *before* reading it: otherwise one
+        # chunk header claiming terabytes makes the loop below buffer until
+        # memory runs out, and the cap check after it never gets to run.
+        _check_cap(len(out) + size, max_bytes)
         while len(buffer) < size + 2:
             chunk = sock.recv(_CHUNK_READ)
             if not chunk:

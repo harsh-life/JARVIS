@@ -161,6 +161,15 @@ class ConfiguredModelResolver:
         except Exception:  # noqa: BLE001 — a malformed stored config fails the task explicitly
             raise ModelUnavailable("stored agent configuration is invalid") from None
 
+        # A stored row names a SecretStore handle, never `env:NAME`. `env:` is the
+        # operator's config-file vocabulary (15 §2): it reads the server's own
+        # process environment with no requester, no scope, and no audit — where
+        # the KEK source and the superuser token live. Accepting it from a row
+        # would let a stored configuration ship either one to a provider as its
+        # API key.
+        if model_config.secret_ref and model_config.secret_ref.startswith("env:"):
+            raise ModelUnavailable("a stored agent configuration may only reference a SecretStore handle")
+
         provider_name = model_config.provider.value
         pricing = self._priced.get((provider_name, model_config.model))
         if provider_name not in LOCAL_MODEL_PROVIDERS and pricing is None:

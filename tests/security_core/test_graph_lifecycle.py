@@ -95,7 +95,11 @@ async def test_approval_creates_the_membership_and_resolves_the_request(
         audit=audit,
     )
 
-    rows = (await db.execute(select(GraphAccessRequest))).scalars().all()
+    rows = (
+        await db.execute(
+            select(GraphAccessRequest).where(GraphAccessRequest.user_id == world.outsider.user_id)
+        )
+    ).scalars().all()
     assert [r.status for r in rows] == ["approved"]
     assert rows[0].decided_by == world.alice.user_id
 
@@ -171,6 +175,13 @@ async def test_a_member_may_leave(db, audit, graph_service, graph_repository, wo
 
 
 async def test_a_member_cannot_revoke_another_member(db, audit, graph_service, world):
+    await graph_service.request_access(
+        db,
+        graph_id=world.graph_id,
+        requester_user_id=world.outsider.user_id,
+        message=None,
+        audit=audit,
+    )
     await graph_service.approve_member(
         db,
         graph_id=world.graph_id,
@@ -568,6 +579,11 @@ async def test_a_member_approving_a_member_is_forbidden_over_http(api):
         outsider_user = (
             await session.execute(select(User).where(User.oidc_subject == "outsider-subject"))
         ).scalars().one()
+
+    asked = await api.client.post(
+        f"{API_V1_PREFIX}/graphs/{graph_id}/access-requests", json={}, headers=bob.auth
+    )
+    assert asked.status_code == 201
 
     approved = await api.client.post(
         f"{API_V1_PREFIX}/graphs/{graph_id}/members",

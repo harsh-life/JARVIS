@@ -64,6 +64,8 @@ execution:
     default_timeout_seconds: 10.0
     max_timeout_seconds: 60.0
     max_output_bytes: 1000000
+    confinement_mode: "landlock"         # see §5 — fails closed where unavailable
+    read_only_paths: []                  # extra read-only paths an allowed program needs
 ```
 
 ## 3. What "mediated" containment/egress means, honestly
@@ -103,14 +105,42 @@ authorization or dispatch path.
 ## 5. `system.restricted` — still the highest-risk surface
 
 `system.shell`'s `run_shell_command` is `high_irreversible`: it always pauses
-for confirmation, and (07 §4/08 §6) is never folded into any ordinary
-capability's grant. It runs only allow-listed executables
-(`execution.process.allowed_executables`), via `argv` exec — never a shell
-string — inside the task's own sandbox temp directory, with a from-scratch
-environment, POSIX resource limits, and whole-process-group cleanup on
-timeout (`server/execution/process.py`). Leaving the allow-list empty (the
-default) is a legitimate, safe way to keep the capability registered but
-practically unreachable.
+for confirmation and step-up, and (07 §4/08 §6) is never folded into any
+ordinary capability's grant. It runs only allow-listed executables
+(`execution.process.allowed_executables`), exec'd by the absolute path the
+allow-list entry resolved to — never a shell string, never a PATH search the
+model's `env_overrides` could redirect — with a from-scratch environment
+(loader variables such as `LD_PRELOAD` refused), POSIX resource limits
+including a file-size cap, and whole-process-group cleanup on timeout or task
+cancellation (`server/execution/process.py`). Leaving the allow-list empty (the
+default) keeps the capability registered but practically unreachable.
+
+**The allow-list is policy; confinement is the boundary.** An allow-listed
+program is not this codebase — `server.fs`/`server.net` do not constrain what
+it does. So every child is confined by the kernel before it `exec`s
+(`server/execution/confinement.py`, `confinement_mode: landlock`, the default):
+
+| A confined child … | because |
+|---|---|
+| can read/execute system directories (`/usr`, `/bin`, `/lib*`, a few `/etc` files libc needs) | Landlock read-only rules |
+| can read/write only inside its working directory — the task's own temp root, removed when the task ends | Landlock read-write rule, no execute right there |
+| cannot read other users' sandboxes, the database, the config, `/proc/<server>/environ` (where an `env:` KEK and the superuser token live), `/home`, `/root` | everything else is denied |
+| cannot open any socket — TCP, UDP, Unix, `io_uring` | seccomp (`socket`/`io_uring_setup` → `EPERM`) and Landlock TCP rules |
+| cannot signal, ptrace, or reach an abstract socket of the server process | Landlock scoping (kernel ABI ≥ 6) |
+| cannot gain privileges through setuid binaries | `no_new_privs` |
+
+Where the kernel cannot do this (macOS, Linux before 5.13), `landlock` mode
+refuses to run anything — `platform_unsupported` — rather than run it
+unconfined. `confinement_mode: unconfined` is an explicit operator opt-out that
+removes the boundary: a child can then read anything the server's OS user can
+and open its own network connections, which on a multi-user server is a
+cross-user data path through an *authorized* call (measured in
+`docs/OD_A1_BR_T2.md` §3b). Whether that opt-out should exist on a multi-user
+deployment at all is an owner decision (`docs/DECISION_REGISTER.md` §2B).
+
+What confinement does **not** cover: CPU and memory (the rlimits do), a kernel
+exploit, and — like every in-process boundary here — a compromised server
+process itself (OD-A1).
 
 ## 6. Tests and checks
 

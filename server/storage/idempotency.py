@@ -52,11 +52,17 @@ async def get_or_execute(
     path: str,
     body: dict | None,
     execute: Callable[[], Awaitable[tuple[int, dict]]],
+    redact_for_storage: Callable[[dict], dict] | None = None,
 ) -> StoredResult:
     """The core guarantee: a repeat call with the same key and the same
     request shape returns the original result without calling `execute`
     again. A repeat with the same key but a *different* request shape is a
     conflict, not a silent overwrite.
+
+    `redact_for_storage` shapes the copy that is *persisted* for replay; the
+    first caller still receives the full response. It exists for credentials a
+    response legitimately carries once — a confirmation token — which must not
+    outlive that response in plaintext in this table.
     """
 
     fp = fingerprint_request(method, path, body)
@@ -71,13 +77,14 @@ async def get_or_execute(
         return StoredResult(existing.status_code, existing.response_body)
 
     status_code, response_body = await execute()
+    stored_body = redact_for_storage(response_body) if redact_for_storage else response_body
 
     session.add(
         IdempotencyKey(
             idempotency_key=idempotency_key,
             request_fingerprint=fp,
             status_code=status_code,
-            response_body=response_body,
+            response_body=stored_body,
             created_at=datetime.now(timezone.utc),
         )
     )

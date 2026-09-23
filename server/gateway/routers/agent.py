@@ -118,6 +118,27 @@ def render(result: AgentResult, request_id: uuid.UUID | str) -> tuple[int, dict]
     }
 
 
+def _without_confirmation_token(body: dict) -> dict:
+    """The replay copy of a paused-task response, minus its confirmation token.
+
+    Only the token's hash is persisted (`ConfirmationToken`); a plaintext copy in
+    the idempotency table would undo that. A client retrying after a lost
+    response still gets the task id and the pending action, and fetches the
+    token from `GET /agent/tasks/{id}` — owner-only, like the confirmation.
+    """
+
+    import copy
+
+    stored = copy.deepcopy(body)
+    details = stored.get("error", {}).get("details")
+    if isinstance(details, dict) and "confirmation_token" in details:
+        details["confirmation_token"] = None
+        pending = details.get("pending")
+        if isinstance(pending, dict) and "confirmation_token" in pending:
+            pending["confirmation_token"] = None
+    return stored
+
+
 @router.post("/agent/tasks")
 async def submit_task(
     body: SubmitTaskRequest,
@@ -153,6 +174,7 @@ async def submit_task(
             path="/api/v1/agent/tasks",
             body=body.model_dump(mode="json"),
             execute=execute,
+            redact_for_storage=_without_confirmation_token,
         )
     except IdempotencyConflict:
         raise AppError(ErrorCode.CONFLICT, "Idempotency-Key reused for a different request") from None

@@ -17,7 +17,16 @@ import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from server.config.schema import AppConfig
+from server.execution import confinement
 from server.secrets.kek import generate_kek_value
+
+# Process tests exercise the executor's lifecycle (timeouts, output caps, env
+# sanitization) on every host. Where the kernel can confine a process — Linux,
+# including CI — they run confined, which also proves confinement does not break
+# legitimate commands. Elsewhere (macOS) `landlock` mode refuses to run anything,
+# so they opt into `unconfined` explicitly; the confinement guarantees are
+# asserted separately (tests/execution/test_process_confinement.py).
+TEST_PROCESS_CONFINEMENT = confinement.LANDLOCK if confinement.available() else confinement.UNCONFINED
 
 TEST_CLIENT_ID = "test-oidc-client-id.apps.googleusercontent.example"
 TEST_ISSUER = "https://accounts.google.test"

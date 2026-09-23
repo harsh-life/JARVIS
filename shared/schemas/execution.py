@@ -138,6 +138,7 @@ class ExecutionRequest:
     arguments: Mapping[str, Any]
     resource_ref: str | None
     scope: ResourceScope
+    device_id: UUID | None = None
 
     @classmethod
     def from_invocation(cls, invocation: ToolInvocation) -> "ExecutionRequest":
@@ -150,6 +151,7 @@ class ExecutionRequest:
             arguments=dict(invocation.arguments),
             resource_ref=invocation.resource_ref,
             scope=ResourceScope.from_invocation(invocation),
+            device_id=invocation.device_id,
         )
 
 

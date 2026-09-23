@@ -62,7 +62,7 @@ def test_unmapped_capability_is_rejected_before_reaching_a_transport():
     with pytest.raises(ExecutionError) as excinfo:
         build_operation(
             capability="not.a.real.capability", operation="anything",
-            package_name=None, arguments={}, user_id=user_id, task_id=task_id,
+            package_name=None, arguments={}, user_id=user_id, task_id=task_id, device_id=uuid.uuid4(),
         )
     assert excinfo.value.code == ExecutionErrorCode.PLATFORM_UNSUPPORTED
 
@@ -77,7 +77,7 @@ def test_unmapped_operation_within_a_known_capability_is_rejected():
     with pytest.raises(ExecutionError) as excinfo:
         build_operation(
             capability="app.interact", operation="delete_app",
-            package_name="com.example", arguments={}, user_id=user_id, task_id=task_id,
+            package_name="com.example", arguments={}, user_id=user_id, task_id=task_id, device_id=uuid.uuid4(),
         )
     assert excinfo.value.code == ExecutionErrorCode.PLATFORM_UNSUPPORTED
 
@@ -87,7 +87,7 @@ def test_valid_operation_builds_a_well_formed_device_operation():
     op = build_operation(
         capability="app.interact", operation="tap",
         package_name="com.example.app", arguments={"x": 10, "y": 20},
-        user_id=user_id, task_id=task_id,
+        user_id=user_id, task_id=task_id, device_id=uuid.uuid4(),
     )
     assert isinstance(op, DeviceOperation)
     assert op.primitive == "accessibility.tap"
@@ -111,7 +111,7 @@ async def test_unavailable_transport_fails_every_operation_deterministically():
     user_id, task_id = _ids()
     op = build_operation(
         capability="device.read", operation="read_battery",
-        package_name=None, arguments={}, user_id=user_id, task_id=task_id,
+        package_name=None, arguments={}, user_id=user_id, task_id=task_id, device_id=uuid.uuid4(),
     )
     transport = UnavailableDeviceTransport()
     with pytest.raises(ExecutionError) as excinfo:
@@ -157,9 +157,49 @@ async def test_a_connected_transport_receives_exactly_the_built_operation():
     op = build_operation(
         capability="app.interact", operation="read_screen_element",
         package_name="com.example", arguments={"selector": "id/login"},
-        user_id=user_id, task_id=task_id,
+        user_id=user_id, task_id=task_id, device_id=uuid.uuid4(),
     )
     transport = _RecordingTransport()
     result = await transport.send(op)
     assert result.metadata["primitive"] == "accessibility.read_element"
     assert transport.sent == [op]
+
+
+# ── integration hardening: dispatch is bound to one device and one app ──
+
+
+def test_a_device_operation_without_the_authorizing_device_is_refused():
+    """A grant can be device-scoped (PRD §13's grid is per phone). An operation
+    that names no device would let a transport run it on any of the user's
+    devices, including one where nothing was granted."""
+
+    user_id, task_id = _ids()
+    with pytest.raises(ExecutionError) as excinfo:
+        build_operation(
+            capability="device.read", operation="read_battery",
+            package_name=None, arguments={}, user_id=user_id, task_id=task_id, device_id=None,
+        )
+    assert excinfo.value.code == ExecutionErrorCode.MISSING_CONTEXT
+
+
+def test_app_interact_without_a_named_app_is_refused():
+    """08 §2: app.interact acts inside one named app — never "whatever app is
+    in front"."""
+
+    user_id, task_id = _ids()
+    with pytest.raises(ExecutionError) as excinfo:
+        build_operation(
+            capability="app.interact", operation="tap", package_name=None,
+            arguments={"x": 1, "y": 1}, user_id=user_id, task_id=task_id, device_id=uuid.uuid4(),
+        )
+    assert excinfo.value.code == ExecutionErrorCode.MISSING_CONTEXT
+
+
+def test_the_built_operation_carries_exactly_the_authorizing_device():
+    user_id, task_id = _ids()
+    device_id = uuid.uuid4()
+    op = build_operation(
+        capability="app.interact", operation="tap", package_name="com.example",
+        arguments={}, user_id=user_id, task_id=task_id, device_id=device_id,
+    )
+    assert op.device_id == device_id

@@ -233,6 +233,12 @@ class ShellCommandAdapter:
         self._executor = executor
         self._sandbox = sandbox
 
+    def release_task(self, task_id: UUID) -> None:
+        """09 §7: the task's temp directory — the only place a process may
+        write — is removed when the task ends."""
+
+        self._sandbox.cleanup_task(task_id=task_id)
+
     async def execute(self, invocation: ToolInvocation) -> ToolOutput:
         request = ExecutionRequest.from_invocation(invocation)
         try:
@@ -291,7 +297,7 @@ class AndroidDeviceAdapter:
             operation = build_operation(
                 capability=self._capability, operation=request.operation,
                 package_name=package_name, arguments=request.arguments,
-                user_id=request.user_id, task_id=request.task_id,
+                user_id=request.user_id, task_id=request.task_id, device_id=request.device_id,
             )
             result = await self._transport.send(operation)
         except ExecutionError as exc:
