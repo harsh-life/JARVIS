@@ -64,7 +64,17 @@ _MAX_ARG_BYTES = 4096
 # operator concern once real workloads exist.
 _RLIMIT_AS_BYTES = 512 * 1024 * 1024
 _RLIMIT_NOFILE = 64
-_RLIMIT_NPROC = 32
+# RLIMIT_NPROC is a per-*real-UID* ceiling — every process owned by that
+# user, system-wide, not just this call's own descendants — and the
+# calling process is (deliberately) not exempt from it the way a
+# privileged/root one is. A tight value here is a live footgun, not just a
+# defense-in-depth nicety: CI caught it directly (a non-root runner whose
+# service account already had a few dozen unrelated processes made `sh`'s
+# own `fork()` for a backgrounded `sleep &` fail outright, at NPROC=32 —
+# invisible in a root-run dev environment, which Linux exempts from this
+# limit entirely). Set high enough to act purely as a fork-bomb backstop,
+# not as a ceiling any realistic shared-account process count could reach.
+_RLIMIT_NPROC = 2048
 
 
 @dataclass(frozen=True)
