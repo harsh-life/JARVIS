@@ -16,6 +16,7 @@ import pytest
 
 from server.execution.process import ConstrainedProcessExecutor
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode
+from tests.support import TEST_PROCESS_CONFINEMENT
 
 pytestmark = pytest.mark.asyncio
 
@@ -26,6 +27,7 @@ def executor(**overrides) -> ConstrainedProcessExecutor:
         default_timeout_seconds=5.0,
         max_timeout_seconds=10.0,
         max_output_bytes=1_000_000,
+        confinement_mode=TEST_PROCESS_CONFINEMENT,
     )
     defaults.update(overrides)
     return ConstrainedProcessExecutor(**defaults)

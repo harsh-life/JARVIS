@@ -71,6 +71,11 @@ execution:
     default_private_net: false
   process:
     allowed_executables: []              # system.restricted runs nothing until you list one
+    confinement_mode: "landlock"         # kernel-confined: no reads outside system dirs + task
+                                          # temp, no sockets. Where the kernel lacks Landlock
+                                          # (e.g. macOS) nothing runs. "unconfined" removes that
+                                          # boundary — never on a server holding other users' data.
+    read_only_paths: []                  # extra read-only paths an allowed program needs
 
 security:
   oidc:

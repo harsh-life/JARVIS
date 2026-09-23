@@ -29,6 +29,9 @@ _METADATA_ADDRESSES: frozenset[str] = frozenset(
 )
 
 
+_SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
+
+
 class DestinationBlocked(Exception):
     """Why an IP was refused — carried through to `ExecutionErrorCode.EGRESS_DENIED`."""
 
@@ -85,6 +88,15 @@ def classify(address_text: str, *, allow_private_net: bool) -> None:
         raise DestinationBlocked(
             "private address range — requires an execution policy with private_net=True"
         )
+    if not parsed.is_global and not parsed.is_private:
+        # Neither public nor RFC1918/ULA: e.g. 100.64.0.0/10 (RFC 6598
+        # shared/CGNAT space — carrier NAT, and Tailscale-style overlays).
+        # It is not the internet, so `internet=True` must not reach it; it is
+        # a private network in all but name, so only `private_net` may.
+        if not (allow_private_net and parsed in _SHARED_ADDRESS_SPACE):
+            raise DestinationBlocked(
+                "not a globally routable address — requires private_net=True"
+            )
 
 
 __all__ = ["DestinationBlocked", "classify"]

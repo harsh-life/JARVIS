@@ -108,13 +108,17 @@ async def grant_capability(
     owner (04 §2 D2: administering graph-level configuration is owner-only).
     """
 
-    if body.scope_type in {
-        CapabilityScopeType.USER,
-        CapabilityScopeType.DEVICE,
-        CapabilityScopeType.SESSION,
-    }:
-        permitted = {principal.user_id, principal.device_id, principal.session_id}
-        if body.scope_id not in permitted:
+    own_ids = {
+        CapabilityScopeType.USER: principal.user_id,
+        CapabilityScopeType.DEVICE: principal.device_id,
+        CapabilityScopeType.SESSION: principal.session_id,
+    }
+    if body.scope_type in own_ids:
+        # The id must be the caller's own id *of that kind*: a device-scoped
+        # grant keyed on a user id matches nothing (`_scope_matches`), so
+        # accepting it would record consent that authorizes nothing while
+        # looking like authority in every listing.
+        if body.scope_id != own_ids[body.scope_type]:
             raise AppError(ErrorCode.UNAUTHORIZED, "not permitted")
     elif body.scope_type is CapabilityScopeType.GRAPH:
         role = await core.graph_repository.active_role(

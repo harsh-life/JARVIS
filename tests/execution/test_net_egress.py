@@ -330,3 +330,69 @@ async def test_connection_refused_is_egress_denied_not_a_crash(client, allow_loo
 def test_unimplemented_enforcement_mode_refused_at_construction():
     with pytest.raises(ExecutionError):
         EgressClient(enforcement_mode="netns_filtered")
+
+
+# ── integration-hardening regressions ───────────────────────────────────
+
+
+@pytest.mark.parametrize("cgnat_ip", ["100.64.0.1", "100.100.100.100", "100.127.255.254"])
+def test_shared_address_space_is_not_the_internet(cgnat_ip):
+    """RFC 6598 (100.64.0.0/10) is carrier/overlay space, not the public
+    internet: `internet=True` alone must not reach it, `private_net` may."""
+
+    with pytest.raises(DestinationBlocked):
+        classify(cgnat_ip, allow_private_net=False)
+    classify(cgnat_ip, allow_private_net=True)
+
+
+async def test_a_huge_declared_chunk_is_refused_before_it_is_buffered(client, allow_loopback):
+    """A chunk header claiming far more than the cap must fail on the header,
+    not after the client has buffered toward it."""
+
+    def handler(conn, request):
+        conn.sendall(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nFFFFFFFFFF\r\n")
+        conn.sendall(b"a" * 4096)  # never enough to complete the chunk
+
+    with _raw_server(handler) as port:
+        egress_policy = make_policy(
+            destinations=frozenset({"127.0.0.1"}), allowed_ports=frozenset({port}), max_response_bytes=1000,
+        )
+        with pytest.raises(ExecutionError) as excinfo:
+            await client.arequest(f"http://127.0.0.1:{port}/", egress_policy=egress_policy)
+        assert excinfo.value.code == ExecutionErrorCode.RESPONSE_TOO_LARGE
+
+
+async def test_a_negative_chunk_size_is_malformed(client, allow_loopback):
+    def handler(conn, request):
+        conn.sendall(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n-5\r\nhello\r\n0\r\n\r\n")
+
+    with _raw_server(handler) as port:
+        egress_policy = make_policy(destinations=frozenset({"127.0.0.1"}), allowed_ports=frozenset({port}))
+        with pytest.raises(ExecutionError) as excinfo:
+            await client.arequest(f"http://127.0.0.1:{port}/", egress_policy=egress_policy)
+        assert excinfo.value.code == ExecutionErrorCode.EGRESS_DENIED
+
+
+async def test_a_slow_drip_cannot_outlast_the_total_request_budget(client, allow_loopback):
+    """Each byte arrives inside the per-read timeout, so only a total deadline
+    stops this; without one the worker thread is held indefinitely."""
+
+    def handler(conn, request):
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n")
+        for _ in range(100):
+            time.sleep(0.1)
+            try:
+                conn.sendall(b"x")
+            except OSError:
+                return
+
+    with _raw_server(handler) as port:
+        egress_policy = make_policy(
+            destinations=frozenset({"127.0.0.1"}), allowed_ports=frozenset({port}),
+            connect_timeout_seconds=0.3, read_timeout_seconds=0.5,
+        )
+        started = time.monotonic()
+        with pytest.raises(ExecutionError) as excinfo:
+            await client.arequest(f"http://127.0.0.1:{port}/", egress_policy=egress_policy)
+        assert excinfo.value.code == ExecutionErrorCode.TIMEOUT
+        assert time.monotonic() - started < 3.0

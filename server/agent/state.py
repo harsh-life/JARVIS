@@ -10,6 +10,7 @@ restart therefore loses a paused task's action, and the task fails closed
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -69,6 +70,8 @@ class TaskState:
     run_seconds_used: float = 0.0
     pending: PendingStep | None = None
     cancelled: bool = False
+    # Set by `/cancel`; an in-flight tool call races against it (05 §9).
+    cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     notes: list[str] = field(default_factory=list)
     allowed_tool_ids: frozenset[str] | None = None
     created_monotonic: float = field(default_factory=time.monotonic)

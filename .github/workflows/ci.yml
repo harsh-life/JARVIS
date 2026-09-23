@@ -75,4 +75,7 @@ jobs:
         # Re-measured on every run, with the table in the log. 14 §4's
         # deliverable is the measurement, so it is recorded as CI evidence
         # rather than as a claim in a document nobody re-runs.
-        run: python -m pytest tests/security_core/test_od_a1_br_t2.py -q -s
+        # The original eleven rows (relational store, SecretStore) plus the
+        # execution dimensions integration made measurable (09/10, the process
+        # executor) — docs/OD_A1_BR_T2.md §3/§4.
+        run: python -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py -q -s

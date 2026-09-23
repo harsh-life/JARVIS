@@ -32,13 +32,16 @@ from server.tools.platforms import (
 from server.tools.registry import ToolRegistry
 from shared.schemas.agent import ExecutionPlatform, ToolInvocation
 from shared.schemas.execution import EgressPolicy
+from tests.support import TEST_PROCESS_CONFINEMENT
 
 
-def invocation(tool_id, operation, *, user_id=None, task_id=None, arguments=None, scope=None) -> ToolInvocation:
+def invocation(tool_id, operation, *, user_id=None, task_id=None, arguments=None, scope=None,
+               device_id=None) -> ToolInvocation:
     return ToolInvocation(
         tool_id=tool_id, operation=operation, arguments=arguments or {},
         user_id=user_id or uuid.uuid4(), task_id=task_id or uuid.uuid4(),
         platform=ExecutionPlatform.SERVER, resource_scope=scope,
+        device_id=device_id or uuid.uuid4(),
     )
 
 
@@ -164,7 +167,7 @@ def fs_for_process(tmp_path) -> FilesystemSandbox:
 
 
 async def test_shell_adapter_runs_an_allowlisted_command(fs_for_process):
-    executor = ConstrainedProcessExecutor(allowed_executables=["echo"], default_timeout_seconds=5.0)
+    executor = ConstrainedProcessExecutor(confinement_mode=TEST_PROCESS_CONFINEMENT, allowed_executables=["echo"], default_timeout_seconds=5.0)
     adapter = ShellCommandAdapter(executor, sandbox=fs_for_process)
     out = await adapter.execute(invocation(
         "system.shell", "run_shell_command", arguments={"argv": ["echo", "hi"]},
@@ -174,7 +177,7 @@ async def test_shell_adapter_runs_an_allowlisted_command(fs_for_process):
 
 
 async def test_shell_adapter_refuses_unauthorized_executable(fs_for_process):
-    executor = ConstrainedProcessExecutor(allowed_executables=["echo"])
+    executor = ConstrainedProcessExecutor(confinement_mode=TEST_PROCESS_CONFINEMENT, allowed_executables=["echo"])
     adapter = ShellCommandAdapter(executor, sandbox=fs_for_process)
     out = await adapter.execute(invocation(
         "system.shell", "run_shell_command", arguments={"argv": ["rm", "-rf", "/"]},
@@ -184,7 +187,7 @@ async def test_shell_adapter_refuses_unauthorized_executable(fs_for_process):
 
 
 async def test_shell_adapter_runs_in_the_tasks_own_sandbox_temp(fs_for_process):
-    executor = ConstrainedProcessExecutor(allowed_executables=["pwd"])
+    executor = ConstrainedProcessExecutor(confinement_mode=TEST_PROCESS_CONFINEMENT, allowed_executables=["pwd"])
     adapter = ShellCommandAdapter(executor, sandbox=fs_for_process)
     task_id = uuid.uuid4()
     out = await adapter.execute(invocation(
@@ -196,7 +199,7 @@ async def test_shell_adapter_runs_in_the_tasks_own_sandbox_temp(fs_for_process):
 
 
 async def test_shell_adapter_rejects_non_list_argv(fs_for_process):
-    executor = ConstrainedProcessExecutor(allowed_executables=["echo"])
+    executor = ConstrainedProcessExecutor(confinement_mode=TEST_PROCESS_CONFINEMENT, allowed_executables=["echo"])
     adapter = ShellCommandAdapter(executor, sandbox=fs_for_process)
     out = await adapter.execute(invocation(
         "system.shell", "run_shell_command", arguments={"argv": "echo hi"},
@@ -244,11 +247,14 @@ async def test_android_adapter_dispatches_through_the_transport():
     assert out.ok
     assert out.content == "tapped"
     assert transport.sent[0].package_name == "com.example"
+    assert transport.sent[0].device_id is not None
 
 
 async def test_android_adapter_defaults_to_unavailable_and_fails_closed():
     adapter = AndroidDeviceAdapter("app.interact", UnavailableDeviceTransport())
-    out = await adapter.execute(invocation("device.app_interact", "tap", arguments={}))
+    out = await adapter.execute(invocation(
+        "device.app_interact", "tap", arguments={}, scope={"package_name": "com.example"},
+    ))
     assert not out.ok
     assert out.error == "device_unavailable"
 

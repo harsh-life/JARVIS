@@ -79,6 +79,19 @@ class DeviceOperation:
     arguments: Mapping[str, object]
     user_id: UUID
     task_id: UUID
+    # The one device this operation may run on: the authorizing principal's
+    # own (03 §8). A transport must deliver to exactly this device — never to
+    # "any connected device of this user", which may be one where the user
+    # granted nothing (PRD §13's grid is per device).
+    device_id: UUID
+
+
+# Capabilities whose operations act *inside one named app* (08 §2: "app.interact
+# on WhatsApp means exactly the enumerated UI operations on WhatsApp"). Without a
+# package name the operation would act on whatever app is in front — including
+# one the user never granted — and the device-side guard (08 §4) would have no
+# app to check its toggle against. So it is refused, not defaulted.
+_APP_SCOPED_CAPABILITIES = frozenset({"app.interact"})
 
 
 class DeviceUnavailable(Exception):
@@ -106,6 +119,7 @@ def build_operation(
     arguments: Mapping[str, object],
     user_id: UUID,
     task_id: UUID,
+    device_id: UUID | None,
 ) -> DeviceOperation:
     """The one constructor a platform adapter uses. Fails closed
     (`ExecutionErrorCode.PLATFORM_UNSUPPORTED`) for a capability/operation
@@ -125,9 +139,20 @@ def build_operation(
             ExecutionErrorCode.PLATFORM_UNSUPPORTED,
             f"operation {operation!r} is not in {capability!r}'s enumerated Android mapping (AND-006)",
         )
+    if device_id is None:
+        raise ExecutionError(
+            ExecutionErrorCode.MISSING_CONTEXT,
+            "a device operation must name the authorizing principal's device",
+        )
+    if capability in _APP_SCOPED_CAPABILITIES and not package_name:
+        raise ExecutionError(
+            ExecutionErrorCode.MISSING_CONTEXT,
+            f"{capability!r} acts inside one named app — resource_scope must carry package_name",
+        )
     return DeviceOperation(
         capability=capability, operation=operation, primitive=primitive,
         package_name=package_name, arguments=dict(arguments), user_id=user_id, task_id=task_id,
+        device_id=device_id,
     )
 
 

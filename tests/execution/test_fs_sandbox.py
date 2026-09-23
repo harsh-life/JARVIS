@@ -435,3 +435,28 @@ def test_list_directory_never_surfaces_a_symlink_as_traversable(user_root):
     result = sandbox.list_directory(root, ".")
     assert "real.txt" in result.content
     assert "link.txt" not in result.content
+
+
+
+# ── integration hardening: the quota is per principal, not per label ────
+
+
+def test_the_storage_quota_covers_every_label_a_principal_names(tmp_path):
+    """A `sandbox_root` label is caller-chosen. Charging the quota per label let a
+    principal fill `max_sandbox_bytes` again under every new name; it is charged
+    against the principal's whole area instead."""
+
+
+    sandbox = FilesystemSandbox(base_root=str(tmp_path / "sb"), max_sandbox_bytes=1000, max_file_bytes=1000)
+    user = uuid.uuid4()
+    first = sandbox.root_for(user_id=user, graph_id=None, label="a")
+    sandbox.create_file(first, "one.txt", "x" * 700)
+
+    second = sandbox.root_for(user_id=user, graph_id=None, label="b")
+    with pytest.raises(ExecutionError) as excinfo:
+        sandbox.create_file(second, "two.txt", "y" * 700)
+    assert excinfo.value.code == ExecutionErrorCode.RESOURCE_EXHAUSTED
+
+    # Another principal's usage is not charged to this one.
+    other = sandbox.root_for(user_id=uuid.uuid4(), graph_id=None, label="a")
+    sandbox.create_file(other, "three.txt", "z" * 700)

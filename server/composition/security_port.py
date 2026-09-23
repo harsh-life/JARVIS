@@ -40,7 +40,7 @@ from server.gateway.security import SecurityCore
 from server.graph.authorization import AccessRequest
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
-from server.storage.models import CapabilityGrant, Device, Session
+from server.storage.models import CapabilityGrant, Device, Session, User
 from shared.schemas.authorization import (
     ActionBinding,
     CapabilityCheckContext,
@@ -55,6 +55,7 @@ from shared.schemas.enums import (
     CapabilityScopeType,
     PermissionDecisionValue,
     RiskCategory,
+    UserStatus,
 )
 
 # The runtime's event vocabulary → the audit registry. Exhaustive; an unmapped
@@ -262,6 +263,12 @@ class RuntimeSecurityAdapter:
 
         device = await self._session.get(Device, principal.device_id)
         if device is None or device.revoked or device.user_id != principal.user_id:
+            return False
+        # The same link `resolve_principal` checks on every request (02 §1.2):
+        # a user suspended or deleted mid-task stops at the next step, not when
+        # the task's wall clock runs out.
+        user = await self._session.get(User, principal.user_id)
+        if user is None or user.status is not UserStatus.ACTIVE:
             return False
         session_row = await self._session.get(Session, principal.session_id)
         if session_row is None or session_row.user_id != principal.user_id:

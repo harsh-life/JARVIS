@@ -69,6 +69,8 @@ def build_execution_tools(config: AppConfig) -> list[ToolDefinition]:
         default_timeout_seconds=process_config.default_timeout_seconds,
         max_timeout_seconds=process_config.max_timeout_seconds,
         max_output_bytes=process_config.max_output_bytes,
+        confinement_mode=process_config.confinement_mode,
+        read_only_paths=process_config.read_only_paths,
     )
 
     return [

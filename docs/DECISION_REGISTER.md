@@ -136,6 +136,47 @@ names remain `[PROPOSED]` until the owner signs them.
 
 ---
 
+## 2B. Integration-hardening decisions and proposals (`[PROPOSED]` unless marked)
+
+The `integration-hardening` branch reviewed the composed system (Track B) against
+the canonical PRD and the locked decisions above. Everything below either
+**consumes** a locked decision without changing it, or is a proposal pending
+ratification. None of it reopens OD-A1 or OD-D1.
+
+| ID | Decision | Value | Where |
+|---|---|---|---|
+| OD-EXEC-1 | Kernel confinement for `system.restricted` | **Default `landlock`**: Landlock filesystem + TCP rules (read-only system dirs, read-write task temp root without EXECUTE, no TCP bind/connect, signal/abstract-socket scoping on ABI ≥ 6), a seccomp filter denying `socket()`, `io_uring_setup` and foreign/x32 syscall ABIs, `no_new_privs`, and `RLIMIT_FSIZE`. **Fails closed** (`PLATFORM_UNSUPPORTED`) where Landlock is unavailable — including every macOS host. This is a kernel boundary around one child process; it is not a container, and it is not process isolation for the server itself. | `server/execution/confinement.py`, `execution.process.confinement_mode` |
+| OD-EXEC-2 | `confinement_mode: unconfined` opt-out | **Owner decision needed.** Proposed: permitted only for disposable-data development on hosts without Landlock; logged as a warning at startup; never with real data. BR-T2 §3b row 17 shows it makes another user's files reachable to an *authorized* command. | same |
+| OD-EXEC-3 | Allow-listed executable identity | A bare allow-list name is resolved once at construction and exec'd by absolute path; model-supplied `PATH` cannot swap it. `LD_*`, `DYLD_*`, `GCONV_PATH` overrides are refused. | `server/execution/process.py` |
+| OD-GRAPH-1 | `approve_member` semantics | The owner can admit only a user with a **pending access request** to a **shared** graph; a private graph is not joinable and an owner cannot enrol a user who never asked. Consumes OD-E1 (owner/member only); no new role. | `server/graph/service.py` |
+| OD-IDEM-1 | Idempotency-key namespace | Client keys are namespaced by the authenticated user id (max 200 chars), so one user's key can never replay another's cached response. | `server/gateway/routers/graphs.py` |
+| OD-IDEM-2 | Confirmation token at rest | The stored idempotency replay copy has `confirmation_token` nulled; only its hash is persisted (ConfirmationToken). A retry recovers the token through the owner-only task read. | `server/storage/idempotency.py`, `server/gateway/routers/agent.py` |
+| OD-SEC-1 | `env:` references from stored rows | A stored `AgentConfiguration` may reference only a `secretstore:` handle. `env:` remains valid in operator config only — a stored row naming `env:` would otherwise ship the server's own environment (e.g. the KEK) to a provider. Consumes OD-D1 unchanged; no new secret mechanism. | `server/composition/models.py` |
+| OD-SEC-2 | Model-key resolver class restriction | The resolver hands a secret to a provider only when its class is `model_api_key`; any other class is refused and audited `blocked`. | `server/composition/facade.py` |
+| OD-ID-1 | Principal freshness | The runtime's per-step principal check also requires the **user** to be `active`, so a suspended user's in-flight task stops at its next step. | `server/composition/security_port.py` |
+| OD-DEV-1 | Device binding of tool calls | Every `ToolInvocation`/`ExecutionRequest` carries the authorizing principal's `device_id`; Android operations without one are refused, and `app.interact` requires a `package_name` scope. The device is an execution target, never a trust root. | `shared/schemas/agent.py`, `server/execution/android.py` |
+| OD-CAP-1 | Device/session-scoped grants | Grant listing matches the grant's scope to the caller's own user/device/session id exactly. | `server/gateway/routers/capabilities.py` |
+| OD-NET-4 | Shared address space (`100.64.0.0/10`) | Classified non-global and refused unless the destination opts into private networks; total-deadline, chunk-size and chunk-header bounds added to the egress client. | `server/net/policy.py`, `server/net/client.py` |
+| OD-FS-2 | Quota unit | Per principal (all of a user's private roots, or all of a graph's shared roots), not per label — a new label no longer resets the quota. | `server/fs/sandbox.py` |
+| OD-RT-4 | Cancellation of a running tool | `/cancel` on a running task sets an event the tool call races against; the call is cancelled and its process group killed. A `/cancel` racing a `/confirm` resolves to exactly one outcome. Task temp roots are released when a task ends. | `server/agent/runtime.py`, `server/tools/registry.py` |
+
+**Recorded residuals (not fixed here, not claimed fixed):**
+
+- SQLite foreign-key enforcement stays off (`PRAGMA foreign_keys` is not set):
+  audit rows deliberately reference ids that may not exist (probes of unknown
+  graphs/users). Integrity is maintained by the service layer, not the database.
+- `FilesystemSandbox` performs synchronous file I/O on the event loop; bounded by
+  per-file and per-principal quotas, not by a thread pool.
+- Filesystem and egress containment remain `mediated` / `mediated_proxy`
+  (OD-FS-1, OD-NET-1): application-level for in-process code. BR-T2 §3b rows 13
+  and 14 are inside OD-A1 (a); `mount_isolated` and `netns_filtered` stay future
+  hardening (§4).
+- Mem0 (`11`) and the Android device client (`08`) do not exist; their BR-T2 rows
+  and release-blocking suites are pending. The real-data gate (17 §5) stays
+  closed: **disposable or test data only**.
+
+---
+
 ## 3. Genuinely unresolved owner decisions
 
 | ID | Question | Why it is the owner's |

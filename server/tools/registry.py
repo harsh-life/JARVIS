@@ -36,6 +36,7 @@ something registration proves for you.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Mapping, Protocol
@@ -55,6 +56,8 @@ from shared.schemas.agent import (
 from shared.schemas.agent_config import ToolContract
 from shared.schemas.authorization import Operation, ResourceType
 from shared.schemas.enums import RiskCategory
+
+logger = logging.getLogger("hypermind.tools.registry")
 
 _SEVERITY = {
     RiskCategory.LOW_READ: 0,
@@ -231,6 +234,29 @@ class ToolRegistry:
             )
             for h in self.enabled_handles()
         ]
+
+    def release_task(self, task_id) -> None:
+        """Give every adapter that holds per-task state the chance to drop it.
+
+        An adapter opts in by defining `release_task(task_id)`. A failure here is
+        logged and swallowed: cleanup must never turn a finished task into a
+        crashed one, and whatever was left behind is still inside the sandbox
+        base root (09 §7's periodic sweep is the backstop).
+        """
+
+        seen: set[int] = set()
+        for entry in self._entries.values():
+            for adapter in entry.adapters.values():
+                if id(adapter) in seen:
+                    continue
+                seen.add(id(adapter))
+                release = getattr(adapter, "release_task", None)
+                if release is None:
+                    continue
+                try:
+                    release(task_id)
+                except Exception:  # noqa: BLE001 — see docstring
+                    logger.warning("tool %s: releasing task state failed", entry.handle.tool_id)
 
     async def run(
         self, tool_id: str, platform: ExecutionPlatform, invocation: ToolInvocation, *, timeout: float

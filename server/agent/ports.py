@@ -202,6 +202,11 @@ class ToolCatalog(Protocol):
         timeout: float,
     ) -> ToolOutput: ...
 
+    def release_task(self, task_id: uuid.UUID) -> None:
+        """Release everything the task's tool calls allocated (09 §7: task
+        temp is cleaned up on task end). Called once, at every terminal state."""
+        ...
+
 
 # ── models (06) ────────────────────────────────────────────────────────────
 
