@@ -1,39 +1,29 @@
-"""The tool-execution boundary — 07_TOOL_CAPABILITY_EXECUTION.md §1/§8.
+"""Bounded tool execution (07 §5 "Resource → per-contract timeout").
 
-`[LOCKED]` scope note: this branch (runtime) owns the *registry and dispatch*
-half of `07` — enough to unblock `05`'s loop — not the concrete execution
-primitives. "DO NOT implement the actual platform execution systems" (this
-branch's own instructions): Android/Shizuku, the filesystem sandbox, and
-network egress enforcement belong to the Execution branch (`08`/`09`/`10`).
-Nothing in this package executes a filesystem write, a network call, or a
-device action; `ToolExecutor` is the interface those branches implement.
-
-Deliberately does **not** import `server.agent`: it and `server.agent` are
-independent siblings under the layering contract (both occupy the
-`agent | modeltools | models | tools | memory | vault | scheduler | voice`
-band), so `ToolExecutor` is declared here, using only `shared.schemas`
-vocabulary, and satisfied structurally — the same "no inheritance, no cross-
-import" pattern `server/capabilities/grants.py` already uses for
-`server.graph.ports.CapabilityChecker`.
+An adapter failure — an exception, a timeout, a malformed return — becomes a
+failed `ToolOutput` that the runtime feeds back to the model as an observation
+(FAIL-006). It never crashes the runtime and never becomes a success.
 """
 
 from __future__ import annotations
 
-from typing import Protocol
+import asyncio
+import logging
 
-from shared.schemas.runtime import ToolInvocationRequest, ToolResult
+from shared.schemas.agent import ToolInvocation, ToolOutput
 
-
-class ToolExecutor(Protocol):
-    """What a concrete tool (or a model-tool, `server/modeltools`) implements.
-
-    Called only after `04` has already authorized the call (07 §8's `EXEC`
-    node) — an executor has no access to the `AccessRequest` or the
-    principal's identity beyond what `ToolInvocationRequest` explicitly
-    carries, so it structurally cannot make its own authorization decision.
-    """
-
-    async def execute(self, request: ToolInvocationRequest) -> ToolResult: ...
+logger = logging.getLogger("hypermind.tools.executor")
 
 
-__all__ = ["ToolExecutor"]
+async def run_tool(adapter, invocation: ToolInvocation, *, timeout: float) -> ToolOutput:
+    try:
+        output = await asyncio.wait_for(adapter.execute(invocation), timeout=max(0.001, timeout))
+    except asyncio.TimeoutError:
+        return ToolOutput(ok=False, error="timeout")
+    except Exception as exc:  # noqa: BLE001 — a tool failure is an observation (FAIL-006)
+        logger.warning("tool %s failed: %s", invocation.tool_id, type(exc).__name__)
+        return ToolOutput(ok=False, error=f"tool_error:{type(exc).__name__}")
+
+    if not isinstance(output, ToolOutput):
+        return ToolOutput(ok=False, error="malformed_tool_output")
+    return output

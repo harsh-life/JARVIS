@@ -1,184 +1,244 @@
-"""Agent Runtime endpoints — 02_API_PROTOCOL.md §5.
+"""Agent endpoints — 02 §5, plus `GET /config/tools` (§6) and
+`GET /intelligence/status` (§11).
 
-`[LOCKED]` (02 §5): "The agent endpoint returns a **proposal-executed-under-
-authorization** result, never raw model execution authority (P1)." Every
-handler below does exactly one thing beyond translating HTTP<->the
-orchestrator: it constructs a fresh, per-request `AgentOrchestrator` (via
-`server.gateway.runtime.build_agent_orchestrator`) bound to the *authenticated*
-principal from `get_principal` — never a `user_id` read from the request body
-— and maps the returned `AgentResult`/raised exception onto 02 §1.7's error
-codes. No handler here authorizes, confirms, or dispatches anything itself.
+`[LOCKED]` (02 §5) the agent endpoint returns a *proposal-executed-under-
+authorization* result, never raw model execution authority. A plan that reaches
+a consequential action returns `403 confirmation_required` with the token and
+the explicit operation details, and nothing further happens until `/confirm`.
+An absolute-floor action is never surfaced as confirmable.
+
+Identity comes only from the bearer token (`get_principal` /
+`get_resolved_session`); no route here reads a user, device, session, or graph
+id from the body (PHONE-003).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Response, status
+import uuid
+
+from fastapi import APIRouter, Depends, Header, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.agent.tasks import TaskConflict, UnknownTask
-from server.config.schema import AppConfig
+from server.auth.errors import StepUpRequired
+from server.auth.sessions import ResolvedSession
+from server.gateway.agent_port import AgentTaskPort
 from server.gateway.deps import (
-    get_app_config,
     get_audit_logger,
     get_db_session,
-    get_principal,
-    get_runtime_core,
+    get_resolved_session,
     get_security_core,
 )
 from server.gateway.errors import AppError
-from server.gateway.runtime import RuntimeCore, build_agent_orchestrator
 from server.gateway.security import SecurityCore
 from server.security.audit import AuditLogger
-from shared.schemas.authorization import Principal
-from shared.schemas.errors import ErrorCode
-from shared.schemas.runtime import AgentRequest, AgentResult, ConfirmRequest, FailureReason, TaskStatus
+from server.storage.idempotency import IdempotencyConflict, get_or_execute
+from shared.schemas.agent import AgentFailureCode, AgentResult, AgentTaskStatus, ToolSummary
+from shared.schemas.errors import ERROR_CODE_TABLE, ErrorCode
 
 router = APIRouter(tags=["agent"])
 
-_BOUND_BREACH_REASONS = frozenset(
-    {
-        FailureReason.RUNAWAY_ITERATIONS,
-        FailureReason.RUNAWAY_TOOL_CALLS,
-        FailureReason.RUNAWAY_MODEL_CALLS,
-        FailureReason.TIMEOUT,
-        FailureReason.BUDGET_EXCEEDED,
-    }
-)
+# Failure → 02 §1.7 code. 02 §5 names 429 for "loop/budget" and 503 for
+# "model down"; the rest follow the error table's meanings.
+_FAILURE_CODES: dict[AgentFailureCode, ErrorCode] = {
+    AgentFailureCode.MAX_ITERATIONS: ErrorCode.RATE_LIMITED,
+    AgentFailureCode.MAX_MODEL_CALLS: ErrorCode.RATE_LIMITED,
+    AgentFailureCode.MAX_TOOL_CALLS: ErrorCode.RATE_LIMITED,
+    AgentFailureCode.TIMEOUT: ErrorCode.RATE_LIMITED,
+    AgentFailureCode.BUDGET_EXCEEDED: ErrorCode.RATE_LIMITED,
+    AgentFailureCode.RATE_LIMITED: ErrorCode.RATE_LIMITED,
+    AgentFailureCode.MODEL_UNAVAILABLE: ErrorCode.DEPENDENCY_UNAVAILABLE,
+    AgentFailureCode.UNPARSEABLE_PROPOSAL: ErrorCode.DEPENDENCY_UNAVAILABLE,
+    AgentFailureCode.CONFIRMATION_EXPIRED: ErrorCode.CONFLICT,
+    AgentFailureCode.CONFIRMATION_STATE_LOST: ErrorCode.CONFLICT,
+    AgentFailureCode.PRINCIPAL_REVOKED: ErrorCode.UNAUTHENTICATED,
+    AgentFailureCode.INTERNAL_ERROR: ErrorCode.INTERNAL_ERROR,
+}
 
 
-def _raise_for_terminal_result(result: AgentResult) -> None:
-    """02 §5's documented error table for this endpoint family, applied
-    uniformly across create/confirm: `confirmation_required` (403), a bound
-    breach (429, RATE-001/FAIL-CORE-001), or a model outage (503, FAIL-005).
-    Every other outcome — `completed`, `cancelled`, or a `failed` for any
-    other reason (malformed proposal, context-assembly failure) — is returned
-    as an ordinary `200 AgentResult`; it is still an *explicit* result (never
-    a silent hang), just not one 02 §1.7 asks to be a distinct HTTP error.
-    """
+class SubmitTaskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-    if result.status is TaskStatus.AWAITING_CONFIRMATION:
-        raise AppError(
-            ErrorCode.CONFIRMATION_REQUIRED,
-            "this action requires human confirmation before it may proceed",
-            details={"task_id": result.task_id, "confirmation_token": result.confirmation_token},
-        )
-    if result.status is TaskStatus.FAILED and result.failure_reason in _BOUND_BREACH_REASONS:
-        raise AppError(
-            ErrorCode.RATE_LIMITED,
-            f"task stopped: {result.failure_reason.value}",
-            details={"task_id": result.task_id},
-        )
-    if result.status is TaskStatus.FAILED and result.failure_reason is FailureReason.MODEL_UNAVAILABLE:
+    input: str = Field(min_length=1, max_length=20_000)
+    stream: bool = False  # 02 §1.9: non-streaming is the MVP default
+
+
+class ConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    confirmation_token: str = Field(min_length=1, max_length=512)
+    approve: bool
+
+
+def _runtime(request: Request) -> AgentTaskPort:
+    runtime = getattr(request.app.state, "agent_tasks", None)
+    if runtime is None:
         raise AppError(
             ErrorCode.DEPENDENCY_UNAVAILABLE,
-            "the configured model is unavailable",
-            details={"task_id": result.task_id},
-            retryable=True,
+            "the agent runtime is not configured on this server",
+            details={"dependency": "agent_runtime"},
         )
+    return runtime
 
 
-async def _orchestrator(
-    session: AsyncSession,
-    audit: AuditLogger,
-    principal: Principal,
-    core: SecurityCore,
-    runtime: RuntimeCore,
-    app_config: AppConfig,
-):
-    return await build_agent_orchestrator(
-        session=session,
-        audit=audit,
-        principal=principal,
-        security=core,
-        runtime=runtime,
-        app_config=app_config,
-    )
+def render(result: AgentResult, request_id: uuid.UUID | str) -> tuple[int, dict]:
+    """An `AgentResult` as (status, body). Success is the result itself; a pause
+    or a failure is the canonical error envelope (02 §1.6) with the task id."""
+
+    body = result.model_dump(mode="json")
+    if result.status is AgentTaskStatus.AWAITING_CONFIRMATION and result.pending is not None:
+        code = ErrorCode.CONFIRMATION_REQUIRED
+        message = "this action needs your confirmation before it runs"
+        details = {
+            "task_id": body["task_id"],
+            "confirmation_token": result.pending.confirmation_token,
+            "pending": body["pending"],
+        }
+    elif result.status is AgentTaskStatus.FAILED and result.failure is not None:
+        code = _FAILURE_CODES[result.failure.code]
+        message = result.failure.message
+        details = {"task_id": body["task_id"], "failure_code": result.failure.code.value}
+        if code is ErrorCode.DEPENDENCY_UNAVAILABLE:
+            details["dependency"] = "model"
+        if code is ErrorCode.RATE_LIMITED:
+            details["retry_after"] = 60
+    else:
+        return 200, body
+
+    status, retryable = ERROR_CODE_TABLE[code]
+    return status, {
+        "error": {
+            "code": code.value,
+            "message": message,
+            "request_id": str(request_id),
+            "retryable": retryable,
+            "details": details,
+        }
+    }
 
 
-@router.post("/agent/tasks", response_model=AgentResult)
-async def create_task(
-    body: AgentRequest,
+@router.post("/agent/tasks")
+async def submit_task(
+    body: SubmitTaskRequest,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     session: AsyncSession = Depends(get_db_session),
+    resolved: ResolvedSession = Depends(get_resolved_session),
     audit: AuditLogger = Depends(get_audit_logger),
-    principal: Principal = Depends(get_principal),
-    core: SecurityCore = Depends(get_security_core),
-    runtime: RuntimeCore = Depends(get_runtime_core),
-    app_config: AppConfig = Depends(get_app_config),
-) -> AgentResult:
-    orchestrator = await _orchestrator(session, audit, principal, core, runtime, app_config)
-    result = await orchestrator.start(body.input)
-    _raise_for_terminal_result(result)
-    return result
+) -> JSONResponse:
+    """02 §5. `Idempotency-Key` is required (02 §1.4): a retried submission
+    returns the original result and never runs the task twice.
+
+    The key is namespaced by the authenticated user, so one user's key can never
+    replay another user's stored result.
+    """
+
+    if not idempotency_key or len(idempotency_key) > 200:
+        raise AppError(ErrorCode.VALIDATION_FAILED, "Idempotency-Key header is required")
+    runtime = _runtime(request)
+    principal = resolved.principal
+
+    async def execute() -> tuple[int, dict]:
+        result = await runtime.submit(
+            session, principal=principal, user_input=body.input, audit=audit
+        )
+        return render(result, audit.request_id)
+
+    try:
+        stored = await get_or_execute(
+            session,
+            idempotency_key=f"{principal.user_id}:{idempotency_key}",
+            method="POST",
+            path="/api/v1/agent/tasks",
+            body=body.model_dump(mode="json"),
+            execute=execute,
+        )
+    except IdempotencyConflict:
+        raise AppError(ErrorCode.CONFLICT, "Idempotency-Key reused for a different request") from None
+    return JSONResponse(status_code=stored.status_code, content=stored.response_body)
 
 
-@router.post("/agent/tasks/{task_id}/confirm", response_model=AgentResult)
+@router.post("/agent/tasks/{task_id}/confirm")
 async def confirm_task(
-    task_id: str,
+    task_id: uuid.UUID,
     body: ConfirmRequest,
+    request: Request,
     session: AsyncSession = Depends(get_db_session),
-    audit: AuditLogger = Depends(get_audit_logger),
-    principal: Principal = Depends(get_principal),
     core: SecurityCore = Depends(get_security_core),
-    runtime: RuntimeCore = Depends(get_runtime_core),
-    app_config: AppConfig = Depends(get_app_config),
-) -> AgentResult:
-    """05 §4 — `[LOCKED]` no timeout auto-approves; a task not currently
-    `awaiting_confirmation` is a `409 conflict`, not silently accepted."""
+    resolved: ResolvedSession = Depends(get_resolved_session),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> JSONResponse:
+    """02 §5 / PERM-004. Approving a `high_irreversible` action additionally
+    needs a step-up-fresh session (OD-F1 tier 4, SESSION-003); the freshness
+    fact is computed here from the token and enforced by the runtime."""
 
-    orchestrator = await _orchestrator(session, audit, principal, core, runtime, app_config)
     try:
-        result = await orchestrator.resume(
-            task_id, confirmation_token=body.confirmation_token, approve=body.approve
-        )
-    except UnknownTask as exc:
-        raise AppError(ErrorCode.NOT_FOUND, "not found") from exc
-    except TaskConflict as exc:
-        raise AppError(ErrorCode.CONFLICT, str(exc)) from exc
+        core.sessions.require_step_up(resolved)
+        step_up_fresh = True
+    except StepUpRequired:
+        step_up_fresh = False
 
-    _raise_for_terminal_result(result)
-    return result
+    result = await _runtime(request).confirm(
+        session,
+        principal=resolved.principal,
+        task_id=task_id,
+        confirmation_token=body.confirmation_token,
+        approve=body.approve,
+        step_up_fresh=step_up_fresh,
+        audit=audit,
+    )
+    status, payload = render(result, audit.request_id)
+    return JSONResponse(status_code=status, content=payload)
 
 
-@router.post("/agent/tasks/{task_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/agent/tasks/{task_id}/cancel", response_model=AgentResult)
 async def cancel_task(
-    task_id: str,
-    principal: Principal = Depends(get_principal),
-    runtime: RuntimeCore = Depends(get_runtime_core),
-) -> Response:
-    """No `AgentOrchestrator` is constructed here — cancellation touches only
-    `TaskStore` (05 §9), not the authorization/model/tool ports a running
-    loop needs, so this handler stays minimal on purpose."""
-
-    try:
-        await runtime.task_store.request_cancellation(task_id, requested_by=principal)
-    except UnknownTask as exc:
-        raise AppError(ErrorCode.NOT_FOUND, "not found") from exc
-    except TaskConflict as exc:
-        raise AppError(ErrorCode.CONFLICT, str(exc)) from exc
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    task_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    resolved: ResolvedSession = Depends(get_resolved_session),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentResult:
+    return await _runtime(request).cancel(
+        session, principal=resolved.principal, task_id=task_id, audit=audit
+    )
 
 
 @router.get("/agent/tasks/{task_id}", response_model=AgentResult)
 async def get_task(
-    task_id: str,
-    principal: Principal = Depends(get_principal),
-    runtime: RuntimeCore = Depends(get_runtime_core),
+    task_id: uuid.UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    resolved: ResolvedSession = Depends(get_resolved_session),
+    audit: AuditLogger = Depends(get_audit_logger),
 ) -> AgentResult:
-    try:
-        state_or_result = await runtime.task_store.get(task_id)
-    except UnknownTask as exc:
-        raise AppError(ErrorCode.NOT_FOUND, "not found") from exc
+    """Owner-only (any of the owner's devices). Another user's task is `404`,
+    indistinguishable from an absent one (04 §7)."""
 
-    if state_or_result.principal.user_id != principal.user_id:
-        # 04 §7's anti-enumeration posture, applied to a task_id: another
-        # user's task is reported absent, never "forbidden".
-        raise AppError(ErrorCode.NOT_FOUND, "not found")
-    if state_or_result.result is not None:
-        return state_or_result.result
-    return AgentResult(
-        task_id=state_or_result.task_id,
-        status=state_or_result.status,
-        iterations_used=state_or_result.iterations,
-        tool_calls_used=state_or_result.tool_calls,
-        model_calls_used=state_or_result.model_calls,
+    return await _runtime(request).get(
+        session, principal=resolved.principal, task_id=task_id, audit=audit
     )
+
+
+class ToolListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[ToolSummary]
+
+
+@router.get("/config/tools", response_model=ToolListResponse)
+async def list_tools(
+    request: Request, resolved: ResolvedSession = Depends(get_resolved_session)
+) -> ToolListResponse:
+    return ToolListResponse(items=_runtime(request).tool_summaries())
+
+
+@router.get("/intelligence/status")
+async def intelligence_status(
+    request: Request, resolved: ResolvedSession = Depends(get_resolved_session)
+) -> dict:
+    """02 §11 / INTEL-003. No query/execute intelligence endpoint exists while
+    disabled — the capability is absent, not present-but-erroring (P3)."""
+
+    return {"enabled": bool(getattr(request.app.state, "intelligence_enabled", False))}

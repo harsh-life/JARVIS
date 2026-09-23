@@ -35,6 +35,13 @@ ratified canon. Tool families named in 07 §1 that have no canonical capability
 string yet (memory, vault, scheduler, network) are deliberately **absent**
 rather than invented; the branch that owns each one adds its entry with the
 owner's tier sign-off.
+
+OD-TOOL-1 was ratified by the owner at the *semantic-capability* level
+(docs/DECISION_REGISTER.md): capabilities are broad authorization classes the
+agent composes operations within, not command menus. The full matrix — owner's
+semantic classes, concrete names, per-platform adapters, and what is
+deliberately absent — is docs/CAPABILITY_MATRIX.md. The runtime branch added one
+entry, `model.invoke`, because it owns model-tools (06).
 """
 
 from __future__ import annotations
@@ -165,32 +172,6 @@ def _registry() -> Mapping[str, CapabilityDefinition]:
             scope_keys=frozenset({"sandbox_root"}),
         ),
         CapabilityDefinition(
-            name="model_tool.invoke",
-            description=(
-                "Invoke a configured model-tool (06 §3 LLM-as-Tool) — an "
-                "agent runtime addition, pending owner ratification like the "
-                "rest of this table (OD-TOOL-1). Flows through the same "
-                "capability chain as any tool family (06 §3 [LOCKED]: "
-                "'the SAME tool machinery as any other tool'), scoped to "
-                "*which* model-tool by `resource_scope`. `invoke` is the only "
-                "enumerated operation: an agent that holds this capability "
-                "still cannot invoke a model-tool absent from its resolved "
-                "`AgentConfiguration.model_tools` (06 §3 discovery rule) — "
-                "that check is the runtime's, not this registry's."
-            ),
-            operations=MappingProxyType(
-                {
-                    # Calling an external model has a real cost/latency but no
-                    # irreversible effect by itself (06 §4: its output is
-                    # untrusted data returning to the agent's context, not an
-                    # action) — tiered LOW_WRITE rather than LOW_READ because,
-                    # unlike a pure read, it is metered spend (13 USAGE-001).
-                    "invoke": RiskCategory.LOW_WRITE,
-                }
-            ),
-            scope_keys=frozenset({"model_tool_id"}),
-        ),
-        CapabilityDefinition(
             name="system.restricted",
             description=(
                 "The high-risk family kept deliberately separate (07 §2, 08's "
@@ -204,6 +185,23 @@ def _registry() -> Mapping[str, CapabilityDefinition]:
                 }
             ),
             scope_keys=frozenset(),
+        ),
+        # `[PROPOSED]` — added by the runtime branch, which owns `06`. MODELTOOL-001
+        # requires a model-tool to flow through "the same capability/authorization/
+        # metering machinery as any other tool", and a ToolContract must name a
+        # `required_capability` (01 §10), but no canonical document names one for
+        # model-tools. `low_read`: invoking a model has no side effect of its own —
+        # its output is untrusted data (06 §4), and any action the agent proposes
+        # from it is authorized separately. Cost is governed by budgets (13), not
+        # by this tier. See docs/CAPABILITY_MATRIX.md §3.1.
+        CapabilityDefinition(
+            name="model.invoke",
+            description=(
+                "Invoke a configured LLM-as-tool (06 §3). The output returns to the "
+                "agent as untrusted data; it never acts on its own."
+            ),
+            operations=MappingProxyType({"invoke": RiskCategory.LOW_READ}),
+            scope_keys=frozenset({"model_tool_id"}),
         ),
     )
     return MappingProxyType({d.name: d for d in definitions})

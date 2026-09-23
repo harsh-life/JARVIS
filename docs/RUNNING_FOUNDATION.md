@@ -77,7 +77,7 @@ alembic upgrade head     # recreates them
 ## 5. Run the server (15 §3 step 7)
 
 ```bash
-uvicorn server.gateway.main:app --host 127.0.0.1 --port 8000
+uvicorn server.composition.main:app --host 127.0.0.1 --port 8000
 ```
 
 ## 6. Health check (15 §3 step 10)

@@ -1,32 +1,31 @@
 """The agent runtime — 05_AGENT_RUNTIME.md.
 
-The propose→authorize→execute loop (`orchestrator.py`), task lifecycle
-(`tasks.py`), deterministic context assembly (`context.py`), and deterministic
-proposal parsing (`proposal.py`). See `ports.py`'s module docstring for the
-mechanically-enforced boundary this package sits behind: it imports nothing
-from `server.graph`, `server.capabilities`, `server.secrets`, `server.storage`,
-or `server.gateway`, and nothing from its sibling packages
-(`server.tools`/`server.modeltools`/`server.models`/`server.memory`) either —
-every capability it needs is a constructor-injected `Protocol` implementation
-the gateway composition root (`server/gateway/runtime.py`) supplies.
+The model proposes; deterministic infrastructure decides and executes; the human
+confirms where the risk model requires it (P1).
 
-The runtime coordinates; it does not become the security authority (this
-branch's own instruction, restated as code rather than merely as a comment):
-every action a model proposes is authorized by `04` through the injected
-`Authorizer` port before anything executes, and a denial is fed back to the
-model as an observation, never bypassed.
+`server.agent` imports no authorization, capability, or secrets module (CI
+contracts in pyproject). Everything it needs from the Security Core arrives
+through the Protocols in `ports.py`, satisfied at the composition root
+(`server/composition/`) by the existing `AuthorizationEngine`,
+`ConfirmationService`, `CapabilityGrantService`, and `AuditLogger`.
 """
 
-from server.agent.orchestrator import AgentOrchestrator
-from server.agent.proposal import parse_proposal
-from server.agent.tasks import LoopState, PendingAction, TaskConflict, TaskStore, UnknownTask
+from server.agent.bounds import ConcurrencyGate, ConcurrencyLimits, RuntimeBounds
+from server.agent.runtime import (
+    AgentRuntime,
+    ConfirmationMismatch,
+    StepUpNeeded,
+    TaskNotAwaiting,
+    TaskNotFound,
+)
 
 __all__ = [
-    "AgentOrchestrator",
-    "LoopState",
-    "PendingAction",
-    "TaskConflict",
-    "TaskStore",
-    "UnknownTask",
-    "parse_proposal",
+    "AgentRuntime",
+    "ConcurrencyGate",
+    "ConcurrencyLimits",
+    "ConfirmationMismatch",
+    "RuntimeBounds",
+    "StepUpNeeded",
+    "TaskNotAwaiting",
+    "TaskNotFound",
 ]

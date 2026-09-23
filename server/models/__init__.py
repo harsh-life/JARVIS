@@ -1,24 +1,36 @@
-"""ModelProvider adapters — 06_MODEL_PROVIDER_LLM_TOOL.md.
+"""Model providers — 06_MODEL_PROVIDER_LLM_TOOL.md.
 
-`server/models` may resolve its own declared `secret_ref` via `server.secrets`
-at the call boundary (12 §6's exception for tools/models, `pyproject.toml`'s
-"Memory/vault never resolve secrets" contract comment) — nothing in this
-package is reachable from `server.agent`, which is mechanically forbidden
-from importing it at all (they are independent siblings under the layering
-contract); the gateway composition root (`server/gateway/runtime.py`)
-constructs a provider here and hands it to the agent runtime as a
-`server.agent.ports.ModelInvoker`.
+The runtime speaks one normalized interface (`ModelProvider`), never a vendor
+SDK (MODEL-001). Adding a provider is an adapter plus configuration, not a
+runtime change (MODEL-002, P4).
 
-Importing this package registers every adapter it ships (currently: Ollama —
-06 §2's local-first default) into `server.models.provider`'s registry.
+This package resolves no secret itself and imports nothing from
+`server.secrets`: an adapter that needs an API key is handed a `KeyProvider`
+callable by the composition root, which resolves the configured `secret_ref`
+through the SecretStore at call time (06 §1, 16 §3). The key is used for one
+HTTP request and is never placed in a message, a result, an exception, or a log
+line (SECRET-004, MP-T2).
 """
 
-from server.models import ollama  # noqa: F401  (registers the Ollama adapter)
+from server.models.factory import ProviderNotImplemented, build_provider
 from server.models.provider import (
+    ChatMessage,
+    KeyProvider,
+    ModelPricing,
     ModelProvider,
-    ProviderFactory,
-    build_provider,
-    register_adapter,
+    ModelResult,
+    ModelSpec,
+    ModelUnavailable,
 )
 
-__all__ = ["ModelProvider", "ProviderFactory", "build_provider", "register_adapter"]
+__all__ = [
+    "ChatMessage",
+    "KeyProvider",
+    "ModelPricing",
+    "ModelProvider",
+    "ModelResult",
+    "ModelSpec",
+    "ModelUnavailable",
+    "ProviderNotImplemented",
+    "build_provider",
+]

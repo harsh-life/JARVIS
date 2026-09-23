@@ -76,18 +76,21 @@ class AuditAction(str, Enum):
     SUPERUSER_AUTHENTICATED = "superuser.authenticated"
     SUPERUSER_REJECTED = "superuser.rejected"
 
-    # ── agent runtime (05 §13 of this branch's instructions) ────────────
-    # A curated subset of `shared.schemas.runtime.RuntimeEventKind` — only
-    # the security-sensitive ones get a persisted AuditEvent; the rest stay
-    # observability-only (server.agent cannot reach server.storage at all,
-    # see pyproject's boundary contract, so it never writes one directly —
-    # the gateway-side event recorder adapter does this translation).
-    AGENT_TASK_CREATED = "agent.task.created"
-    AGENT_TOOL_INVOKED = "agent.tool.invoked"
-    AGENT_TOOL_FAILED = "agent.tool.failed"
+    # ── agent runtime (05) ──────────────────────────────────────────────
+    AGENT_TASK_SUBMITTED = "agent.task.submitted"
+    AGENT_TASK_PAUSED = "agent.task.paused"
     AGENT_TASK_COMPLETED = "agent.task.completed"
     AGENT_TASK_FAILED = "agent.task.failed"
     AGENT_TASK_CANCELLED = "agent.task.cancelled"
+    AGENT_PROPOSAL_REJECTED = "agent.proposal.rejected"
+    AGENT_TOOL_EXECUTED = "agent.tool.executed"
+    AGENT_TOOL_FAILED = "agent.tool.failed"
+    CAPABILITY_ACTIVATED = "capability.activated"
+    CAPABILITY_ACTIVATION_REFUSED = "capability.activation.refused"
+    CAPABILITY_DEACTIVATED = "capability.deactivated"
+
+    # ── usage / rate / budget (13) ──────────────────────────────────────
+    USAGE_LIMIT_EXCEEDED = "usage.limit.exceeded"
 
 
 # 12 §5 emits through a port that speaks plain strings (server/secrets is

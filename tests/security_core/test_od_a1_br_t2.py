@@ -411,6 +411,11 @@ async def test_inv_20_the_package_does_not_claim_isolation_it_has_not_earned():
     The honesty invariant is a property of what the repository *says*, so it is
     tested that way: the BR-T2 report must exist, must record the measurement, and
     must not contain a claim of full isolation.
+
+    The owner has since decided OD-A1 as option (a) — *accept the residual for the
+    pilot*. That changes the status line, not the invariant: an accepted residual
+    is still a residual, so the report must say so in those words and must still
+    contain no isolation claim.
     """
 
     assert REPORT.exists(), (
@@ -419,9 +424,11 @@ async def test_inv_20_the_package_does_not_claim_isolation_it_has_not_earned():
     )
     text = REPORT.read_text()
 
-    # It must be honest about status.
+    # It must be honest about status: decided, and decided as an *accepted
+    # residual* — never as "solved".
     assert "OD-A1" in text
-    assert "[OPEN — OWNER]" in text
+    assert "RESOLVED FOR PILOT — ACCEPTED RESIDUAL" in text
+    assert "not** a claim of isolation" in text or "not a claim of isolation" in text
     for option in ("(a)", "(b)", "(c)"):
         assert option in text, f"the owner's decision options must be stated: {option}"
 
@@ -432,8 +439,14 @@ async def test_inv_20_the_package_does_not_claim_isolation_it_has_not_earned():
         "cross-user isolation is proven",
         "rce-proof",
         "no residual",
+        "od-a1 is solved",
+        "od-a1 solved",
     ):
         assert false_claim not in lowered, false_claim
+
+    # The accepted residual rows must still be recorded as REACHABLE — the
+    # measured table is the thing the owner accepted.
+    assert text.count("**REACHABLE**") >= 4
 
 
 async def test_the_residual_table_is_present_with_owner_actions():
@@ -447,13 +460,27 @@ async def test_the_residual_table_is_present_with_owner_actions():
     assert "stolen device credential" in text.lower()
 
 
-async def test_real_user_data_remains_gated():
-    """PILOT-004 / 14 §4's `[LOCKED]` gate — "no real, non-disposable user data is
-    entrusted to the pilot until OD-A1 is reviewed".
+async def test_real_user_data_readiness_is_not_overclaimed():
+    """PILOT-004 / 17 §5 — OD-A1 being decided is necessary, not sufficient.
 
-    The gate has to be written down to be a gate.
+    17 §5: "safe to run with real user data only when **all RB tests** pass AND the
+    OD-A1 gate is decided". The owner decided OD-A1; the RB suites for `09`/`10`/
+    `11`/`08` do not exist yet. The report must keep those two facts apart rather
+    than reading the OD-A1 decision as real-user readiness.
     """
 
     text = REPORT.read_text().lower()
     assert "disposable" in text
-    assert "real user data" in text or "real, non-disposable" in text
+    assert "real-user-ready" in text
+    for pending_subsystem in ("`09`", "`10`", "`11`"):
+        assert pending_subsystem in text, pending_subsystem
+
+
+async def test_the_decision_register_records_od_a1_as_an_accepted_residual():
+    """The owner's decision lives in the decision register, and it says what was
+    accepted and what was not weakened."""
+
+    register = Path("docs/DECISION_REGISTER.md").read_text()
+    assert "RESOLVED FOR PILOT — ACCEPTED RESIDUAL" in register
+    assert "not an isolation claim" in register.lower()
+    assert "cross-user logical isolation is mandatory" in register.lower()

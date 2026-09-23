@@ -630,3 +630,52 @@ class IdempotencyKey(Base):
     status_code: Mapped[int] = mapped_column(Integer, nullable=False)
     response_body: Mapped[dict] = mapped_column(SAJSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AgentTask(Base):
+    """One agent task's **lifecycle** record — `02` §5's `task_id` and
+    `AgentResult{status}`. `[PROPOSED]` runtime-branch addition: `01` has no task
+    entity (docs/DECISION_REGISTER.md §2).
+
+    What is deliberately **not** here: the working transcript, the model's
+    proposals, tool outputs, and the paused action's arguments. Those are
+    session-volatile state (MEM-001 — "the moment session state would be written
+    to disk/DB, it belongs in Mem0 with a visibility decision"), held in the
+    runtime's memory and discarded at task end. A process restart therefore
+    fails a paused task closed rather than resuming it from a stored action.
+
+    Owner-scoped: `user_id` is the task's owner, and every read path checks it —
+    any of that user's devices may read it (same-user continuity), no other user
+    can (it is reported as absent, anti-enumeration).
+    """
+
+    __tablename__ = "agent_tasks"
+
+    task_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("devices.device_id"), nullable=False
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("sessions.session_id"), nullable=False
+    )
+    graph_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("graphs.graph_id"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    response: Mapped[str | None] = mapped_column(String, nullable=True)
+    iterations: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    model_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running','awaiting_confirmation','completed','failed','cancelled')",
+            name="ck_agent_tasks_status",
+        ),
+        Index("ix_agent_tasks_user_created", "user_id", "created_at"),
+    )

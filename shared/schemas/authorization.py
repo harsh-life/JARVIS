@@ -15,33 +15,13 @@ makes `shared/schemas/` the layer everything may import.
 entity field values: nothing persists them as a column. `01` §1.2's locked
 registry is untouched, and adding to it would need the owner's approval
 (`00` §26).
-
-**Runtime-branch addition (`AccessRequest`/`AuthorizationOutcome`).** These two
-types were defined inline in `server/graph/authorization.py` by security-core.
-They are moved here, verbatim in shape and unchanged in meaning, because the
-agent runtime (`05`) must be able to construct an `AccessRequest` and read an
-`AuthorizationOutcome` without importing `server.graph` at all — that import is
-mechanically forbidden (pyproject's "Agent cannot import the capability/authz
-engine", INV-8), by design, so the model can never reach the engine's
-internals. This is the same reasoning `Principal` below already documents for
-itself ("the producer may import the contract, but the consumers must not have
-to import the producer"), now applied to the engine's own request/decision
-shape. No behaviour, validation, or decision logic moves — `server/graph/
-authorization.py` still owns `readable()` and the five-dimension algorithm; it
-now imports these two shapes from here instead of defining them, and
-re-exports them so every existing `from server.graph.authorization import
-AccessRequest` keeps working. `AuthorizationOutcome.resource` is typed loosely
-(`Any`, not `server.graph.ports.ResourceDescriptor`) for the same reason: nothing
-outside `server/graph` reads that field (grep-verified before this move), so
-this vocabulary module has no need to import the type that would otherwise
-recreate the exact coupling this move exists to remove.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Mapping
 from uuid import UUID
@@ -49,7 +29,6 @@ from uuid import UUID
 from pydantic import ConfigDict
 
 from shared.schemas.common import ORMBase
-from shared.schemas.enums import PermissionDecisionValue, RiskCategory
 
 
 class Principal(ORMBase):
@@ -111,18 +90,14 @@ class ResourceType(str, Enum):
     AGENTCONFIG = "agentconfig"
     CAPABILITY_GRANT = "capability_grant"
     SECRET_REFERENCE = "secret_reference"
-
-    # Runtime-branch addition, same precedent as `SECRET_REFERENCE` above: a
-    # tool/model-tool invocation (05 §1, 07 §8) has no backing stored row —
-    # there is nothing for a `ResourceLoader` to load — so it is always
-    # expressed as `operation=CREATE` (which the engine's `_decide` skips
-    # resource-loading for entirely) with this resource_type carried only for
-    # audit/classification. `04`'s D1-D4 dimensions are therefore structurally
-    # trivial for it (no resource, so nothing to own or hide); D5's capability
-    # check plus the absolute-floor gate are what actually authorize it — the
-    # same "engine vocabulary, not an `01` §1.2 registry extension" carve-out
-    # already claimed for `SECRET_REFERENCE`.
-    TOOL_INVOCATION = "tool_invocation"
+    # `[PROPOSED]` (runtime branch, docs/DECISION_REGISTER.md §2): a tool
+    # operation that targets no persisted resource — invoking a model-tool,
+    # tapping a UI element. Authorized only as `Operation.CREATE`, so the engine
+    # never loads it and it carries nothing readable: it is decided on
+    # membership, capability, the absolute floor and the risk tier alone. A tool
+    # that touches a real resource (a `FileResource`) declares that type instead
+    # and gets ownership (D3) and visibility (D4).
+    TOOL_ACTION = "tool_action"
 
 
 class DenialSurface(str, Enum):
@@ -202,62 +177,3 @@ class ActionBinding:
             default=str,
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-# ── the engine's request/decision shape (moved from server/graph/authorization.py) ──
-
-
-@dataclass(frozen=True)
-class AccessRequest:
-    """04 §1's `AccessRequest`, plus the fields the confirmation binding needs.
-
-    `graph_id` is the *graph context of the operation* — 04 §0's "a `graph_id`
-    in a request body is a claim to check, never a grant". The engine checks it
-    (D1) and never treats it as permission.
-    """
-
-    principal: Principal
-    operation: Operation
-    resource_type: ResourceType
-    resource_ref: str | None = None
-    graph_id: UUID | None = None
-    required_capability: str | None = None
-    # The concrete enumerated operation within the capability (07 §3). Supplied
-    # by tool dispatch; absent for plain resource operations.
-    capability_operation: str | None = None
-    # Confirmation binding inputs (PERM-004). `task_id` identifies the agent
-    # task a consequential action belongs to.
-    task_id: str | None = None
-    arguments: Mapping[str, Any] | None = None
-    confirmation_token: str | None = None
-    # The narrowing the operation claims to stay inside, checked against the
-    # grant's `resource_scope` (07 §2).
-    resource_scope: Mapping[str, str] | None = None
-
-
-@dataclass(frozen=True)
-class AuthorizationOutcome:
-    """04 §1's `PermissionDecision`, as returned to the caller.
-
-    `surface` is carried explicitly so the HTTP layer never has to guess
-    whether a denial is a 403 or a 404. That guess is precisely the
-    anti-enumeration oracle 04 §7 exists to remove (SEC-Q/R).
-    """
-
-    decision: PermissionDecisionValue
-    risk_category: RiskCategory
-    reason: str
-    surface: DenialSurface | None = None
-    floor_category: str | None = None
-    confirmation_required_for: ActionBinding | None = None
-    # Untyped on purpose — see module docstring: only server/graph reads this
-    # field, and it always assigns a `server.graph.ports.ResourceDescriptor`.
-    resource: Any | None = field(default=None, repr=False)
-
-    @property
-    def allowed(self) -> bool:
-        return self.decision is PermissionDecisionValue.ALLOW
-
-    @property
-    def needs_confirmation(self) -> bool:
-        return self.decision is PermissionDecisionValue.REQUIRE_CONFIRMATION

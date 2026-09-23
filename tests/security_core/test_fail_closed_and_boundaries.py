@@ -258,6 +258,9 @@ async def test_repo_t1_t4_t6_the_boundary_contracts_all_hold():
         "Agent cannot import the capability/authz engine (16 §5, INV-8)",
         "Memory/vault never resolve secrets (12 §6, GRAPH-009)",
         "SecretStore never imports the identity layer (12 §4, SUPER-001)",
+        "Tools/models cannot reach the grant, confirmation, or decision paths (16 §5)",
+        "Model adapters never import the SecretStore (06 §1, 16 §3)",
+        "Runtime never depends on Intelligence/Decision providers (INTEL-003, 26)",
     ):
         assert f"{contract} KEPT" in result.stdout, contract
 
@@ -334,9 +337,13 @@ async def test_no_module_outside_the_engine_reimplements_the_read_predicate():
     implementation, which is how the two drift apart and one becomes wrong.
     """
 
+    # The predicate's home, and the engine that applies it. Memory hydration
+    # imports the same function from `server/graph/predicate.py` rather than
+    # restating it, which is what this test exists to keep true.
+    engine_modules = {Path("server/graph/authorization.py"), Path("server/graph/predicate.py")}
     offenders: list[str] = []
     for path in sorted(Path("server").rglob("*.py")):
-        if path == Path("server/graph/authorization.py"):
+        if path in engine_modules:
             continue
         code = code_only(path)
         mentions_graph_visibility = "Visibility.GRAPH" in code
@@ -384,12 +391,6 @@ async def test_no_decision_or_intelligence_provider_implementation_exists():
 
     Nothing in this branch may have started building it, and `intelligence`
     likewise stays an empty stub (INV-18/INTEL-003).
-
-    Runtime-branch update: `server/agent` is no longer asserted stub-only —
-    05_AGENT_RUNTIME.md is exactly what that package now implements, per the
-    runtime branch's own scope. The property this test actually guards
-    (no DecisionProvider/IntelligenceProvider code anywhere, `intelligence`
-    still untouched) is unchanged and still asserted below.
     """
 
     for path in sorted(Path("server").rglob("*.py")):
@@ -397,10 +398,9 @@ async def test_no_decision_or_intelligence_provider_implementation_exists():
         assert "DecisionProvider" not in code, path
         assert "IntelligenceProvider" not in code, path
 
-    # `intelligence` remains a stub: only its __init__.py exists (INTEL-003 —
-    # still out of scope for the runtime branch, per its own instructions:
-    # "MVP default remains intelligence.enabled = false... do not implement
-    # Track A internals").
+    # `intelligence` remains a stub: only its __init__.py exists. (`agent` is now
+    # the runtime branch's `05` implementation; it is held to INTEL-003 by the
+    # "Runtime never depends on Intelligence/Decision providers" contract.)
     assert [p.name for p in Path("server/intelligence").glob("*.py")] == ["__init__.py"]
 
 
@@ -414,19 +414,16 @@ async def test_no_track_a_dependency_exists():
 
 
 async def test_no_filesystem_network_or_device_execution_bypass_was_added():
-    """§19 of the security-core scope — this branch implements no filesystem
-    sandbox, network egress, or Android execution path, so it cannot have opened a
-    bypass of boundaries that do not exist yet.
+    """§19 of the security-core scope, carried forward by the runtime branch — no
+    branch so far implements a filesystem sandbox, network egress, or Android
+    execution path, so none may have opened a bypass of boundaries that do not
+    exist yet.
 
-    Runtime-branch update: `tools`, `modeltools`, and `memory` are no longer
-    asserted stub-only — 07's registry/dispatch machinery, 06's LLM-as-a-Tool
-    wrapper, and 11's hydration *interface* are exactly what the runtime
-    branch's own instructions scope it to implement ("DO NOT implement the
-    actual platform execution systems... unless strictly required as
-    interfaces"). `fs`, `net`, `voice`, `scheduler`, and `vault` — the actual
-    filesystem sandbox, network egress enforcement, and device/scheduling
-    execution — remain untouched, which is the property this test exists to
-    guard.
+    Asserted as an absence: `fs`, `net`, `voice`, `scheduler` and `vault` remain
+    stubs, and no server module reaches for a raw socket or subprocess. (`tools`,
+    `modeltools` and `memory` now hold the runtime's registry, model-tools, and
+    hydration boundary; `ToolRegistry.register` refuses any tool that declares a
+    filesystem or network need, until `09`/`10` exist to enforce it.)
     """
 
     for package in ("fs", "net", "voice", "scheduler", "vault"):

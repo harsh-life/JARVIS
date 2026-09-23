@@ -30,9 +30,12 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass, field
+from typing import Any, Mapping
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.graph.predicate import readable  # re-exported: the one RAUTH-004 predicate
 from server.graph.ports import (
     CapabilityChecker,
     ConfirmationVerifier,
@@ -45,9 +48,7 @@ from server.graph.ports import (
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
 from shared.schemas.authorization import (
-    AccessRequest,
     ActionBinding,
-    AuthorizationOutcome,
     CapabilityCheckContext,
     DenialSurface,
     Operation,
@@ -60,54 +61,66 @@ from shared.schemas.enums import (
     MembershipRole,
     PermissionDecisionValue,
     RiskCategory,
-    Visibility,
 )
 
 logger = logging.getLogger("hypermind.graph.authorization")
 
-# `AccessRequest`/`AuthorizationOutcome` now live in shared/schemas/authorization.py
-# (see that module's docstring for why: the agent runtime must be able to
-# reference this engine's request/decision vocabulary without importing
-# server.graph, which is mechanically forbidden for it). Re-exported here,
-# unchanged, so this stays the one place to read to know the engine's
-# request/decision shape, and so `from server.graph.authorization import
-# AccessRequest` keeps working for every existing caller/test.
-__all__ = ["AccessRequest", "AuthorizationEngine", "AuthorizationOutcome", "readable"]
+
+# ── requests and outcomes (04 §1) ───────────────────────────────────────────
 
 
-# ── the read predicate (RAUTH-004) ──────────────────────────────────────────
+@dataclass(frozen=True)
+class AccessRequest:
+    """04 §1's `AccessRequest`, plus the fields the confirmation binding needs.
 
-
-def readable(
-    *, user_id: uuid.UUID, resource: ResourceDescriptor, is_active_member_of_resource_graph: bool
-) -> bool:
-    """RAUTH-004's read predicate, verbatim and in one place.
-
-        readable(user, resource) :=
-            (resource.visibility == graph AND active_member(user, resource.graph_id))
-            OR resource.owner_user_id == user
-
-    `[LOCKED]` (RAUTH-002) "No other path to readability exists." In particular
-    `graph_id` alone never authorizes: the membership flag passed in is only
-    consulted when `visibility` is `graph`.
-
-    Note the membership argument is about **`resource.graph_id`**, not about the
-    graph the request nominated. Those differ whenever a request omits its graph
-    context or names a different graph, and checking the request's graph here
-    would let a member of graph X read a graph-visible resource scoped to graph
-    Y. The caller resolves membership against the resource's own graph
-    (`_is_member_of_resource_graph` below).
+    `graph_id` is the *graph context of the operation* — 04 §0's "a `graph_id`
+    in a request body is a claim to check, never a grant". The engine checks it
+    (D1) and never treats it as permission.
     """
 
-    if resource.owner_user_id == user_id:
-        return True
-    if (
-        resource.visibility is Visibility.GRAPH
-        and resource.graph_id is not None
-        and is_active_member_of_resource_graph
-    ):
-        return True
-    return False
+    principal: Principal
+    operation: Operation
+    resource_type: ResourceType
+    resource_ref: str | None = None
+    graph_id: uuid.UUID | None = None
+    required_capability: str | None = None
+    # The concrete enumerated operation within the capability (07 §3). Supplied
+    # by tool dispatch; absent for plain resource operations.
+    capability_operation: str | None = None
+    # Confirmation binding inputs (PERM-004). `task_id` identifies the agent
+    # task a consequential action belongs to.
+    task_id: str | None = None
+    arguments: Mapping[str, Any] | None = None
+    confirmation_token: str | None = None
+    # The narrowing the operation claims to stay inside, checked against the
+    # grant's `resource_scope` (07 §2).
+    resource_scope: Mapping[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class AuthorizationOutcome:
+    """04 §1's `PermissionDecision`, as returned to the caller.
+
+    `surface` is carried explicitly so the HTTP layer never has to guess
+    whether a denial is a 403 or a 404. That guess is precisely the
+    anti-enumeration oracle 04 §7 exists to remove (SEC-Q/R).
+    """
+
+    decision: PermissionDecisionValue
+    risk_category: RiskCategory
+    reason: str
+    surface: DenialSurface | None = None
+    floor_category: str | None = None
+    confirmation_required_for: ActionBinding | None = None
+    resource: ResourceDescriptor | None = field(default=None, repr=False)
+
+    @property
+    def allowed(self) -> bool:
+        return self.decision is PermissionDecisionValue.ALLOW
+
+    @property
+    def needs_confirmation(self) -> bool:
+        return self.decision is PermissionDecisionValue.REQUIRE_CONFIRMATION
 
 
 # Operations that only the resource's owner may perform (04 §2 D3).

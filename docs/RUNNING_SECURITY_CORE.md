@@ -101,7 +101,7 @@ which is the correct default.
 ## 6. Run
 
 ```bash
-uvicorn server.gateway.main:app --host 127.0.0.1 --port 8000
+uvicorn server.composition.main:app --host 127.0.0.1 --port 8000
 ```
 
 Startup performs the unlock. **If `HYPERMIND_KEK` is missing or wrong, the server
@@ -168,14 +168,16 @@ stolen phone.
 ## 10. Tests and checks
 
 ```bash
-python3 -m pytest tests/ -q                       # 254 tests
-lint-imports --config pyproject.toml              # 7 boundary contracts
+python3 -m pytest tests/ -q                       # whole suite (see RUNNING_RUNTIME.md)
+lint-imports --config pyproject.toml              # boundary contracts
 python3 -m pytest tests/security_core/test_od_a1_br_t2.py -q -s   # BR-T2 measurement
 ```
 
 The last one prints the measured blast radius under simulated app-level RCE. Read
-`docs/OD_A1_BR_T2.md` before putting real data anywhere near this: the OD-A1 gate
-is **closed**, and the pilot is cleared for disposable data only.
+`docs/OD_A1_BR_T2.md` before putting real data anywhere near this: OD-A1 is
+**resolved for the pilot as an accepted residual** — not an isolation claim — and
+real-user readiness still needs the unbuilt `09`/`10`/`11`/`08` release-blocking
+suites.
 
 All four run in CI on every pull request (`.github/workflows/ci.yml`), which is
 what makes REPO-T7 true rather than aspirational — 16 §6 `[LOCKED]`s that a

@@ -46,47 +46,38 @@ branch must pass through:
   access, master-key/superuser separation, and fail-closed resolution.
 - **Audit primitives** (`01` §11.1) on every security-sensitive operation.
 
-See `docs/RUNNING_SECURITY_CORE.md` to run it.
+**`runtime`** — the deterministic agent runtime around that authority:
 
-**`runtime`** — the propose→authorize→execute loop (`05`), never itself a
-security authority:
+- **The loop** (`05`): propose → parse → authorize → confirm → execute →
+  observe, under hard ceilings (iterations, model/tool calls, nesting, wall
+  clock, budget, concurrency), each ending in an explicit failure.
+- **Model providers** (`06`): one normalized interface; local Ollama by default;
+  OpenAI-compatible adapters with keys resolved by handle at call time;
+  LLM-as-a-tool through the same capability, authorization, and metering path.
+- **Tools** (`07`): a registry that asserts every contract against the closed
+  capability registry, per-platform adapters, and on-demand capability
+  activation scoped to one task.
+- **Usage, rate, budget** (`13`): one ledger; rates and budgets derived from it;
+  fail-closed.
+- **Memory hydration** (`11` §3): visibility pushed into the store query and
+  re-checked with the engine's own predicate.
 
-- **Agent runtime** (`server/agent`): task lifecycle, deterministic context
-  assembly, deterministic proposal parsing (a model's raw output is data,
-  never free-text authorization), and the bounded loop — every ceiling 05 §3
-  requires (iterations, tool calls, model calls, model-tool nesting depth,
-  wall-clock timeout, budget) enforced by the runtime, breach always an
-  explicit failure, never a silent stop.
-- **Tool registry & dispatch** (`server/tools`): the registered-contract /
-  enabled-configuration chain (07 §1) up to the point of calling a concrete
-  executor — no filesystem/network/device primitive is implemented here.
-- **ModelProvider & LLM-as-a-Tool** (`server/models`, `server/modeltools`):
-  one normalized invoke interface (06 §1), a local-first Ollama adapter, and
-  model-tools flowing through the *same* capability-gated tool machinery as
-  any other tool.
-- **Memory hydration interface** (`server/memory`): the port `11`'s
-  visibility-filtered retrieval will implement; today an honest no-op, since
-  no branch has built Mem0 yet.
+The owner's decisions (OD-A1, OD-D1, OD-E1, OD-F1, OD-TOOL-1) are recorded in
+`docs/DECISION_REGISTER.md`; the capability/risk/confirmation matrix is
+`docs/CAPABILITY_MATRIX.md`. See `docs/RUNNING_RUNTIME.md` to run it.
 
-Structurally isolated from Security Core: `server/agent` cannot import
-`server.graph`, `server.capabilities`, `server.secrets`, `server.storage`, or
-`server.gateway` (import-linter, mechanically enforced) — every authorization,
-persistence, and confirmation capability it needs arrives as a
-constructor-injected port (`server/agent/ports.py`), built by the gateway
-composition root (`server/gateway/runtime.py`) from the real Security Core
-objects. The model can propose; it cannot reach the engine.
-
-**There is still no filesystem sandbox, network egress enforcement, or
-Android integration** — those are the Execution branch's job (`08`/`09`/`10`),
-and the runtime consumes their eventual interfaces rather than re-deriving
-them.
+**Still not built:** filesystem sandbox (`09`), network egress (`10`), Mem0
+(`11`), Android integration (`08`). Their capabilities exist, but no adapter does,
+so the runtime refuses them rather than running them unbounded.
 
 ### Before putting real data anywhere near this
 
 `docs/OD_A1_BR_T2.md` records the **measured** blast radius under simulated
-application-level RCE (BR-T2). The OD-A1 gate is **closed**: the pilot is
-cleared for disposable/test data only until the owner reviews that
-measurement. Passing unit tests do not imply real-user readiness.
+application-level RCE (BR-T2). The owner decided OD-A1 as **RESOLVED FOR PILOT —
+ACCEPTED RESIDUAL** (option (a)): logical isolation, with the measured in-process
+residual accepted for the pilot. That is not an isolation claim. Real-user
+readiness additionally needs 17 §5's full release-blocking set, which includes
+the `09`/`10`/`11`/`08` suites that do not exist yet.
 
 ## Repository layout
 
@@ -95,7 +86,7 @@ server/    the modular-monolith FastAPI application (one package per subsystem)
 shared/    schemas/  — canonical Pydantic data contracts, importable by both
                         server/ and a future android/ client
 tests/     pytest suite (tests/foundation/, tests/security_core/, tests/runtime/)
-docs/      RUNNING_FOUNDATION.md, RUNNING_SECURITY_CORE.md, OD_A1_BR_T2.md
+docs/      RUNNING_*.md, OD_A1_BR_T2.md, CAPABILITY_MATRIX.md, DECISION_REGISTER.md
 Working Markdown/   the architecture/PRD document package (source of truth)
 ```
 
@@ -105,6 +96,12 @@ modules that never import each other (`16` §5): `server/graph` decides, and
 gateway composition root through the Protocols in `server/graph/ports.py`.
 Keeping them apart is what stops the half that evaluates a capability check
 from also being able to grant one.
+
+The agent runtime (`server/agent`) is kept further still: it cannot import the
+engine, the capability package, or the SecretStore at all. It reaches them only
+through the Protocols in `server/agent/ports.py`, which the top-level
+composition root (`server/composition/`) satisfies with the Security Core's own
+objects — so there is no second authorization path to drift.
 
 Module boundaries (who may import whom) are enforced mechanically via
 `import-linter` — see `pyproject.toml`'s `[tool.importlinter]` section — and

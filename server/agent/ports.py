@@ -1,160 +1,269 @@
-"""The ports the agent runtime consults (05 §11, 16 §5's pattern applied here).
+"""What the runtime consumes, as Protocols (05 §0, 16 §3/§5).
 
-`server/graph/ports.py` established the pattern this file repeats one layer
-up: the authorization engine declares Protocols for what it needs so it never
-imports the policy half that implements them. The agent runtime needs the
-same isolation, for a stronger reason — pyproject's import-linter contracts
-make it *mechanical*, not just a convention:
+`server.agent` may not import `server.graph`, `server.capabilities`, or
+`server.secrets` (pyproject contracts: "Agent cannot import the capability/authz
+engine", "Agent never imports raw secrets resolution"). So the runtime declares
+here what it needs, in its own vocabulary, and the composition root
+(`server/composition/`) satisfies each port with the existing Security Core
+objects — `AuthorizationEngine`, `ConfirmationService`, `CapabilityGrantService`,
+`AuditLogger`, the usage ledger. There is no second authorization engine: every
+`authorize_*` call below is `AuthorizationEngine.authorize`.
 
-* `server.agent` may not import `server.graph` or `server.capabilities`
-  (INV-8) — so it cannot call `AuthorizationEngine.authorize()` or
-  `ConfirmationService` directly.
-* `server.agent` may not import `server.secrets` (REPO-T1/SECRET-002) — so it
-  cannot resolve a `secret_ref`, ever, for any reason.
-* `server.agent` may not import `server.storage` or `server.gateway` (this
-  branch's own addition) — so it never touches a database session or the
-  HTTP layer directly.
-* `server.agent` may not import its siblings `server.tools`/`server.modeltools`
-  /`server.models`/`server.memory` (they occupy one independent layer band) —
-  so it cannot reach into a concrete tool/model/memory implementation either.
+Note what the ports do **not** offer:
 
-Every one of those capabilities therefore arrives here as a `Protocol`, built
-from `shared.schemas` vocabulary only. `server/gateway/runtime.py` — the
-composition root, which *can* see both this file's Protocols and the concrete
-`server.graph`/`server.capabilities`/`server.secrets`/`server.models`/
-`server.tools`/`server.modeltools`/`server.memory` implementations — is where
-concrete adapters satisfying these Protocols are built and injected. None of
-those adapters need to import this module either (Protocols are structural);
-they only need to match the method shapes below.
+* no way to *grant* a capability except `activate_for_task`, which the runtime
+  calls only after a human approved that exact activation with a single-use
+  token (PERM-002);
+* no way to set a risk tier, waive a confirmation, or mark an action confirmed —
+  `Verdict` is produced by the engine and read by the runtime;
+* no secret resolution of any kind (SECRET-002, INV-6).
 """
 
 from __future__ import annotations
 
-from typing import Protocol
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, Mapping, Protocol, Sequence
 
-from shared.schemas.agent_config import ToolContract
-from shared.schemas.authorization import AccessRequest, AuthorizationOutcome
-from shared.schemas.runtime import (
-    AgentEvent,
-    GenerationPolicy,
-    MemoryItem,
-    ModelMessage,
-    ModelResult,
-    ToolInvocationRequest,
-    ToolResult,
-)
+from sqlalchemy.ext.asyncio import AsyncSession
 
-
-class RuntimeAuthorizationResult:
-    """What `Authorizer.authorize` returns.
-
-    Wraps `AuthorizationOutcome` (04 §1's decision) with the raw confirmation
-    token when one was minted — the engine's own `_decide` only records *that*
-    confirmation is required (`confirmation_required_for`); actually minting
-    a token is `server.capabilities.ConfirmationService.issue()`'s job, called
-    by the concrete `Authorizer` adapter (which, unlike this module, may
-    import `server.capabilities`). Kept as a plain class rather than a
-    `shared.schemas` model since it is pure runtime-internal plumbing, never
-    serialized over HTTP itself (the router reads `outcome` and
-    `issued_confirmation_token` to build the client-facing `AgentResult`).
-    """
-
-    __slots__ = ("outcome", "issued_confirmation_token")
-
-    def __init__(
-        self, outcome: AuthorizationOutcome, *, issued_confirmation_token: str | None = None
-    ) -> None:
-        self.outcome = outcome
-        self.issued_confirmation_token = issued_confirmation_token
+from server.agent.events import AgentEvent
+from server.models.provider import ModelProvider
+from shared.schemas.agent import ExecutionPlatform, ToolHandle, ToolInvocation, ToolOutput
+from shared.schemas.authorization import ActionBinding, Operation, Principal, ResourceType
+from shared.schemas.enums import AuditResult, PermissionDecisionValue, RiskCategory, UsageKind
 
 
-class Authorizer(Protocol):
-    """04's decision, reached without importing `server.graph` (see module
-    docstring). The concrete adapter binds a `Principal`, an `AsyncSession`,
-    and an `AuditLogger` at construction time (server/gateway/runtime.py) —
-    this Protocol's signature carries none of those, so nothing in
-    `server/agent` ever touches a session or a bearer token.
-    """
-
-    async def authorize(self, request: AccessRequest) -> RuntimeAuthorizationResult: ...
+# ── authorization (04 via the composition root) ────────────────────────────
 
 
-class ModelInvoker(Protocol):
-    """06 §1's normalized `ModelProvider.invoke`. A concrete adapter
-    (`server/models`) resolves its own `secret_ref` before this call is ever
-    made — this Protocol carries no secret material and no `secret_ref`
-    field, so there is nothing here for the runtime to mishandle even if it
-    wanted to (05's "the model cannot access secrets directly" and this
-    branch's "ModelProvider may NOT access raw SecretStore material" are both
-    true by construction, not by discipline).
-    """
+@dataclass(frozen=True)
+class ActionRequest:
+    """One tool operation, as the **principal** (AGENT-004 — never as "the agent")."""
 
-    async def invoke(
+    principal: Principal
+    graph_id: uuid.UUID | None
+    task_id: uuid.UUID
+    capability: str
+    capability_operation: str
+    resource_type: ResourceType
+    operation: Operation
+    resource_ref: str | None
+    arguments: Mapping[str, Any]
+    resource_scope: Mapping[str, str] | None
+    confirmation_token: str | None = None
+
+
+@dataclass(frozen=True)
+class ActivationRequest:
+    """Creating a task-scoped capability grant — a `CapabilityGrant` create, which
+    the deterministic tier table makes `consequential` (never automatic)."""
+
+    principal: Principal
+    graph_id: uuid.UUID | None
+    task_id: uuid.UUID
+    capability: str
+    resource_scope: Mapping[str, str] | None
+    confirmation_token: str | None = None
+
+
+@dataclass(frozen=True)
+class Verdict:
+    decision: PermissionDecisionValue
+    risk_category: RiskCategory
+    reason: str
+    prohibited: bool = False
+    binding: ActionBinding | None = None
+
+    @property
+    def allowed(self) -> bool:
+        return self.decision is PermissionDecisionValue.ALLOW
+
+    @property
+    def needs_confirmation(self) -> bool:
+        return self.decision is PermissionDecisionValue.REQUIRE_CONFIRMATION
+
+
+class CapabilityStatus(str, Enum):
+    REGISTERED = "registered"
+    PROHIBITED = "prohibited"  # an absolute-floor name (PERM-006)
+    UNKNOWN = "unknown"  # not in the closed registry
+
+
+@dataclass(frozen=True)
+class CapabilityInfo:
+    status: CapabilityStatus
+    scope_keys: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class IssuedConfirmation:
+    token: str
+    expires_at: datetime
+
+
+class SecurityPort(Protocol):
+    """Request-scoped: bound to the request's transaction and audit writer."""
+
+    async def authorize_action(self, request: ActionRequest) -> Verdict: ...
+
+    async def authorize_activation(self, request: ActivationRequest) -> Verdict: ...
+
+    async def issue_confirmation(
+        self, binding: ActionBinding, risk_category: RiskCategory
+    ) -> IssuedConfirmation: ...
+
+    def describe_capability(self, capability: str) -> CapabilityInfo: ...
+
+    async def holds_standing_grant(
         self,
-        messages: list[ModelMessage],
-        policy: GenerationPolicy,
-        timeout: float,
-    ) -> ModelResult: ...
+        *,
+        principal: Principal,
+        graph_id: uuid.UUID | None,
+        capability: str,
+        resource_scope: Mapping[str, str] | None,
+    ) -> bool: ...
 
-    async def health(self) -> bool: ...
+    async def activate_for_task(
+        self,
+        *,
+        principal: Principal,
+        task_id: uuid.UUID,
+        capability: str,
+        resource_scope: Mapping[str, str] | None,
+        expires_at: datetime,
+    ) -> None: ...
 
+    async def deactivate_task(self, *, principal: Principal, task_id: uuid.UUID) -> int: ...
 
-class ToolDispatcher(Protocol):
-    """07 §8's `EXEC` node — dispatch only. By the time this is called, `04`
-    has already returned `allow` (or a spent confirmation token turned a
-    `require_confirmation` into one); this Protocol has no way to skip that,
-    because it is never given anything resembling an `AccessRequest` — only
-    the already-authorized `ToolInvocationRequest`. The concrete adapter
-    (`server/gateway/runtime.py`, backed by `server.tools.ToolRegistry`) is
-    also where `UsageEvent(kind=tool_call)` gets written, since only it can
-    reach `server.storage`.
-    """
+    async def principal_active(self, principal: Principal) -> bool: ...
 
-    async def dispatch(self, request: ToolInvocationRequest) -> ToolResult: ...
-
-
-class MemoryHydrator(Protocol):
-    """11 §3's context-hydration call, already visibility-filtered by the
-    time it reaches here (11 §2's `mem0_readable` predicate is the memory
-    subsystem's job, not the runtime's — see `server/memory/hydrator.py`).
-    The concrete adapter closes over the authenticated principal at
-    construction; this Protocol never accepts a `user_id`/`graph_id`
-    parameter the caller could substitute (05 §8 confused-deputy prevention:
-    the runtime can only ever hydrate *its own* principal's context).
-    """
-
-    async def hydrate(self, query: str, *, limit: int) -> list[MemoryItem]: ...
+    async def record(
+        self,
+        event: AgentEvent,
+        *,
+        principal: Principal,
+        graph_id: uuid.UUID | None,
+        resource: str,
+        result: AuditResult,
+        decision: PermissionDecisionValue | None = None,
+    ) -> None: ...
 
 
-class EventRecorder(Protocol):
-    """This branch's observability requirement (§13), routed through a port
-    for the same reason as everything else here: emitting a *persisted*
-    `AuditEvent` requires `server.storage` + `server.security`, both
-    unreachable from `server.agent`. The concrete adapter maps a curated
-    subset of `RuntimeEventKind` onto real `AuditAction` rows.
-    """
+# ── usage / rate / budget (13) ─────────────────────────────────────────────
 
-    async def record(self, event: AgentEvent) -> None: ...
+
+class UsageLimitReached(Exception):
+    """A deterministic limit refused a call. `limit` names which (13 §5)."""
+
+    def __init__(self, limit: str, *, retry_after_seconds: int = 60) -> None:
+        super().__init__(f"limit reached: {limit}")
+        self.limit = limit
+        self.retry_after_seconds = retry_after_seconds
+
+    @property
+    def is_budget(self) -> bool:
+        return "budget" in self.limit
+
+
+class UsagePort(Protocol):
+    async def precheck(self, *, principal: Principal, projected_cost: float) -> None: ...
+
+    async def record(
+        self,
+        *,
+        principal: Principal,
+        graph_id: uuid.UUID | None,
+        kind: UsageKind,
+        units: int,
+        estimated_cost: float,
+        provider: str | None = None,
+        model: str | None = None,
+        tool_id: str | None = None,
+    ) -> None: ...
+
+
+# ── tools (07) ─────────────────────────────────────────────────────────────
 
 
 class ToolCatalog(Protocol):
-    """07 §1's discovery surface, filtered to what this principal's resolved
-    `AgentConfiguration` actually enables (06 §3: "the agent cannot invoke a
-    model-tool that isn't configured+enabled") — context assembly (05 §7)
-    renders this into the model's system message. Read-only, and carries no
-    execution capability of its own; invoking one still goes through
-    `ToolDispatcher`, which independently re-checks authorization.
-    """
+    def resolve(self, tool_id: str) -> ToolHandle | None: ...
 
-    async def list_enabled(self) -> list[ToolContract]: ...
+    def enabled_handles(self) -> list[ToolHandle]: ...
+
+    async def run(
+        self,
+        tool_id: str,
+        platform: ExecutionPlatform,
+        invocation: ToolInvocation,
+        *,
+        timeout: float,
+    ) -> ToolOutput: ...
 
 
-__all__ = [
-    "Authorizer",
-    "EventRecorder",
-    "MemoryHydrator",
-    "ModelInvoker",
-    "RuntimeAuthorizationResult",
+# ── models (06) ────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class ResolvedModels:
+    primary: ModelProvider
+    fallback: ModelProvider | None = None
+    # MP-T4: the tools this principal's resolved AgentConfiguration enables.
+    # `None` means "every server-enabled tool".
+    allowed_tool_ids: frozenset[str] | None = None
+
+
+class ModelResolverPort(Protocol):
+    async def resolve(
+        self, *, principal: Principal, graph_id: uuid.UUID | None
+    ) -> ResolvedModels: ...
+
+
+# ── memory (11) ────────────────────────────────────────────────────────────
+
+
+@dataclass
+class Hydration:
+    items: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+class HydratorPort(Protocol):
+    async def hydrate(
+        self, *, principal: Principal, graph_id: uuid.UUID | None, query: str
+    ) -> Hydration: ...
+
+
+# ── the per-request bundle ─────────────────────────────────────────────────
+
+
+@dataclass
+class TaskEnvironment:
+    """Everything request-scoped the runtime uses for one API call."""
+
+    session: AsyncSession
+    security: SecurityPort
+    usage: UsagePort
+    models: ModelResolverPort
+    hydrator: HydratorPort
+
+
+__all__: Sequence[str] = [
+    "ActionRequest",
+    "ActivationRequest",
+    "CapabilityInfo",
+    "CapabilityStatus",
+    "Hydration",
+    "HydratorPort",
+    "IssuedConfirmation",
+    "ModelResolverPort",
+    "ResolvedModels",
+    "SecurityPort",
+    "TaskEnvironment",
     "ToolCatalog",
-    "ToolDispatcher",
+    "UsageLimitReached",
+    "UsagePort",
+    "Verdict",
 ]
