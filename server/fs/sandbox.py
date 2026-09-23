@@ -107,8 +107,16 @@ class FilesystemSandbox:
                 "unimplemented stronger mode as configured",
             )
         self._base_root = str(Path(base_root).resolve())
-        Path(self._base_root).mkdir(parents=True, exist_ok=True, mode=0o700)
+        # Validate *before* touching the filesystem, not after: checking
+        # post-mkdir meant a permission-denied host path failed with a raw
+        # PermissionError instead of this module's own ExecutionError (CI
+        # caught this running as a non-root user; a dev environment running
+        # as root masked it, since root can mkdir almost anywhere) — and,
+        # worse, on a host where the process *does* have permission, the
+        # directory would already have been created at the forbidden
+        # location before the rejection ever fired.
         self._assert_not_sensitive(self._base_root)
+        Path(self._base_root).mkdir(parents=True, exist_ok=True, mode=0o700)
         self.max_file_bytes = max_file_bytes
         self.max_sandbox_bytes = max_sandbox_bytes
         self.max_archive_entries = max_archive_entries

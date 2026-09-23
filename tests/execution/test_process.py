@@ -191,14 +191,20 @@ async def test_timeout_kills_the_whole_process_group_not_just_the_shell():
     """A child that forks a grandchild must not survive the parent's kill —
     the real process-tree-cleanup test, not just 'the direct pid died'."""
 
-    ex = executor(allowed_executables=["sh"], default_timeout_seconds=1.0)
+    # A generous timeout budget: on a contended CI runner, forking `sh` and
+    # then `sleep` can itself take a non-trivial fraction of a second, and a
+    # too-tight timeout risks killing the group before the marker is even
+    # written — a false failure about *this test's own setup*, not about
+    # whether process-group cleanup works. The assertion below still proves
+    # the real thing (the grandchild is dead once the call returns).
+    ex = executor(allowed_executables=["sh"], default_timeout_seconds=3.0)
     marker = f"/tmp/hypermind_test_survivor_{os.getpid()}_{int(time.time()*1000)}"
     try:
         await ex.run(
             ["sh", "-c", f"sleep 20 & echo $! > {marker}; wait"],
-            cwd="/tmp", timeout=1.0,
+            cwd="/tmp", timeout=3.0,
         )
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1.0)
         assert os.path.exists(marker), "the grandchild never started — test setup is broken"
         grandchild_pid = int(open(marker).read().strip())
         assert not _process_is_running(grandchild_pid), (
