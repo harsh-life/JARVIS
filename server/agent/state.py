@@ -71,6 +71,17 @@ class TaskState:
     model_calls: int = 0
     tool_calls: int = 0
     consecutive_parse_failures: int = 0
+    # 18 §4 — the worker chain. The active worker is the only thing a switch
+    # changes; everything else in this object carries over.
+    worker_index: int = 0
+    worker_switches: int = 0
+    # Per-worker detectors, reset on a switch.
+    no_progress_steps: int = 0
+    progressed: bool = False
+    operation_counts: dict[str, int] = field(default_factory=dict)
+    # Where the current run of malformed output began, so a switch can drop it:
+    # a failed worker's malformed text is never shown to the next as authority.
+    malformed_from: int | None = None
     cost: float = 0.0
     run_seconds_used: float = 0.0
     pending: PendingStep | None = None

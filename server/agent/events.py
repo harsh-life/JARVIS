@@ -29,3 +29,7 @@ class AgentEvent(str, Enum):
     CONFIRMATION_REJECTED = "confirmation.rejected"
     LIMIT_EXCEEDED = "usage.limit.exceeded"
     BREAKER_TRIPPED = "breaker.tripped"
+    WORKER_FAILED = "agent.worker.failed"
+    WORKER_SWITCHED = "agent.worker.switched"
+    STALL_DETECTED = "agent.stall.detected"
+    RECOVERY_EXHAUSTED = "agent.recovery.exhausted"

@@ -231,13 +231,35 @@ class ToolCatalog(Protocol):
 # ── models (06) ────────────────────────────────────────────────────────────
 
 
+# 18 §8 — the worker slot. A worker is whatever *proposes the next step*:
+# `invoke` (compacted transcript in, raw proposal text out), `health`, and a
+# `spec` for bounds and metering. Today every worker is an LLM behind the
+# `ModelProvider` interface (06), so the slot *is* that interface rather than a
+# second, parallel one. A future reasoning engine plugs in as another
+# implementation, injected by the composition root, and gets no other port: no
+# authorization handle, no tool handle, no SecretStore, no registry.
+Worker = ModelProvider
+
+
 @dataclass(frozen=True)
 class ResolvedModels:
-    primary: ModelProvider
-    fallback: ModelProvider | None = None
+    """The task's ordered worker chain (18 §4.2): its resolved primary (user →
+    graph → server default, OD-RT-3) first, then operator-configured fallbacks.
+    Selection is configuration alone — no worker, and no evaluator, picks the
+    next one."""
+
+    chain: tuple[Worker, ...]
     # MP-T4: the tools this principal's resolved AgentConfiguration enables.
     # `None` means "every server-enabled tool".
     allowed_tool_ids: frozenset[str] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.chain:
+            raise ValueError("a worker chain has at least one worker")
+
+    @property
+    def primary(self) -> Worker:
+        return self.chain[0]
 
 
 class ModelResolverPort(Protocol):
@@ -315,4 +337,5 @@ __all__: Sequence[str] = [
     "UsageLimitReached",
     "UsagePort",
     "Verdict",
+    "Worker",
 ]

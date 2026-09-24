@@ -41,6 +41,17 @@ agent:
     denial_limit: 5        # authorization denials in one task
     violation_limit: 3     # sandbox / egress / executable-allow-list refusals in one task
     rejection_limit: 3     # confirmations the user declined in one task
+  # 18 §4 worker chain / supervisory recovery. Optional: without it, behaviour is
+  # exactly as before (per-step primary -> fallback). With it, the task's worker
+  # chain is [its resolved primary, fallback, *chain] and the supervisor switches
+  # workers on outage, malformed output, stall, loop, or (if enabled) unresolved.
+  # No worker in the chain gets any permission the task did not already have.
+  # recovery:
+  #   chain: []                      # extra operator-configured workers, in order
+  #   max_worker_switches: 2
+  #   escalate_on_unresolved: false  # never escalates to a paid worker (OD-SUP-3)
+  #   stall_window: 3                # steps with no tool execution / activation
+  #   loop_repeat_limit: 3           # identical (tool, operation, args) proposals
 
 models_as_tools: []
 

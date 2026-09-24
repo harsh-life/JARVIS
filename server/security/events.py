@@ -92,7 +92,11 @@ class AuditAction(str, Enum):
     # ── usage / rate / budget (13) ──────────────────────────────────────
     USAGE_LIMIT_EXCEEDED = "usage.limit.exceeded"
 
-    # ── supervisory runtime (18 §5, §7) ─────────────────────────────────
+    # ── supervisory runtime (18 §4, §5, §7) ─────────────────────────────
+    AGENT_WORKER_FAILED = "agent.worker.failed"
+    AGENT_WORKER_SWITCHED = "agent.worker.switched"
+    AGENT_STALL_DETECTED = "agent.stall.detected"
+    AGENT_RECOVERY_EXHAUSTED = "agent.recovery.exhausted"
     BREAKER_TRIPPED = "breaker.tripped"
     BREAKER_GLOBAL_LATCHED = "breaker.global.latched"
     BREAKER_GLOBAL_CLEARED = "breaker.global.cleared"

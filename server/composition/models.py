@@ -81,11 +81,22 @@ class ConfiguredModelResolver:
         self._endpoints = self._server_endpoints(config)
 
     @staticmethod
-    def _server_entries(config: AppConfig) -> list:
-        entries = [config.agent, *[m for m in config.models_as_tools]]
+    def _operator_fallbacks(config: AppConfig) -> list[ModelEntryConfig]:
+        """18 §4.2: the operator-configured part of every chain, in order —
+        `agent.fallback`, then `agent.recovery.chain`. Only the operator's
+        configuration contributes here, so a worker one user configured is
+        never used for another user's task."""
+
+        entries: list[ModelEntryConfig] = []
         if config.agent.fallback is not None:
             entries.append(config.agent.fallback)
+        if config.agent.recovery is not None:
+            entries.extend(config.agent.recovery.chain)
         return entries
+
+    @classmethod
+    def _server_entries(cls, config: AppConfig) -> list:
+        return [config.agent, *[m for m in config.models_as_tools], *cls._operator_fallbacks(config)]
 
     @classmethod
     def _server_priced_models(cls, config: AppConfig) -> dict[tuple[str, str], ModelPricing]:
@@ -141,11 +152,9 @@ class ConfiguredModelResolver:
         return None
 
     async def resolve(self, *, principal: Principal, graph_id: uuid.UUID | None) -> ResolvedModels:
-        fallback_entry: ModelEntryConfig | None = self._config.agent.fallback
-        fallback = (
-            self._build(spec_from_entry(fallback_entry), fallback_entry.secret_ref, SecretRequester.server())
-            if fallback_entry is not None
-            else None
+        fallbacks = tuple(
+            self._build(spec_from_entry(entry), entry.secret_ref, SecretRequester.server())
+            for entry in self._operator_fallbacks(self._config)
         )
 
         found = await self._config_row(principal, graph_id)
@@ -153,7 +162,7 @@ class ConfiguredModelResolver:
             primary = self._build(
                 spec_from_entry(self._config.agent), self._config.agent.secret_ref, SecretRequester.server()
             )
-            return ResolvedModels(primary=primary, fallback=fallback)
+            return ResolvedModels(chain=(primary, *fallbacks))
 
         row, requester = found
         try:
@@ -190,4 +199,4 @@ class ConfiguredModelResolver:
         )
         primary = self._build(spec, model_config.secret_ref, requester)
         allowed = frozenset((row.enabled_tools or []) + (row.model_tools or []))
-        return ResolvedModels(primary=primary, fallback=fallback, allowed_tool_ids=allowed)
+        return ResolvedModels(chain=(primary, *fallbacks), allowed_tool_ids=allowed)

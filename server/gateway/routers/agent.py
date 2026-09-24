@@ -58,6 +58,9 @@ _FAILURE_CODES: dict[AgentFailureCode, ErrorCode] = {
     # task is never resumed; a new task is the only way on. `failure_code` in
     # the details distinguishes it from other conflicts.
     AgentFailureCode.EMERGENCY_STOP: ErrorCode.CONFLICT,
+    # 18 §4: the task's workers failed it — a dependency failure, like an outage.
+    AgentFailureCode.STALLED: ErrorCode.DEPENDENCY_UNAVAILABLE,
+    AgentFailureCode.WORKER_CHAIN_EXHAUSTED: ErrorCode.DEPENDENCY_UNAVAILABLE,
 }
 
 

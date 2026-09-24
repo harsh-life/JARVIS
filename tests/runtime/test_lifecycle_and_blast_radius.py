@@ -69,6 +69,8 @@ async def test_the_runtime_persists_no_transcript(h):
         "response", "iterations", "model_calls", "tool_calls", "created_at", "updated_at", "finished_at",
         # 18 §3/§7: the task's mode — a four-value lifecycle enum, not content.
         "mode",
+        # 18 §4/§7: a counter, like `iterations`.
+        "worker_switches",
     }
 
     alice = await h.user("alice")

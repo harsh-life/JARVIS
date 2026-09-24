@@ -670,6 +670,8 @@ class AgentTask(Base):
     iterations: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     model_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 18 §7: how many times the supervisor replaced the task's worker.
+    worker_switches: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

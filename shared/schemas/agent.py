@@ -95,6 +95,12 @@ class AgentFailureCode(str, Enum):
     PRINCIPAL_REVOKED = "principal_revoked"
     # 18 §5: the circuit breaker stopped the task. Terminal; never resumed.
     EMERGENCY_STOP = "emergency_stop"
+    # 18 §4.1: no progress (or the same operation over and over) and no other
+    # worker to switch to.
+    STALLED = "stalled"
+    # 18 §4.2/§4.4: recovery needed a switch, and the worker chain (or
+    # `max_worker_switches`) was exhausted.
+    WORKER_CHAIN_EXHAUSTED = "worker_chain_exhausted"
     INTERNAL_ERROR = "internal_error"
 
 
@@ -157,6 +163,7 @@ class TaskCounters(BaseModel):
     iterations: int = 0
     model_calls: int = 0
     tool_calls: int = 0
+    worker_switches: int = 0
 
 
 class PendingAction(BaseModel):
@@ -195,6 +202,9 @@ class AgentResult(BaseModel):
     status: AgentTaskStatus
     mode: TaskMode = TaskMode.EXECUTE
     response: str | None = None
+    # 18 §4.1: the worker said it could not resolve the request. An honest
+    # answer, reported as such — never presented as completed work.
+    unresolved: bool = False
     failure: AgentFailure | None = None
     pending: PendingAction | None = None
     active_capabilities: list[str] = Field(default_factory=list)

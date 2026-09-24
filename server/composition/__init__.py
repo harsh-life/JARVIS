@@ -22,6 +22,7 @@ from fastapi import FastAPI
 
 from server.agent import AgentRuntime, ConcurrencyGate, ConcurrencyLimits, RuntimeBounds
 from server.agent.breaker import BreakerLimits
+from server.agent.recovery import RecoveryPolicy
 from server.composition.execution_tools import build_execution_tools
 from server.composition.facade import AgentTaskFacade
 from server.composition.latch import InProcessLatch
@@ -63,6 +64,21 @@ def breaker_limits_from_config(config: AppConfig) -> BreakerLimits:
         denial_limit=b.denial_limit,
         violation_limit=b.violation_limit,
         rejection_limit=b.rejection_limit,
+    )
+
+
+def recovery_from_config(config: AppConfig) -> RecoveryPolicy | None:
+    """18 §4/§9. `None` — no `agent.recovery` section — keeps today's
+    behaviour exactly."""
+
+    r = config.agent.recovery
+    if r is None:
+        return None
+    return RecoveryPolicy(
+        max_worker_switches=r.max_worker_switches,
+        escalate_on_unresolved=r.escalate_on_unresolved,
+        stall_window=r.stall_window,
+        loop_repeat_limit=r.loop_repeat_limit,
     )
 
 
@@ -166,6 +182,7 @@ def build_application(
         concurrency=ConcurrencyGate(concurrency_from_config(config)),
         tools=tools,
         breaker_limits=breaker_limits_from_config(config),
+        recovery=recovery_from_config(config),
     )
     facade = AgentTaskFacade(
         runtime=runtime,

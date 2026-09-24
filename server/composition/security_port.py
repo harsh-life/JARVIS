@@ -78,12 +78,22 @@ EVENT_ACTIONS: dict[AgentEvent, AuditAction] = {
     AgentEvent.CONFIRMATION_REJECTED: AuditAction.CONFIRMATION_REJECTED,
     AgentEvent.LIMIT_EXCEEDED: AuditAction.USAGE_LIMIT_EXCEEDED,
     AgentEvent.BREAKER_TRIPPED: AuditAction.BREAKER_TRIPPED,
+    AgentEvent.WORKER_FAILED: AuditAction.AGENT_WORKER_FAILED,
+    AgentEvent.WORKER_SWITCHED: AuditAction.AGENT_WORKER_SWITCHED,
+    AgentEvent.STALL_DETECTED: AuditAction.AGENT_STALL_DETECTED,
+    AgentEvent.RECOVERY_EXHAUSTED: AuditAction.AGENT_RECOVERY_EXHAUSTED,
 }
 
 # Acts of the human, not the agent.
 _USER_EVENTS = frozenset({AgentEvent.CONFIRMATION_ACCEPTED, AgentEvent.CONFIRMATION_REJECTED})
 # Acts of the deterministic supervisor, not the agent (18 §5).
-_SYSTEM_EVENTS = frozenset({AgentEvent.BREAKER_TRIPPED})
+_SYSTEM_EVENTS = frozenset({
+    AgentEvent.BREAKER_TRIPPED,
+    AgentEvent.WORKER_FAILED,
+    AgentEvent.WORKER_SWITCHED,
+    AgentEvent.STALL_DETECTED,
+    AgentEvent.RECOVERY_EXHAUSTED,
+})
 
 _MAX_RESOURCE = 128
 

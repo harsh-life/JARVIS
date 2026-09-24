@@ -42,6 +42,7 @@ from server.agent import context as ctx
 from server.agent.bounds import ConcurrencyGate, RuntimeBounds
 from server.agent.breaker import BreakerLimits, BreakerScope, CircuitBreaker, Trip, TripSource
 from server.agent.events import AgentEvent
+from server.agent.recovery import RecoveryPolicy, SwitchReason, operation_key
 from server.agent import modes
 from server.agent.ports import (
     ActionRequest,
@@ -94,6 +95,14 @@ _FAILURE_MESSAGES: dict[AgentFailureCode, str] = {
     AgentFailureCode.CONFIRMATION_STATE_LOST: "The paused action is no longer available; it was not performed.",
     AgentFailureCode.PRINCIPAL_REVOKED: "The task stopped: the session or device that started it is no longer valid.",
     AgentFailureCode.INTERNAL_ERROR: "The task stopped because of an internal error.",
+    AgentFailureCode.STALLED: (
+        "The task stopped: it was making no progress (or repeating the same step), and no other "
+        "worker was available. Nothing further was performed."
+    ),
+    AgentFailureCode.WORKER_CHAIN_EXHAUSTED: (
+        "The task stopped: every available worker failed or could not resolve it. Nothing further "
+        "was performed."
+    ),
     AgentFailureCode.EMERGENCY_STOP: (
         "The task was stopped by a safety control; nothing further was performed and it will "
         "not be resumed. Start a new task if you still want this done."
@@ -174,6 +183,19 @@ def _merge_scope(*scopes: Any) -> dict[str, str] | None:
     return merged or None
 
 
+def _worker_id(provider: ModelProvider) -> str:
+    """A worker's configured identity, as an audit-safe identifier."""
+
+    raw = f"{provider.spec.provider}:{provider.spec.model}"
+    return "".join(c if c.isalnum() or c in "._:-" else "_" for c in raw)[:24]
+
+
+def _worker_resource(task_id: uuid.UUID, workers: str, reason: SwitchReason) -> str:
+    """`agent.worker.*` / `agent.recovery.*` audit resource: identifiers only."""
+
+    return f"worker:{task_id}:{workers}:{reason.value}"[:128]
+
+
 def _trip_resource(scope: BreakerScope, task_id: uuid.UUID, source: str, reason: str) -> str:
     """The `breaker.tripped` audit resource: identifiers only (≤ 128 chars)."""
 
@@ -198,6 +220,7 @@ class AgentRuntime:
         tools: ToolCatalog,
         states: TaskStateRegistry | None = None,
         breaker_limits: BreakerLimits | None = None,
+        recovery: RecoveryPolicy | None = None,
     ) -> None:
         self._bounds = bounds
         self._concurrency = concurrency
@@ -206,6 +229,9 @@ class AgentRuntime:
         # 18 §5: the deterministic circuit breaker. Owned here because a stop is
         # task lifecycle; other components will reach it only through `trip()`.
         self._breaker = CircuitBreaker(breaker_limits or BreakerLimits(), self._states)
+        # 18 §4: `None` keeps today's behaviour (per-step primary → fallback,
+        # no switching, no stall detection).
+        self._recovery = recovery
 
     @property
     def bounds(self) -> RuntimeBounds:
@@ -527,10 +553,16 @@ class AgentRuntime:
                     proposal = parse_proposal(text)
                 except ProposalError as exc:
                     state.consecutive_parse_failures += 1
+                    if state.malformed_from is None:
+                        state.malformed_from = len(state.messages) - 1  # the malformed output itself
                     await self._event(env, state, AgentEvent.PROPOSAL_REJECTED, AuditResult.BLOCKED,
                                       resource="proposal:unparseable")
                     if state.consecutive_parse_failures > self._bounds.max_parse_retries:
-                        raise _Stop(AgentFailureCode.UNPARSEABLE_PROPOSAL) from None
+                        if self._recovery is None:
+                            raise _Stop(AgentFailureCode.UNPARSEABLE_PROPOSAL) from None
+                        await self._switch(env, state, models, SwitchReason.MALFORMED,
+                                           stuck=AgentFailureCode.UNPARSEABLE_PROPOSAL)
+                        continue
                     state.messages.append(ctx.observation(
                         f"Your last output was not a valid proposal ({exc}). Reply with exactly "
                         "one JSON object in one of the documented forms.",
@@ -538,16 +570,28 @@ class AgentRuntime:
                     ))
                     continue
                 state.consecutive_parse_failures = 0
+                state.malformed_from = None
 
                 if isinstance(proposal, FinalAnswer):
+                    if proposal.unresolved and self._recovery is not None \
+                            and self._recovery.escalate_on_unresolved:
+                        # 18 §4.1: escalate to the next eligible worker. The
+                        # unresolved answer is dropped from the transcript; it
+                        # is never reported as the task's result.
+                        del state.messages[-1]
+                        await self._switch(env, state, models, SwitchReason.UNRESOLVED,
+                                           stuck=AgentFailureCode.WORKER_CHAIN_EXHAUSTED, allow_paid=False)
+                        continue
                     return await self._finish(env, state, AgentTaskStatus.COMPLETED,
-                                              response=proposal.content)
+                                              response=proposal.content, unresolved=proposal.unresolved)
                 if isinstance(proposal, RequestCapabilities):
                     paused = await self._request_capabilities(env, state, proposal)
                 else:
-                    paused = await self._tool_call(env, state, proposal, remaining)
+                    paused = await self._tool_call(env, state, proposal, remaining, models)
                 if paused is not None:
                     return paused
+                if self._recovery is not None and state.tripped is None:
+                    await self._check_progress(env, state, models)
         except _Stop as stop:
             return await self._fail(env, state, stop.code)
         finally:
@@ -568,41 +612,124 @@ class AgentRuntime:
         if state.cancel_event.is_set():
             raise _Interrupted()
 
-        for provider in (models.primary, models.fallback):
-            if provider is None:
-                break
-            if state.model_calls >= self._bounds.max_model_calls:
-                raise _Stop(AgentFailureCode.MAX_MODEL_CALLS)
+        if self._recovery is None:
+            # Today's behaviour, unchanged (05 §5): this step tries the primary,
+            # then `agent.fallback`, and the next step starts at the primary.
+            for index, provider in enumerate(models.chain):
+                text = await self._attempt(env, state, index, provider, messages, prompt_chars, remaining)
+                if text is not None:
+                    return text
+            # FAIL-CORE-002: never a fabricated answer.
+            raise _Stop(AgentFailureCode.MODEL_UNAVAILABLE)
+
+        # 18 §4.2: the active worker answers; an unavailable one is replaced
+        # for the rest of the task, within `max_worker_switches`.
+        while True:
+            state.worker_index = min(state.worker_index, len(models.chain) - 1)
+            provider = models.chain[state.worker_index]
+            text = await self._attempt(env, state, state.worker_index, provider, messages, prompt_chars, remaining)
+            if text is not None:
+                return text
+            await self._switch(env, state, models, SwitchReason.UNAVAILABLE,
+                               stuck=AgentFailureCode.MODEL_UNAVAILABLE)
+
+    async def _attempt(self, env: TaskEnvironment, state: TaskState, index: int, provider: ModelProvider,
+                       messages, prompt_chars: int, remaining) -> str | None:
+        """One worker call — bounded, budget-checked, metered, and raced
+        against the task's cancel event. `None` means the worker was
+        unavailable (recorded, never retried silently)."""
+
+        if state.model_calls >= self._bounds.max_model_calls:
+            raise _Stop(AgentFailureCode.MAX_MODEL_CALLS)
+        if remaining() <= 0:
+            raise _Stop(AgentFailureCode.TIMEOUT)
+
+        spec = provider.spec
+        projected = spec.projected_cost(prompt_chars=prompt_chars)
+        await self._precheck(env, state, projected)
+
+        state.model_calls += 1
+        try:
+            result = await self._invoke_cancellable(state, provider, messages, remaining)
+        except _Interrupted:
+            await self._meter_model(env, state, provider, units=0, cost=0.0)
+            raise
+        except (ModelUnavailable, asyncio.TimeoutError):
+            await self._meter_model(env, state, provider, units=0, cost=0.0)
             if remaining() <= 0:
-                raise _Stop(AgentFailureCode.TIMEOUT)
+                # The task's own wall clock cut the call off: report the
+                # bound that was hit, not a provider outage (05 §3).
+                raise _Stop(AgentFailureCode.TIMEOUT) from None
+            await self._event(env, state, AgentEvent.WORKER_FAILED, AuditResult.FAILURE,
+                              resource=_worker_resource(state.task_id, f"{index}:{_worker_id(provider)}",
+                                                        SwitchReason.UNAVAILABLE))
+            return None
 
-            spec = provider.spec
-            projected = spec.projected_cost(prompt_chars=prompt_chars)
-            await self._precheck(env, state, projected)
+        cost = spec.pricing.cost(
+            prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens
+        )
+        await self._meter_model(env, state, provider, units=result.total_tokens, cost=cost)
+        state.messages.append(ctx.ChatMessage("assistant", result.content[: self._bounds.max_observation_chars]))
+        return result.content
 
-            state.model_calls += 1
-            try:
-                result = await self._invoke_cancellable(state, provider, messages, remaining)
-            except _Interrupted:
-                await self._meter_model(env, state, provider, units=0, cost=0.0)
-                raise
-            except (ModelUnavailable, asyncio.TimeoutError):
-                await self._meter_model(env, state, provider, units=0, cost=0.0)
-                if remaining() <= 0:
-                    # The task's own wall clock cut the call off: report the
-                    # bound that was hit, not a provider outage (05 §3).
-                    raise _Stop(AgentFailureCode.TIMEOUT) from None
-                continue
+    # ── supervisory recovery (18 §4) ────────────────────────────────────
 
-            cost = spec.pricing.cost(
-                prompt_tokens=result.prompt_tokens, completion_tokens=result.completion_tokens
-            )
-            await self._meter_model(env, state, provider, units=result.total_tokens, cost=cost)
-            state.messages.append(ctx.ChatMessage("assistant", result.content[: self._bounds.max_observation_chars]))
-            return result.content
+    async def _switch(self, env: TaskEnvironment, state: TaskState, models: ResolvedModels,
+                      reason: SwitchReason, *, stuck: AgentFailureCode, allow_paid: bool = True) -> None:
+        """Replace the active worker with the next eligible one, or fail the
+        task honestly. Only `worker_index` changes: principal, graph, mode,
+        activations, pending confirmation, counters and bounds all carry over,
+        and the new worker's proposals meet exactly the same checks.
 
-        # FAIL-CORE-002: never a fabricated answer.
-        raise _Stop(AgentFailureCode.MODEL_UNAVAILABLE)
+        `stuck` is the failure when the chain never had an alternative; once it
+        had one, exhausting it is `worker_chain_exhausted` (18 §4.4) — except an
+        outage, which stays `model_unavailable` (a dependency is down).
+        """
+
+        policy = self._recovery
+        chain = models.chain
+        current = state.worker_index
+        nxt = next(
+            (i for i in range(current + 1, len(chain)) if allow_paid or not chain[i].spec.pricing.is_paid),
+            None,
+        )
+        over_limit = policy is not None and state.worker_switches >= policy.max_worker_switches
+        if policy is None or nxt is None or over_limit:
+            code = stuck
+            if policy is not None and (over_limit and nxt is not None
+                                       or len(chain) > 1 and reason is not SwitchReason.UNAVAILABLE):
+                code = AgentFailureCode.WORKER_CHAIN_EXHAUSTED
+            await self._event(env, state, AgentEvent.RECOVERY_EXHAUSTED, AuditResult.FAILURE,
+                              resource=_worker_resource(state.task_id, str(current), reason))
+            raise _Stop(code)
+
+        await self._event(env, state, AgentEvent.WORKER_SWITCHED, AuditResult.SUCCESS,
+                          resource=_worker_resource(
+                              state.task_id,
+                              f"{current}>{nxt}:{_worker_id(chain[current])}>{_worker_id(chain[nxt])}",
+                              reason))
+        if reason is SwitchReason.MALFORMED and state.malformed_from is not None:
+            # A failed worker's malformed output is not shown to the next one.
+            del state.messages[state.malformed_from:]
+        state.worker_index = nxt
+        state.worker_switches += 1
+        state.consecutive_parse_failures = 0
+        state.malformed_from = None
+        state.no_progress_steps = 0
+        state.progressed = False
+        state.operation_counts.clear()
+
+    async def _check_progress(self, env: TaskEnvironment, state: TaskState, models: ResolvedModels) -> None:
+        """18 §4.1 no-progress stall: `stall_window` consecutive steps without
+        a successful tool execution or capability activation."""
+
+        assert self._recovery is not None
+        state.no_progress_steps = 0 if state.progressed else state.no_progress_steps + 1
+        state.progressed = False
+        if state.no_progress_steps >= self._recovery.stall_window:
+            await self._event(env, state, AgentEvent.STALL_DETECTED, AuditResult.BLOCKED,
+                              resource=f"stall:{state.task_id}:no_progress")
+            await self._switch(env, state, models, SwitchReason.STALL, stuck=AgentFailureCode.STALLED)
 
     @staticmethod
     async def _invoke_cancellable(state: TaskState, provider: ModelProvider, messages, remaining):
@@ -673,6 +800,7 @@ class AgentRuntime:
                 capability=capability, resource_scope=scope,
             ):
                 state.activations.append(Activation(capability, scope, "standing"))
+                state.progressed = True
                 await self._event(env, state, AgentEvent.CAPABILITY_ACTIVATED, AuditResult.SUCCESS,
                                   resource=f"capability:{capability}")
                 lines.append(f"{capability}: active for this task (your existing grant).")
@@ -737,6 +865,7 @@ class AgentRuntime:
             expires_at=_utcnow() + timedelta(seconds=self._bounds.task_grant_ttl_seconds),
         )
         state.activations.append(Activation(pending.capability, pending.resource_scope, "task_grant"))
+        state.progressed = True
         await self._event(env, state, AgentEvent.CONFIRMATION_ACCEPTED, AuditResult.SUCCESS,
                           resource=f"capability:{pending.capability}", decision=verdict.decision)
         await self._event(env, state, AgentEvent.CAPABILITY_ACTIVATED, AuditResult.SUCCESS,
@@ -774,9 +903,20 @@ class AgentRuntime:
         state.messages.append(ctx.observation(message, limit=self._bounds.max_observation_chars))
 
     async def _tool_call(
-        self, env: TaskEnvironment, state: TaskState, call: ToolCall, remaining
+        self, env: TaskEnvironment, state: TaskState, call: ToolCall, remaining,
+        models: ResolvedModels | None = None,
     ) -> AgentResult | None:
         resource = f"tool:{call.tool}.{call.operation}"
+        if self._recovery is not None and models is not None:
+            # 18 §4.1 loop: the same operation, byte-for-byte, over and over.
+            key = operation_key(call.tool, call.operation, (call.platform or ExecutionPlatform.SERVER).value,
+                                call.arguments, call.resource_ref, call.scope)
+            state.operation_counts[key] = state.operation_counts.get(key, 0) + 1
+            if state.operation_counts[key] >= self._recovery.loop_repeat_limit:
+                await self._event(env, state, AgentEvent.STALL_DETECTED, AuditResult.BLOCKED,
+                                  resource=f"stall:{state.task_id}:loop")
+                await self._switch(env, state, models, SwitchReason.LOOP, stuck=AgentFailureCode.STALLED)
+                return None
         handle = self._tools.resolve(call.tool)
         if handle is None or (
             state.allowed_tool_ids is not None and call.tool not in state.allowed_tool_ids
@@ -975,6 +1115,8 @@ class AgentRuntime:
             limit=self._bounds.max_observation_chars,
         ))
         self._breaker.record_tool_outcome(state, ok=output.ok, error=output.error)
+        if output.ok:
+            state.progressed = True
 
     async def _run_cancellable(
         self, state: TaskState, tool_id: str, platform: ExecutionPlatform,
@@ -1063,11 +1205,12 @@ class AgentRuntime:
         await update_task_row(
             env.session, state.task_id, status=status, iterations=state.iterations,
             model_calls=state.model_calls, tool_calls=state.tool_calls,
+            worker_switches=state.worker_switches,
         )
 
     async def _finish(self, env: TaskEnvironment, state: TaskState, status: AgentTaskStatus,
                       *, response: str | None = None,
-                      failure: AgentFailureCode | None = None) -> AgentResult:
+                      failure: AgentFailureCode | None = None, unresolved: bool = False) -> AgentResult:
         state.pending = None
         revoked = await env.security.deactivate_task(principal=state.principal, task_id=state.task_id)
         # No confirmation token outlives its task (18 §5.3 step 3) — a stop, a
@@ -1079,7 +1222,7 @@ class AgentRuntime:
         await update_task_row(
             env.session, state.task_id, status=status, iterations=state.iterations,
             model_calls=state.model_calls, tool_calls=state.tool_calls, response=response,
-            failure_code=failure.value if failure else None,
+            failure_code=failure.value if failure else None, worker_switches=state.worker_switches,
         )
         event = {
             AgentTaskStatus.COMPLETED: AgentEvent.TASK_COMPLETED,
@@ -1088,8 +1231,11 @@ class AgentRuntime:
         await self._event(env, state, event,
                           AuditResult.SUCCESS if status is AgentTaskStatus.COMPLETED else AuditResult.FAILURE)
         self._states.pop(state.task_id)
+        if unresolved:
+            state.notes.append("The worker reported that it could not resolve this request.")
         result = self._result_from_state(state, status)
         result.response = response
+        result.unresolved = unresolved
         if failure is not None:
             result.failure = AgentFailure(code=failure, message=_FAILURE_MESSAGES[failure])
         return result
@@ -1170,7 +1316,7 @@ class AgentRuntime:
             task_id=state.task_id, status=status, mode=state.mode, pending=pending,
             active_capabilities=state.active_capability_names(), notes=list(state.notes),
             counters=TaskCounters(iterations=state.iterations, model_calls=state.model_calls,
-                                  tool_calls=state.tool_calls),
+                                  tool_calls=state.tool_calls, worker_switches=state.worker_switches),
         )
 
     @staticmethod
@@ -1184,5 +1330,5 @@ class AgentRuntime:
             response=row.response,
             failure=failure,
             counters=TaskCounters(iterations=row.iterations, model_calls=row.model_calls,
-                                  tool_calls=row.tool_calls),
+                                  tool_calls=row.tool_calls, worker_switches=row.worker_switches or 0),
         )
