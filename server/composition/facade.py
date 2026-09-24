@@ -13,11 +13,13 @@ from server.agent import (
     AgentRuntime,
     ConfirmationMismatch,
     StepUpNeeded,
+    SubmissionsSuspended,
     TaskNotAwaiting,
     TaskNotFound,
 )
 from server.agent.ports import Hydration, TaskEnvironment, UsageLimitReached
 from server.auth.errors import StepUpRequired
+from server.composition.latch import InProcessLatch, SupervisorGate
 from server.composition.models import ConfiguredModelResolver, ProviderFactory
 from server.composition.secret_context import CURRENT_SECRET_RESOLVER, SecretUnavailable
 from server.composition.security_port import RuntimeSecurityAdapter
@@ -61,7 +63,9 @@ class AgentTaskFacade:
         tools: ToolRegistry,
         hydrator: AuthorizedContextHydrator,
         provider_factory: ProviderFactory,
+        latch: InProcessLatch,
     ) -> None:
+        self._latch = latch
         self._runtime = runtime
         self._core = core
         self._config = config
@@ -86,6 +90,7 @@ class AgentTaskFacade:
                 provider_factory=self._provider_factory,
             ),
             hydrator=_BoundHydrator(self._hydrator, session),
+            supervisor=SupervisorGate(self._latch, session),
         )
 
     @contextmanager
@@ -138,6 +143,14 @@ class AgentTaskFacade:
                 ) from None
             except ValueError:
                 raise AppError(ErrorCode.VALIDATION_FAILED, "input is empty or too long") from None
+            except SubmissionsSuspended:
+                # 18 §5.4: `503 dependency_unavailable`, class `supervisor`. No
+                # task was created.
+                raise AppError(
+                    ErrorCode.DEPENDENCY_UNAVAILABLE,
+                    "new tasks are suspended by the server operator",
+                    details={"dependency": "supervisor"},
+                ) from None
 
     async def confirm(
         self,

@@ -48,6 +48,10 @@ class TripSource(str, Enum):
     DENIAL_LIMIT = "denial_limit"
     VIOLATION_LIMIT = "violation_limit"
     REJECTION_LIMIT = "rejection_limit"
+    # 18 §5.4: the superuser control path (never a signal source it could
+    # itself clear).
+    OPERATOR = "operator"
+    GLOBAL_LATCH = "global_latch"
 
 
 # Refusals by an execution boundary (09 sandbox, 10 egress, the process

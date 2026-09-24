@@ -121,11 +121,16 @@ async def get_superuser(
     except (_Refused, SuperuserAuthenticationFailed):
         await _reject(audit, "superuser:rejected")
 
+    # Not flushed here: it is written with the rest of the request. An operator
+    # route must be able to act in memory (trip a running task) before this
+    # request takes the store's write lock — the task it is stopping holds
+    # that lock until it stops (18 §5.4, server/composition/supervisor.py).
     await audit.record(
         actor=AuditActor.SUPERUSER,
         action=AuditAction.SUPERUSER_AUTHENTICATED,
         resource=f"superuser:{grant.token_fingerprint}",
         result=AuditResult.SUCCESS,
+        flush=False,
     )
     return SuperuserPrincipal(grant=grant, request_id=audit.request_id)
 

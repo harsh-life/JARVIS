@@ -220,18 +220,22 @@ type = "forbidden"
 source_modules = ["server.execution", "server.fs", "server.net"]
 forbidden_modules = ["server.secrets"]
 
-# 12 §4 / SUPER-001 / 02 §12: superuser authority has exactly one origin — the
-# out-of-band credential checked by `server.security.superuser` — and exactly
-# one HTTP entry, `server.gateway.superuser_auth`. No layer that could act on a
-# user's, a model's, a tool's, or a device's behalf may reach either: not
-# directly, not through a chain of imports. `server.gateway` itself (whose
-# routes are the entry), `server.composition` (which wires them) and
-# `server.dashboard` (whose operator routes, per 28, will require the
-# dependency) are the only packages outside `server.security` left able to.
+# 12 §4 / SUPER-001 / 02 §12 / 18 §5.4: superuser authority has exactly one
+# origin — the out-of-band credential checked by `server.security.superuser` —
+# and exactly one HTTP entry, `server.gateway.superuser_auth`. The operator
+# control path built on it (the control port and routes, the supervisor service)
+# is just as closed. No layer that could act on a user's, a model's, a tool's, a
+# device's, or a worker's behalf may reach any of them: not directly, not
+# through a chain of imports. Only `server.gateway` (whose routes are the entry)
+# and `server.composition` (which wires them) are left able to. The dashboard is
+# a source here too: it shows, it never acts (28 §0, DASH-002), so its future
+# `/admin/*` views authenticate at the gateway and hand it data — the dashboard
+# never holds superuser authority itself.
 [[tool.importlinter.contracts]]
 name = "Only the gateway reaches superuser authority (12 §4, SUPER-001)"
 type = "forbidden"
 source_modules = [
+    "server.dashboard",
     "server.agent",
     "server.tools",
     "server.modeltools",
@@ -252,7 +256,14 @@ source_modules = [
     "server.storage",
     "shared",
 ]
-forbidden_modules = ["server.security.superuser", "server.gateway.superuser_auth"]
+forbidden_modules = [
+    "server.security.superuser",
+    "server.gateway.superuser_auth",
+    "server.gateway.control_port",
+    "server.gateway.routers.control",
+    "server.composition.supervisor",
+    "server.composition.latch",
+]
 
 # 09 §8 / 10 §3 (NET-005): the sandbox/egress boundary is worthless if an
 # adapter can reach the host filesystem or a raw socket without going through

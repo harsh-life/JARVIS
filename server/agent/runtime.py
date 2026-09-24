@@ -29,16 +29,18 @@ behalf, anything the principal could not do directly (05 §8).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hmac
 import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from typing import Any
 
 from server.agent import context as ctx
 from server.agent.bounds import ConcurrencyGate, RuntimeBounds
-from server.agent.breaker import BreakerLimits, CircuitBreaker, TripSource
+from server.agent.breaker import BreakerLimits, BreakerScope, CircuitBreaker, Trip, TripSource
 from server.agent.events import AgentEvent
 from server.agent.ports import (
     ActionRequest,
@@ -109,6 +111,8 @@ _TRIP_NOTES: dict[str, str] = {
     TripSource.REJECTION_LIMIT.value: (
         "Stopped by the safety breaker: you declined too many proposed actions in this task."
     ),
+    TripSource.OPERATOR.value: "Stopped by the server operator.",
+    TripSource.GLOBAL_LATCH.value: "Stopped: the server operator has suspended all tasks.",
 }
 _GENERIC_TRIP_NOTE = "Stopped by the safety breaker."
 
@@ -131,6 +135,25 @@ class StepUpNeeded(Exception):
     can be approved (OD-F1 tier 4, SESSION-003). The action stays pending."""
 
 
+class SubmissionsSuspended(Exception):
+    """The global emergency latch is set, or cannot be read (18 §5.4, fail
+    closed). No task is created."""
+
+
+class StopOutcome(str, Enum):
+    """What an operator stop did to one task (18 §5.4)."""
+
+    STOPPED = "stopped"                    # enforced by this call
+    SIGNALLED = "signalled"                # running in another request; enforced at its next checkpoint
+    ALREADY_TERMINAL = "already_terminal"  # nothing to stop — idempotent
+    NOT_FOUND = "not_found"
+
+
+class _Interrupted(Exception):
+    """The task's cancel event fired during a model call (a stop or a cancel);
+    the loop's checkpoint decides which."""
+
+
 class _Stop(Exception):
     def __init__(self, code: AgentFailureCode) -> None:
         super().__init__(code.value)
@@ -147,6 +170,21 @@ def _merge_scope(*scopes: Any) -> dict[str, str] | None:
         if scope:
             merged.update({str(k): str(v) for k, v in dict(scope).items()})
     return merged or None
+
+
+def _trip_resource(scope: BreakerScope, task_id: uuid.UUID, source: str, reason: str) -> str:
+    """The `breaker.tripped` audit resource: identifiers only (≤ 128 chars)."""
+
+    resource = f"breaker:{scope.value}:{task_id}:{source}"
+    return resource if reason == source else f"{resource}:{reason}"
+
+
+def _trip_failure(trip: Trip) -> AgentFailure:
+    return AgentFailure(
+        code=AgentFailureCode.EMERGENCY_STOP,
+        message=f"{_TRIP_NOTES.get(trip.source, _GENERIC_TRIP_NOTE)} "
+                f"{_FAILURE_MESSAGES[AgentFailureCode.EMERGENCY_STOP]}",
+    )
 
 
 class AgentRuntime:
@@ -194,6 +232,10 @@ class AgentRuntime:
         user_input = user_input.strip()
         if not user_input or len(user_input) > self._bounds.max_input_chars:
             raise ValueError("input is empty or too long")
+        # 18 §5.4: while the global latch is set — or cannot be read — no task
+        # is created at all.
+        if not await env.supervisor.submissions_open():
+            raise SubmissionsSuspended()
 
         self._states.prune_expired()
         async with self._concurrency.slot(principal):
@@ -209,7 +251,16 @@ class AgentRuntime:
             )
             state = TaskState(task_id=task_id, principal=principal, graph_id=graph_id)
             self._states.put(state)
+            # Re-checked synchronously, with no `await` since `put`: a global
+            # stop sets the in-process latch and then sweeps the registry
+            # without yielding, so a task created while that happened is either
+            # swept or caught here — never neither.
+            if env.supervisor.latched_now():
+                self._breaker.trip(BreakerScope.TASK, task_id, reason=TripSource.GLOBAL_LATCH.value,
+                                   source=TripSource.GLOBAL_LATCH.value)
             await self._event(env, state, AgentEvent.TASK_SUBMITTED, AuditResult.SUCCESS)
+            if state.tripped is not None:
+                return await self._emergency_stop(env, state)
 
             hydration = await env.hydrator.hydrate(
                 principal=principal, graph_id=graph_id, query=user_input
@@ -348,6 +399,68 @@ class AgentRuntime:
         state.cancel_event.set()
         return await self._finish(env, state, AgentTaskStatus.CANCELLED)
 
+    def signal_stop(self, task_id: uuid.UUID, *, reason: str, source: str) -> bool:
+        """Trip a live task, synchronously and without touching the database
+        (18 §5.3 steps 1–2 begin here). Returns whether a live task existed.
+
+        The superuser control path calls this for every target **before** any
+        database work: the request driving a running task holds the store's
+        write lock, so a stop that first waited on the database would wait on
+        the very task it is trying to stop.
+        """
+
+        if self._states.get(task_id) is None:
+            return False
+        self._breaker.trip(BreakerScope.TASK, task_id, reason=reason, source=source)
+        return True
+
+    async def operator_stop(
+        self, env: TaskEnvironment, task_id: uuid.UUID, *, reason: str, source: str
+    ) -> StopOutcome:
+        """Stop one task on the operator's authority (18 §5.4) — never on a
+        user's, a model's, or a tool's. Reached only from the superuser control
+        path (`server/composition/supervisor.py`); authorization happened
+        there. Idempotent.
+
+        * running in another request → tripped; that request enforces the stop
+          at its next checkpoint (an in-flight model or tool call is aborted);
+        * paused for a confirmation → nobody is driving it, so it is enforced
+          here, and its pending action is never performed;
+        * no live state but a non-terminal row (e.g. after a restart) → closed
+          here from the row;
+        * already terminal → nothing to do.
+        """
+
+        state = self._states.get(task_id)
+        if state is not None:
+            self._breaker.trip(BreakerScope.TASK, task_id, reason=reason, source=source)
+            if state.pending is not None and not state.stop_enforced:
+                await self._emergency_stop(env, state)
+                return StopOutcome.STOPPED
+            return StopOutcome.SIGNALLED
+
+        row = await load_task_row(env.session, task_id)
+        if row is None:
+            return StopOutcome.NOT_FOUND
+        if AgentTaskStatus(row.status) in TERMINAL_STATUSES:
+            return StopOutcome.ALREADY_TERMINAL
+        principal = Principal(user_id=row.user_id, device_id=row.device_id,
+                              session_id=row.session_id, active_graph_id=row.graph_id)
+        await env.security.deactivate_task(principal=principal, task_id=task_id)
+        await env.security.invalidate_confirmations(principal=principal, task_id=task_id)
+        self._tools.release_task(task_id)
+        await update_task_row(
+            env.session, task_id, status=AgentTaskStatus.FAILED, iterations=row.iterations,
+            model_calls=row.model_calls, tool_calls=row.tool_calls,
+            failure_code=AgentFailureCode.EMERGENCY_STOP.value,
+        )
+        await env.security.record(
+            AgentEvent.BREAKER_TRIPPED, principal=principal, graph_id=row.graph_id,
+            resource=_trip_resource(BreakerScope.TASK, task_id, source, reason),
+            result=AuditResult.BLOCKED,
+        )
+        return StopOutcome.STOPPED
+
     async def get(
         self, env: TaskEnvironment, *, caller: Principal, task_id: uuid.UUID
     ) -> AgentResult:
@@ -400,7 +513,10 @@ class AgentRuntime:
                 if not await env.security.principal_active(state.principal):
                     raise _Stop(AgentFailureCode.PRINCIPAL_REVOKED)
 
-                text = await self._model_step(env, state, models, remaining)
+                try:
+                    text = await self._model_step(env, state, models, remaining)
+                except _Interrupted:
+                    continue  # the checkpoint above decides: stop or cancel
 
                 try:
                     proposal = parse_proposal(text)
@@ -444,6 +560,8 @@ class AgentRuntime:
         )
         messages = ctx.compact(messages, max_chars=self._bounds.max_context_chars)
         prompt_chars = sum(len(m.content) for m in messages)
+        if state.cancel_event.is_set():
+            raise _Interrupted()
 
         for provider in (models.primary, models.fallback):
             if provider is None:
@@ -459,10 +577,10 @@ class AgentRuntime:
 
             state.model_calls += 1
             try:
-                result = await asyncio.wait_for(
-                    provider.invoke(messages, timeout=max(0.001, min(spec.timeout_seconds, remaining()))),
-                    timeout=max(0.001, remaining()),
-                )
+                result = await self._invoke_cancellable(state, provider, messages, remaining)
+            except _Interrupted:
+                await self._meter_model(env, state, provider, units=0, cost=0.0)
+                raise
             except (ModelUnavailable, asyncio.TimeoutError):
                 await self._meter_model(env, state, provider, units=0, cost=0.0)
                 if remaining() <= 0:
@@ -480,6 +598,31 @@ class AgentRuntime:
 
         # FAIL-CORE-002: never a fabricated answer.
         raise _Stop(AgentFailureCode.MODEL_UNAVAILABLE)
+
+    @staticmethod
+    async def _invoke_cancellable(state: TaskState, provider: ModelProvider, messages, remaining):
+        """One provider call, raced against the task's cancel event — the same
+        race `_run_cancellable` gives a tool call. Without it a stop (or a
+        cancel) would wait out the model's own timeout; with it, the call is
+        abandoned and the loop's checkpoint takes over at once."""
+
+        call = asyncio.ensure_future(asyncio.wait_for(
+            provider.invoke(messages, timeout=max(0.001, min(provider.spec.timeout_seconds, remaining()))),
+            timeout=max(0.001, remaining()),
+        ))
+        waiter = asyncio.ensure_future(state.cancel_event.wait())
+        try:
+            await asyncio.wait({call, waiter}, return_when=asyncio.FIRST_COMPLETED)
+            if call.done():
+                return call.result()
+            call.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await call
+            raise _Interrupted()
+        finally:
+            waiter.cancel()
+            if not call.done():
+                call.cancel()
 
     # ── capability activation (owner decision §10, docs/CAPABILITY_MATRIX.md §4) ──
 
@@ -863,6 +1006,10 @@ class AgentRuntime:
     # ── lifecycle ───────────────────────────────────────────────────────
 
     async def _pause(self, env: TaskEnvironment, state: TaskState) -> AgentResult:
+        if state.tripped is not None:
+            # Tripped while this step was being decided: the confirmation just
+            # issued is spent by the stop, and the task never pauses.
+            return await self._emergency_stop(env, state)
         await self._set_status(env, state, AgentTaskStatus.AWAITING_CONFIRMATION)
         assert state.pending is not None
         await self._event(env, state, AgentEvent.CONFIRMATION_ISSUED, AuditResult.SUCCESS,
@@ -920,19 +1067,20 @@ class AgentRuntime:
 
         trip = state.tripped
         assert trip is not None
+        if state.stop_enforced:
+            # Another request is already enforcing this stop (18 §5.3 is done
+            # once); this one only reports it.
+            result = self._result_from_state(state, AgentTaskStatus.FAILED)
+            result.failure = _trip_failure(trip)
+            return result
+        state.stop_enforced = True
         result = await self._finish(env, state, AgentTaskStatus.FAILED,
                                     failure=AgentFailureCode.EMERGENCY_STOP)
         # The failure message is what the user's device shows for a failed
         # task, so the plain reason goes there, ahead of the generic text.
-        result.failure = AgentFailure(
-            code=AgentFailureCode.EMERGENCY_STOP,
-            message=f"{_TRIP_NOTES.get(trip.source, _GENERIC_TRIP_NOTE)} "
-                    f"{_FAILURE_MESSAGES[AgentFailureCode.EMERGENCY_STOP]}",
-        )
-        resource = f"breaker:{trip.scope.value}:{state.task_id}:{trip.source}"
-        if trip.reason != trip.source:
-            resource = f"{resource}:{trip.reason}"
-        await self._event(env, state, AgentEvent.BREAKER_TRIPPED, AuditResult.BLOCKED, resource=resource)
+        result.failure = _trip_failure(trip)
+        await self._event(env, state, AgentEvent.BREAKER_TRIPPED, AuditResult.BLOCKED,
+                          resource=_trip_resource(trip.scope, state.task_id, trip.source, trip.reason))
         return result
 
     async def _fail_row(self, env: TaskEnvironment, row, code: AgentFailureCode,

@@ -79,6 +79,9 @@ class TaskState:
     # 18 §5: set once by the circuit breaker and never cleared. A tripped task
     # is stopped at its next checkpoint and can never be resumed or confirmed.
     tripped: Trip | None = None
+    # Set once a stop is being enforced, so two requests racing to enforce the
+    # same stop (an operator stop and the owner's /confirm) do it once.
+    stop_enforced: bool = False
     # The breaker's in-task trigger counters (18 §5.1).
     denials: int = 0
     violations: int = 0
@@ -127,6 +130,11 @@ class TaskStateRegistry:
 
     def pop(self, task_id: uuid.UUID) -> TaskState | None:
         return self._states.pop(task_id, None)
+
+    def live(self) -> list[TaskState]:
+        """A snapshot of every task live in this process (running or paused)."""
+
+        return list(self._states.values())
 
     def prune_expired(self) -> None:
         now = datetime.now(timezone.utc)

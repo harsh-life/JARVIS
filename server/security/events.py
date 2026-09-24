@@ -94,6 +94,14 @@ class AuditAction(str, Enum):
 
     # ── supervisory runtime (18 §5, §7) ─────────────────────────────────
     BREAKER_TRIPPED = "breaker.tripped"
+    BREAKER_GLOBAL_LATCHED = "breaker.global.latched"
+    BREAKER_GLOBAL_CLEARED = "breaker.global.cleared"
+
+    # ── superuser control requests (18 §5.4) — one row per privileged call,
+    # whatever it changed; the state transitions above are recorded separately.
+    CONTROL_STOP = "control.stop"
+    CONTROL_GLOBAL_STOP = "control.global_stop"
+    CONTROL_GLOBAL_CLEAR = "control.global_clear"
 
 
 # 12 §5 emits through a port that speaks plain strings (server/secrets is

@@ -249,6 +249,28 @@ class HydratorPort(Protocol):
 # ── the per-request bundle ─────────────────────────────────────────────────
 
 
+# ── supervisor (18 §5.4) ───────────────────────────────────────────────────
+
+
+class SupervisorGatePort(Protocol):
+    """The runtime's **read-only** view of the global emergency latch.
+
+    There is deliberately no method here that sets or clears the latch: that is
+    the superuser control path's alone (`server/composition/supervisor.py`),
+    which the runtime can neither import nor reach. The runtime can only ask.
+    """
+
+    async def submissions_open(self) -> bool:
+        """False while latched — and False whenever the latch cannot be read
+        (fail closed)."""
+        ...
+
+    def latched_now(self) -> bool:
+        """The in-process latch, synchronously — for the check that must not
+        yield to the event loop (see `AgentRuntime.submit`)."""
+        ...
+
+
 @dataclass
 class TaskEnvironment:
     """Everything request-scoped the runtime uses for one API call."""
@@ -258,6 +280,7 @@ class TaskEnvironment:
     usage: UsagePort
     models: ModelResolverPort
     hydrator: HydratorPort
+    supervisor: SupervisorGatePort
 
 
 __all__: Sequence[str] = [
@@ -271,6 +294,7 @@ __all__: Sequence[str] = [
     "ModelResolverPort",
     "ResolvedModels",
     "SecurityPort",
+    "SupervisorGatePort",
     "TaskEnvironment",
     "ToolCatalog",
     "UsageLimitReached",
