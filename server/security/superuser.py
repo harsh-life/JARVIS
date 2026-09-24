@@ -30,11 +30,12 @@ is measured in `docs/OD_A1_BR_T2.md` rather than claimed closed.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 
 from server.secrets.requester import (
     SuperuserGrant,
-    constant_time_equals,
     fingerprint,
 )
 
@@ -44,6 +45,10 @@ SUPERUSER_TOKEN_ENV = "HYPERMIND_SUPERUSER_TOKEN"
 # would make the one credential separating the application from its master
 # keys guessable.
 MIN_SUPERUSER_TOKEN_LENGTH = 32
+
+
+def _digest(value: str) -> bytes:
+    return hashlib.sha256(value.encode("utf-8")).digest()
 
 
 class SuperuserAuthenticationFailed(Exception):
@@ -92,7 +97,13 @@ def authenticate_superuser(
             f"characters of high-entropy material"
         )
 
-    if not presented_token or not constant_time_equals(presented_token, expected):
+    # Compared as fixed-length digests: `hmac.compare_digest` is constant-time
+    # only for equal-length inputs, and returns early on a length mismatch —
+    # which would let a timing probe learn the configured credential's length.
+    # Hashing both sides first makes every comparison the same 32 bytes, and
+    # it runs for an empty credential too, so no input takes a shorter path.
+    matched = hmac.compare_digest(_digest(presented_token or ""), _digest(expected))
+    if not presented_token or not matched:
         raise SuperuserAuthenticationFailed("superuser authentication failed")
 
     return SuperuserGrant._issue(fingerprint(expected))

@@ -220,6 +220,40 @@ type = "forbidden"
 source_modules = ["server.execution", "server.fs", "server.net"]
 forbidden_modules = ["server.secrets"]
 
+# 12 §4 / SUPER-001 / 02 §12: superuser authority has exactly one origin — the
+# out-of-band credential checked by `server.security.superuser` — and exactly
+# one HTTP entry, `server.gateway.superuser_auth`. No layer that could act on a
+# user's, a model's, a tool's, or a device's behalf may reach either: not
+# directly, not through a chain of imports. `server.gateway` itself (whose
+# routes are the entry), `server.composition` (which wires them) and
+# `server.dashboard` (whose operator routes, per 28, will require the
+# dependency) are the only packages outside `server.security` left able to.
+[[tool.importlinter.contracts]]
+name = "Only the gateway reaches superuser authority (12 §4, SUPER-001)"
+type = "forbidden"
+source_modules = [
+    "server.agent",
+    "server.tools",
+    "server.modeltools",
+    "server.models",
+    "server.memory",
+    "server.vault",
+    "server.scheduler",
+    "server.voice",
+    "server.intelligence",
+    "server.auth",
+    "server.graph",
+    "server.capabilities",
+    "server.execution",
+    "server.fs",
+    "server.net",
+    "server.secrets",
+    "server.config",
+    "server.storage",
+    "shared",
+]
+forbidden_modules = ["server.security.superuser", "server.gateway.superuser_auth"]
+
 # 09 §8 / 10 §3 (NET-005): the sandbox/egress boundary is worthless if an
 # adapter can reach the host filesystem or a raw socket without going through
 # it. `subprocess`/`socket` are the two stdlib doors that would let a tool
