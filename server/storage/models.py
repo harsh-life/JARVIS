@@ -663,6 +663,8 @@ class AgentTask(Base):
         Uuid, ForeignKey("graphs.graph_id"), nullable=True
     )
     status: Mapped[str] = mapped_column(String, nullable=False)
+    # 18 §3: immutable after creation; the supervisor's mode ceiling reads it.
+    mode: Mapped[str] = mapped_column(String, nullable=False, default="execute", server_default="execute")
     failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
     response: Mapped[str | None] = mapped_column(String, nullable=True)
     iterations: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -676,6 +678,9 @@ class AgentTask(Base):
         CheckConstraint(
             "status IN ('running','awaiting_confirmation','completed','failed','cancelled')",
             name="ck_agent_tasks_status",
+        ),
+        CheckConstraint(
+            "mode IN ('execute','draft','suggest','observe')", name="ck_agent_tasks_mode"
         ),
         Index("ix_agent_tasks_user_created", "user_id", "created_at"),
     )

@@ -67,6 +67,8 @@ async def test_the_runtime_persists_no_transcript(h):
     assert columns == {
         "task_id", "user_id", "device_id", "session_id", "graph_id", "status", "failure_code",
         "response", "iterations", "model_calls", "tool_calls", "created_at", "updated_at", "finished_at",
+        # 18 §3/§7: the task's mode — a four-value lifecycle enum, not content.
+        "mode",
     }
 
     alice = await h.user("alice")

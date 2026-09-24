@@ -29,6 +29,7 @@ async def create_task_row(
     device_id: uuid.UUID,
     session_id: uuid.UUID,
     graph_id: uuid.UUID | None,
+    mode: str = "execute",
 ) -> AgentTask:
     now = _utcnow()
     row = AgentTask(
@@ -38,6 +39,7 @@ async def create_task_row(
         session_id=session_id,
         graph_id=graph_id,
         status=AgentTaskStatus.RUNNING.value,
+        mode=mode,
         iterations=0,
         model_calls=0,
         tool_calls=0,

@@ -96,6 +96,8 @@ class CapabilityStatus(str, Enum):
 class CapabilityInfo:
     status: CapabilityStatus
     scope_keys: frozenset[str] = frozenset()
+    # The registry's own tier per enumerated operation (the capability axis).
+    operation_tiers: Mapping[str, RiskCategory] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -116,6 +118,19 @@ class SecurityPort(Protocol):
     ) -> IssuedConfirmation: ...
 
     def describe_capability(self, capability: str) -> CapabilityInfo: ...
+
+    def operation_tier(
+        self,
+        *,
+        capability: str,
+        capability_operation: str,
+        resource_type: ResourceType,
+        operation: Operation,
+    ) -> RiskCategory | None:
+        """The engine's deterministic tier for one operation — read-only, for
+        the supervisor's mode ceiling (18 §3). `None` if it cannot be
+        determined (the ceiling then refuses)."""
+        ...
 
     async def holds_standing_grant(
         self,

@@ -166,6 +166,26 @@ class AuthorizationEngine:
         self._floor = floor
         self._confirmations = confirmations
 
+    def risk_tier_for(
+        self,
+        *,
+        resource_type: ResourceType,
+        operation: Operation,
+        capability: str | None,
+        capability_operation: str | None,
+    ) -> RiskCategory:
+        """The tier this engine would compute for an action — the same policy
+        object `_decide` uses, exposed read-only so the supervisor's mode
+        ceiling (18 §3) reads the one tier table rather than a copy of it. It
+        decides nothing: it grants, denies and confirms nothing."""
+
+        return self._risk.risk_tier(
+            resource_type=resource_type,
+            operation=operation,
+            capability_name=capability,
+            capability_operation=capability_operation,
+        )
+
     async def authorize(
         self, session: AsyncSession, request: AccessRequest, *, audit: AuditLogger
     ) -> AuthorizationOutcome:

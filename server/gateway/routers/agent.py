@@ -34,7 +34,7 @@ from server.gateway.errors import AppError
 from server.gateway.security import SecurityCore
 from server.security.audit import AuditLogger
 from server.storage.idempotency import IdempotencyConflict, get_or_execute
-from shared.schemas.agent import AgentFailureCode, AgentResult, AgentTaskStatus, ToolSummary
+from shared.schemas.agent import AgentFailureCode, AgentResult, AgentTaskStatus, TaskMode, ToolSummary
 from shared.schemas.errors import ERROR_CODE_TABLE, ErrorCode
 
 router = APIRouter(tags=["agent"])
@@ -66,6 +66,9 @@ class SubmitTaskRequest(BaseModel):
 
     input: str = Field(min_length=1, max_length=20_000)
     stream: bool = False  # 02 §1.9: non-streaming is the MVP default
+    # 18 §3: chosen by the caller at submission, immutable afterwards; the
+    # worker never sets it. `execute` is today's behaviour.
+    mode: TaskMode = TaskMode.EXECUTE
 
 
 class ConfirmRequest(BaseModel):
@@ -166,7 +169,7 @@ async def submit_task(
 
     async def execute() -> tuple[int, dict]:
         result = await runtime.submit(
-            session, principal=principal, user_input=body.input, audit=audit
+            session, principal=principal, user_input=body.input, audit=audit, mode=body.mode
         )
         return render(result, audit.request_id)
 

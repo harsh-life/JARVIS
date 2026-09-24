@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from server.models.provider import ChatMessage
-from shared.schemas.agent import ExecutionPlatform
+from shared.schemas.agent import ExecutionPlatform, TaskMode
 from shared.schemas.authorization import Operation, Principal, ResourceType
 from shared.schemas.enums import RiskCategory
 
@@ -63,6 +63,8 @@ class TaskState:
     task_id: uuid.UUID
     principal: Principal
     graph_id: uuid.UUID | None
+    # 18 §3: fixed at submission; nothing assigns it afterwards.
+    mode: TaskMode = TaskMode.EXECUTE
     messages: list[ChatMessage] = field(default_factory=list)
     activations: list[Activation] = field(default_factory=list)
     iterations: int = 0

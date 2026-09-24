@@ -192,7 +192,28 @@ class RuntimeSecurityAdapter:
             return CapabilityInfo(CapabilityStatus.PROHIBITED)
         if not is_registered(capability):
             return CapabilityInfo(CapabilityStatus.UNKNOWN)
-        return CapabilityInfo(CapabilityStatus.REGISTERED, frozenset(lookup(capability).scope_keys))
+        definition = lookup(capability)
+        return CapabilityInfo(
+            CapabilityStatus.REGISTERED,
+            frozenset(definition.scope_keys),
+            dict(definition.operations),
+        )
+
+    def operation_tier(
+        self,
+        *,
+        capability: str,
+        capability_operation: str,
+        resource_type: ResourceType,
+        operation: Operation,
+    ) -> RiskCategory | None:
+        try:
+            return self._core.engine.risk_tier_for(
+                resource_type=resource_type, operation=operation,
+                capability=capability, capability_operation=capability_operation,
+            )
+        except Exception:  # noqa: BLE001 — an unclassifiable operation is refused by the ceiling
+            return None
 
     async def holds_standing_grant(
         self,

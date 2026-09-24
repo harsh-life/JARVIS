@@ -38,6 +38,26 @@ class ExecutionPlatform(str, Enum):
     ANDROID = "android"
 
 
+class TaskMode(str, Enum):
+    """What kind of task it is (18 §3, OD-F1). Set once, at submission, by the
+    caller — never by the worker: no proposal can carry it (proposals are
+    `extra="forbid"`), and nothing after creation changes it.
+
+    * `execute` — the user's explicit instruction; the tier table governs as
+      is (low-risk operations chain automatically; consequential and
+      high-impact ones still need confirmation, and step-up).
+    * `draft` / `suggest` / `observe` — nothing is executed: only `low_read`
+      operations run, everything else is refused outright (never offered for
+      confirmation). Turning a draft or suggestion into action takes a new
+      `execute` task created by the user.
+    """
+
+    EXECUTE = "execute"
+    DRAFT = "draft"
+    SUGGEST = "suggest"
+    OBSERVE = "observe"
+
+
 class AgentTaskStatus(str, Enum):
     """Lifecycle of one agent task (`02` §5). `[PROPOSED]` — `01` has no task
     entity; this is the runtime branch's addition, recorded in
@@ -173,6 +193,7 @@ class AgentResult(BaseModel):
 
     task_id: UUID
     status: AgentTaskStatus
+    mode: TaskMode = TaskMode.EXECUTE
     response: str | None = None
     failure: AgentFailure | None = None
     pending: PendingAction | None = None

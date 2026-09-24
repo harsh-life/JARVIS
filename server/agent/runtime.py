@@ -42,6 +42,7 @@ from server.agent import context as ctx
 from server.agent.bounds import ConcurrencyGate, RuntimeBounds
 from server.agent.breaker import BreakerLimits, BreakerScope, CircuitBreaker, Trip, TripSource
 from server.agent.events import AgentEvent
+from server.agent import modes
 from server.agent.ports import (
     ActionRequest,
     ActivationRequest,
@@ -69,6 +70,7 @@ from shared.schemas.agent import (
     ExecutionPlatform,
     PendingAction,
     TaskCounters,
+    TaskMode,
     TERMINAL_STATUSES,
     ToolHandle,
     ToolInvocation,
@@ -220,7 +222,8 @@ class AgentRuntime:
     # ── public API (02 §5) ──────────────────────────────────────────────
 
     async def submit(
-        self, env: TaskEnvironment, *, principal: Principal, user_input: str
+        self, env: TaskEnvironment, *, principal: Principal, user_input: str,
+        mode: TaskMode = TaskMode.EXECUTE,
     ) -> AgentResult:
         """Run a new task until it finishes, pauses for a human, or fails.
 
@@ -232,6 +235,7 @@ class AgentRuntime:
         user_input = user_input.strip()
         if not user_input or len(user_input) > self._bounds.max_input_chars:
             raise ValueError("input is empty or too long")
+        mode = TaskMode(mode)  # 18 §3: one of the four, chosen by the caller
         # 18 §5.4: while the global latch is set — or cannot be read — no task
         # is created at all.
         if not await env.supervisor.submissions_open():
@@ -248,8 +252,9 @@ class AgentRuntime:
                 device_id=principal.device_id,
                 session_id=principal.session_id,
                 graph_id=graph_id,
+                mode=mode.value,
             )
-            state = TaskState(task_id=task_id, principal=principal, graph_id=graph_id)
+            state = TaskState(task_id=task_id, principal=principal, graph_id=graph_id, mode=mode)
             self._states.put(state)
             # Re-checked synchronously, with no `await` since `put`: a global
             # stop sets the in-process latch and then sweeps the registry
@@ -556,7 +561,7 @@ class AgentRuntime:
 
         messages = list(state.messages)
         messages[0] = ctx.ChatMessage(
-            "system", ctx.system_prompt(self._visible_tools(state), state.active_capability_names())
+            "system", ctx.system_prompt(self._visible_tools(state), state.active_capability_names(), state.mode)
         )
         messages = ctx.compact(messages, max_chars=self._bounds.max_context_chars)
         prompt_chars = sum(len(m.content) for m in messages)
@@ -653,6 +658,12 @@ class AgentRuntime:
             if scope and not set(scope) <= info.scope_keys:
                 lines.append(f"{capability}: cannot be narrowed by {sorted(set(scope) - info.scope_keys)}.")
                 continue
+            if not modes.capability_usable(state.mode, info.operation_tiers):
+                # 18 §3: refused, never put to the user as a confirmation that
+                # could not lead to anything this task may do.
+                lines.append(f"{capability}: " + modes.not_activated(state.mode))
+                self._breaker.record_denial(state)
+                continue
             if state.has_activation(capability, scope):
                 lines.append(f"{capability}: already active.")
                 continue
@@ -737,6 +748,17 @@ class AgentRuntime:
 
     # ── tool operations (07 §8) ─────────────────────────────────────────
 
+    @staticmethod
+    def _within_mode(env: TaskEnvironment, state: TaskState, capability: str, capability_operation: str,
+                     resource_type: ResourceType, operation: Operation) -> bool:
+        if modes.MODE_CEILING[state.mode] is None:
+            return True
+        tier = env.security.operation_tier(
+            capability=capability, capability_operation=capability_operation,
+            resource_type=resource_type, operation=operation,
+        )
+        return modes.within_ceiling(state.mode, tier)
+
     def _visible_tools(self, state: TaskState) -> list[ToolHandle]:
         handles = self._tools.enabled_handles()
         if state.allowed_tool_ids is not None:
@@ -788,6 +810,16 @@ class AgentRuntime:
             await self._reject(env, state, f"'{call.operation}' needs a resource_ref.", resource)
             return None
         resource_ref = call.resource_ref if spec.requires_resource_ref else None
+
+        # 18 §3: the mode ceiling, enforced here — before the engine is asked,
+        # so an over-ceiling operation is refused outright and never becomes a
+        # confirmation prompt.
+        if not self._within_mode(env, state, handle.required_capability, call.operation,
+                                 resource_type, operation):
+            await self._reject(env, state, modes.refusal(state.mode, f"'{call.tool}.{call.operation}'"),
+                               resource)
+            self._breaker.record_denial(state)
+            return None
 
         if handle.is_model_tool and self._bounds.max_model_tool_nesting_depth < 1:
             # RT-T7 / OD-RT-1: the nesting bound, enforced by the runtime.
@@ -851,6 +883,15 @@ class AgentRuntime:
             return
         if state.tool_calls >= self._bounds.max_tool_calls:
             raise _Stop(AgentFailureCode.MAX_TOOL_CALLS)
+        if not self._within_mode(env, state, pending.capability, pending.operation or "",
+                                 pending.resource_type or ResourceType.TOOL_ACTION,
+                                 pending.resource_operation or Operation.CREATE):
+            state.messages.append(ctx.observation(
+                modes.refusal(state.mode, f"'{pending.tool_id}.{pending.operation}'"),
+                limit=self._bounds.max_observation_chars,
+            ))
+            self._breaker.record_denial(state)
+            return
 
         verdict = await env.security.authorize_action(ActionRequest(
             principal=state.principal, graph_id=state.graph_id, task_id=state.task_id,
@@ -1126,7 +1167,7 @@ class AgentRuntime:
                 confirmation_token=p.token, expires_at=p.expires_at,
             )
         return AgentResult(
-            task_id=state.task_id, status=status, pending=pending,
+            task_id=state.task_id, status=status, mode=state.mode, pending=pending,
             active_capabilities=state.active_capability_names(), notes=list(state.notes),
             counters=TaskCounters(iterations=state.iterations, model_calls=state.model_calls,
                                   tool_calls=state.tool_calls),
@@ -1139,7 +1180,8 @@ class AgentRuntime:
             code = AgentFailureCode(row.failure_code)
             failure = AgentFailure(code=code, message=_FAILURE_MESSAGES[code])
         return AgentResult(
-            task_id=row.task_id, status=AgentTaskStatus(row.status), response=row.response,
+            task_id=row.task_id, status=AgentTaskStatus(row.status), mode=TaskMode(row.mode),
+            response=row.response,
             failure=failure,
             counters=TaskCounters(iterations=row.iterations, model_calls=row.model_calls,
                                   tool_calls=row.tool_calls),

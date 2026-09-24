@@ -35,7 +35,7 @@ from server.storage.models import SecretReference
 from shared.schemas.enums import AuditResult, SecretClass
 from server.security.usage import UsagePolicy
 from server.tools.registry import ToolRegistry
-from shared.schemas.agent import AgentResult, ToolSummary
+from shared.schemas.agent import AgentResult, TaskMode, ToolSummary
 from shared.schemas.authorization import Principal
 from shared.schemas.errors import ErrorCode
 
@@ -128,12 +128,14 @@ class AgentTaskFacade:
             CURRENT_SECRET_RESOLVER.reset(token)
 
     async def submit(
-        self, session: AsyncSession, *, principal: Principal, user_input: str, audit: AuditLogger
+        self, session: AsyncSession, *, principal: Principal, user_input: str, audit: AuditLogger,
+        mode: TaskMode = TaskMode.EXECUTE,
     ) -> AgentResult:
         with self._secret_scope(session, audit):
             try:
                 return await self._runtime.submit(
-                    self.environment(session, audit), principal=principal, user_input=user_input
+                    self.environment(session, audit), principal=principal, user_input=user_input,
+                    mode=mode,
                 )
             except UsageLimitReached as exc:
                 raise AppError(
