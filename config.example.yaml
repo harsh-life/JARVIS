@@ -35,6 +35,12 @@ agent:
     wall_clock_timeout_seconds: 120
     per_task_budget: 0.0              # paid calls refused until raised
     memory_top_k: 5
+  # 18 §5 circuit breaker — the count at which a task is stopped (emergency_stop).
+  # Bounds, not authority: a stopped task is never resumed; start a new one.
+  breaker:
+    denial_limit: 5        # authorization denials in one task
+    violation_limit: 3     # sandbox / egress / executable-allow-list refusals in one task
+    rejection_limit: 3     # confirmations the user declined in one task
 
 models_as_tools: []
 

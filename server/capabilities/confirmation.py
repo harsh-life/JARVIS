@@ -35,6 +35,8 @@ token cannot be un-signed before its expiry.
 
 from __future__ import annotations
 
+import uuid
+
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -189,6 +191,32 @@ class ConfirmationService:
         )
         await session.flush()
         return result.rowcount == 1
+
+
+    async def invalidate_for_task(
+        self, session: AsyncSession, *, principal_user_id: uuid.UUID, task_id: str
+    ) -> int:
+        """Spend every unused token bound to `task_id` (18 §5.3 step 3).
+
+        Called whenever a task ends — by completion, failure, cancellation or a
+        breaker trip — so no token outlives the task it was issued for. It
+        reuses the single-use mark rather than a separate revocation column:
+        `consume` already refuses a spent token, so a token invalidated here can
+        never authorize anything, and the same conditional UPDATE keeps it
+        race-free against a concurrent `consume`. Returns how many were spent.
+        """
+
+        result = await session.execute(
+            update(ConfirmationToken)
+            .where(
+                ConfirmationToken.principal_user_id == principal_user_id,
+                ConfirmationToken.task_id == task_id,
+                ConfirmationToken.used_at.is_(None),
+            )
+            .values(used_at=_utcnow())
+        )
+        await session.flush()
+        return result.rowcount or 0
 
 
 def _binding_matches(row: ConfirmationToken, binding: ActionBinding) -> bool:

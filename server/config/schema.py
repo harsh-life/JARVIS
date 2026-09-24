@@ -120,6 +120,17 @@ class AgentBoundsConfig(StrictModel):
     memory_top_k: int = Field(default=5, ge=0)
 
 
+class AgentBreakerConfig(StrictModel):
+    """18 §5.1/§9 — the circuit breaker's in-task triggers. Each is the count at
+    which the task is stopped. Bounds, not authority: removing the section
+    keeps these defaults, and no value can resume a stopped task. The numbers
+    are `[IMPL]` (OD-SUP-2)."""
+
+    denial_limit: int = Field(default=5, ge=1)
+    violation_limit: int = Field(default=3, ge=1)
+    rejection_limit: int = Field(default=3, ge=1)
+
+
 class AgentSectionConfig(StrictModel):
     """The primary agent's model selection (00_CANONICAL_PRD.md §19,
     P4 — swappable by configuration alone), its optional deterministic fallback
@@ -135,6 +146,7 @@ class AgentSectionConfig(StrictModel):
     # 05 §5: used only if configured, decided by the runtime, never the model.
     fallback: ModelEntryConfig | None = None
     bounds: AgentBoundsConfig = Field(default_factory=AgentBoundsConfig)
+    breaker: AgentBreakerConfig = Field(default_factory=AgentBreakerConfig)
 
     @model_validator(mode="after")
     def _priced_if_paid(self) -> "AgentSectionConfig":

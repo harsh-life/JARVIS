@@ -38,6 +38,7 @@ from typing import Any
 
 from server.agent import context as ctx
 from server.agent.bounds import ConcurrencyGate, RuntimeBounds
+from server.agent.breaker import BreakerLimits, CircuitBreaker, TripSource
 from server.agent.events import AgentEvent
 from server.agent.ports import (
     ActionRequest,
@@ -89,7 +90,27 @@ _FAILURE_MESSAGES: dict[AgentFailureCode, str] = {
     AgentFailureCode.CONFIRMATION_STATE_LOST: "The paused action is no longer available; it was not performed.",
     AgentFailureCode.PRINCIPAL_REVOKED: "The task stopped: the session or device that started it is no longer valid.",
     AgentFailureCode.INTERNAL_ERROR: "The task stopped because of an internal error.",
+    AgentFailureCode.EMERGENCY_STOP: (
+        "The task was stopped by a safety control; nothing further was performed and it will "
+        "not be resumed. Start a new task if you still want this done."
+    ),
 }
+
+# 18 §5.3 step 7: the user is told, in plain words, which control stopped the task.
+# Identifiers only in the audit trail; this prose goes to the task's owner.
+_TRIP_NOTES: dict[str, str] = {
+    TripSource.DENIAL_LIMIT.value: (
+        "Stopped by the safety breaker: too many actions in this task were refused by authorization."
+    ),
+    TripSource.VIOLATION_LIMIT.value: (
+        "Stopped by the safety breaker: too many actions in this task were blocked at a sandbox, "
+        "network, or executable boundary."
+    ),
+    TripSource.REJECTION_LIMIT.value: (
+        "Stopped by the safety breaker: you declined too many proposed actions in this task."
+    ),
+}
+_GENERIC_TRIP_NOTE = "Stopped by the safety breaker."
 
 
 class TaskNotFound(Exception):
@@ -136,11 +157,15 @@ class AgentRuntime:
         concurrency: ConcurrencyGate,
         tools: ToolCatalog,
         states: TaskStateRegistry | None = None,
+        breaker_limits: BreakerLimits | None = None,
     ) -> None:
         self._bounds = bounds
         self._concurrency = concurrency
         self._tools = tools
         self._states = states or TaskStateRegistry()
+        # 18 §5: the deterministic circuit breaker. Owned here because a stop is
+        # task lifecycle; other components will reach it only through `trip()`.
+        self._breaker = CircuitBreaker(breaker_limits or BreakerLimits(), self._states)
 
     @property
     def bounds(self) -> RuntimeBounds:
@@ -149,6 +174,10 @@ class AgentRuntime:
     @property
     def states(self) -> TaskStateRegistry:
         return self._states
+
+    @property
+    def breaker(self) -> CircuitBreaker:
+        return self._breaker
 
     # ── public API (02 §5) ──────────────────────────────────────────────
 
@@ -219,6 +248,10 @@ class AgentRuntime:
         state = self._states.get(task_id)
         if state is None or state.pending is None:
             return await self._fail_row(env, row, AgentFailureCode.CONFIRMATION_STATE_LOST, caller)
+        if state.tripped is not None:
+            # 18 §5.2/§6: a stopped task is terminal. No approval, whatever the
+            # token, runs or resumes anything once the breaker has tripped.
+            return await self._emergency_stop(env, state)
 
         pending = state.pending
         if not hmac.compare_digest(pending.token.encode(), (confirmation_token or "").encode()):
@@ -234,6 +267,9 @@ class AgentRuntime:
             state.pending = None
             await self._event(env, state, AgentEvent.CONFIRMATION_REJECTED, AuditResult.BLOCKED,
                               resource=self._pending_resource(pending))
+            self._breaker.record_rejection(state)
+            if state.tripped is not None:
+                return await self._emergency_stop(env, state)
             state.messages.append(
                 ctx.observation(
                     f"The user declined the proposed {pending.kind.replace('_', ' ')} "
@@ -254,6 +290,8 @@ class AgentRuntime:
             state.pending = None
             await self._set_status(env, state, AgentTaskStatus.RUNNING)
             try:
+                if state.tripped is not None:
+                    return await self._emergency_stop(env, state)
                 if state.cancelled:
                     return await self._finish(env, state, AgentTaskStatus.CANCELLED)
                 if not await env.security.principal_active(state.principal):
@@ -297,6 +335,7 @@ class AgentRuntime:
                 active_graph_id=row.graph_id,
             )
             await env.security.deactivate_task(principal=principal, task_id=task_id)
+            await env.security.invalidate_confirmations(principal=principal, task_id=task_id)
             self._tools.release_task(task_id)
             updated = await update_task_row(
                 env.session, task_id, status=AgentTaskStatus.CANCELLED,
@@ -344,6 +383,10 @@ class AgentRuntime:
             state.allowed_tool_ids = models.allowed_tool_ids
 
             while True:
+                # 18 §5.3: the breaker's checkpoint comes first — a tripped task
+                # is an emergency stop even if it was also cancelled.
+                if state.tripped is not None:
+                    return await self._emergency_stop(env, state)
                 if state.cancelled:
                     return await self._finish(env, state, AgentTaskStatus.CANCELLED)
                 if remaining() <= 0:
@@ -445,6 +488,10 @@ class AgentRuntime:
     ) -> AgentResult | None:
         lines: list[str] = []
         for index, ask in enumerate(proposal.capabilities):
+            if state.tripped is not None:
+                # Nothing more is processed — above all, no confirmation is
+                # issued — once the breaker has tripped (18 §5.2).
+                break
             capability = ask.capability.strip()
             scope = dict(ask.resource_scope) if ask.resource_scope else None
             info = env.security.describe_capability(capability)
@@ -455,6 +502,7 @@ class AgentRuntime:
                                   AuditResult.BLOCKED, resource=f"capability:{capability}",
                                   decision=PermissionDecisionValue.DENY)
                 lines.append(f"{capability}: prohibited — no such capability can ever be granted.")
+                self._breaker.record_denial(state)
                 continue
             if info.status is CapabilityStatus.UNKNOWN:
                 lines.append(f"{capability}: unknown capability.")
@@ -487,6 +535,7 @@ class AgentRuntime:
                                   AuditResult.BLOCKED, resource=f"capability:{capability}",
                                   decision=verdict.decision)
                 lines.append(f"{capability}: not permitted.")
+                self._breaker.record_denial(state)
                 continue
 
             issued = await env.security.issue_confirmation(verdict.binding, verdict.risk_category)
@@ -525,6 +574,7 @@ class AgentRuntime:
                 f"Activating {pending.capability} is no longer permitted.",
                 limit=self._bounds.max_observation_chars,
             ))
+            self._breaker.record_denial(state)
             return
 
         await env.security.activate_for_task(
@@ -617,6 +667,7 @@ class AgentRuntime:
         if verdict.prohibited:
             await self._reject(env, state, "That action is prohibited and can never be performed.",
                                resource, decision=verdict.decision)
+            self._breaker.record_denial(state)
             return None
         if verdict.needs_confirmation and verdict.binding is not None:
             issued = await env.security.issue_confirmation(verdict.binding, verdict.risk_category)
@@ -638,6 +689,7 @@ class AgentRuntime:
                 else "Not found or not permitted."
             )
             await self._reject(env, state, message, resource, decision=verdict.decision)
+            self._breaker.record_denial(state)
             return None
 
         await self._execute(env, state, handle, call.operation, platform, dict(call.arguments),
@@ -681,6 +733,7 @@ class AgentRuntime:
                 "The approved action is no longer permitted; it was not performed.",
                 limit=self._bounds.max_observation_chars,
             ))
+            self._breaker.record_denial(state)
             return
 
         await self._event(env, state, AgentEvent.CONFIRMATION_ACCEPTED, AuditResult.SUCCESS,
@@ -737,6 +790,7 @@ class AgentRuntime:
             handle.tool_id, operation, ok=output.ok, content=output.content, error=output.error,
             limit=self._bounds.max_observation_chars,
         ))
+        self._breaker.record_tool_outcome(state, ok=output.ok, error=output.error)
 
     async def _run_cancellable(
         self, state: TaskState, tool_id: str, platform: ExecutionPlatform,
@@ -828,6 +882,9 @@ class AgentRuntime:
                       failure: AgentFailureCode | None = None) -> AgentResult:
         state.pending = None
         revoked = await env.security.deactivate_task(principal=state.principal, task_id=state.task_id)
+        # No confirmation token outlives its task (18 §5.3 step 3) — a stop, a
+        # cancel, and an ordinary end alike.
+        await env.security.invalidate_confirmations(principal=state.principal, task_id=state.task_id)
         self._tools.release_task(state.task_id)
         if revoked:
             await self._event(env, state, AgentEvent.CAPABILITY_DEACTIVATED, AuditResult.SUCCESS)
@@ -852,11 +909,38 @@ class AgentRuntime:
     async def _fail(self, env: TaskEnvironment, state: TaskState, code: AgentFailureCode) -> AgentResult:
         return await self._finish(env, state, AgentTaskStatus.FAILED, failure=code)
 
+    async def _emergency_stop(self, env: TaskEnvironment, state: TaskState) -> AgentResult:
+        """Enforce a breaker trip (18 §5.3). By the time this runs, `trip()`
+        has already set the cancel event, so an in-flight tool call was aborted
+        and its process group killed (step 2). `_finish` then marks the task
+        terminal (1), spends its confirmation tokens (3), and revokes its task
+        grants and releases its temp root (4). The trip is audited (6) and the
+        user told plainly what stopped the task (7). The task is not resumed,
+        and nothing that was pending is replayed (§6)."""
+
+        trip = state.tripped
+        assert trip is not None
+        result = await self._finish(env, state, AgentTaskStatus.FAILED,
+                                    failure=AgentFailureCode.EMERGENCY_STOP)
+        # The failure message is what the user's device shows for a failed
+        # task, so the plain reason goes there, ahead of the generic text.
+        result.failure = AgentFailure(
+            code=AgentFailureCode.EMERGENCY_STOP,
+            message=f"{_TRIP_NOTES.get(trip.source, _GENERIC_TRIP_NOTE)} "
+                    f"{_FAILURE_MESSAGES[AgentFailureCode.EMERGENCY_STOP]}",
+        )
+        resource = f"breaker:{trip.scope.value}:{state.task_id}:{trip.source}"
+        if trip.reason != trip.source:
+            resource = f"{resource}:{trip.reason}"
+        await self._event(env, state, AgentEvent.BREAKER_TRIPPED, AuditResult.BLOCKED, resource=resource)
+        return result
+
     async def _fail_row(self, env: TaskEnvironment, row, code: AgentFailureCode,
                         caller: Principal) -> AgentResult:
         principal = Principal(user_id=row.user_id, device_id=row.device_id,
                               session_id=row.session_id, active_graph_id=row.graph_id)
         await env.security.deactivate_task(principal=principal, task_id=row.task_id)
+        await env.security.invalidate_confirmations(principal=principal, task_id=row.task_id)
         self._tools.release_task(row.task_id)
         updated = await update_task_row(
             env.session, row.task_id, status=AgentTaskStatus.FAILED, iterations=row.iterations,

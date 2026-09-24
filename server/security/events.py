@@ -92,6 +92,9 @@ class AuditAction(str, Enum):
     # ── usage / rate / budget (13) ──────────────────────────────────────
     USAGE_LIMIT_EXCEEDED = "usage.limit.exceeded"
 
+    # ── supervisory runtime (18 §5, §7) ─────────────────────────────────
+    BREAKER_TRIPPED = "breaker.tripped"
+
 
 # 12 §5 emits through a port that speaks plain strings (server/secrets is
 # below server/security and cannot import this enum). This is the one

@@ -138,6 +138,11 @@ class SecurityPort(Protocol):
 
     async def deactivate_task(self, *, principal: Principal, task_id: uuid.UUID) -> int: ...
 
+    async def invalidate_confirmations(self, *, principal: Principal, task_id: uuid.UUID) -> int:
+        """Spend every still-unused confirmation token bound to this task, so no
+        token outlives the task it was issued for (18 §5.3 step 3)."""
+        ...
+
     async def principal_active(self, principal: Principal) -> bool: ...
 
     async def record(

@@ -287,14 +287,17 @@ async def test_case_e_one_user_can_never_reach_anothers_data_or_actions(make_har
 
 
 async def test_case_f_the_execution_boundary_blocks_hostile_targets(make_harness, tmp_path):
-    h = await make_harness(
-        config=real_tools(
-            tmp_path,
-            process={"allowed_executables": ["cat"]},
-            network={"default_internet": True},
-        ),
-        use_real_execution_tools=True,
+    # This case measures each boundary on its own, so the circuit breaker's
+    # violation trigger (18 §5.1, default 3) is raised above the five probes
+    # here. With the default, the same sequence is stopped by the breaker —
+    # `tests/runtime/test_circuit_breaker.py` asserts exactly that.
+    config = real_tools(
+        tmp_path,
+        process={"allowed_executables": ["cat"]},
+        network={"default_internet": True},
     )
+    config["agent"] = {"breaker": {"violation_limit": 10}}
+    h = await make_harness(config=config, use_real_execution_tools=True)
     alice = await h.user("alice")
     notes = {"sandbox_root": "notes"}
     await h.grant(alice, "file.read", resource_scope=notes)

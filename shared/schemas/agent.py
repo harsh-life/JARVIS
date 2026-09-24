@@ -73,6 +73,8 @@ class AgentFailureCode(str, Enum):
     CONFIRMATION_EXPIRED = "confirmation_expired"
     CONFIRMATION_STATE_LOST = "confirmation_state_lost"
     PRINCIPAL_REVOKED = "principal_revoked"
+    # 18 §5: the circuit breaker stopped the task. Terminal; never resumed.
+    EMERGENCY_STOP = "emergency_stop"
     INTERNAL_ERROR = "internal_error"
 
 

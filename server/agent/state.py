@@ -15,12 +15,15 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.models.provider import ChatMessage
 from shared.schemas.agent import ExecutionPlatform
 from shared.schemas.authorization import Operation, Principal, ResourceType
 from shared.schemas.enums import RiskCategory
+
+if TYPE_CHECKING:
+    from server.agent.breaker import Trip
 
 
 @dataclass(frozen=True)
@@ -70,8 +73,16 @@ class TaskState:
     run_seconds_used: float = 0.0
     pending: PendingStep | None = None
     cancelled: bool = False
-    # Set by `/cancel`; an in-flight tool call races against it (05 §9).
+    # Set by `/cancel` and by a breaker trip; an in-flight tool call races
+    # against it (05 §9).
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # 18 §5: set once by the circuit breaker and never cleared. A tripped task
+    # is stopped at its next checkpoint and can never be resumed or confirmed.
+    tripped: Trip | None = None
+    # The breaker's in-task trigger counters (18 §5.1).
+    denials: int = 0
+    violations: int = 0
+    rejections: int = 0
     notes: list[str] = field(default_factory=list)
     allowed_tool_ids: frozenset[str] | None = None
     created_monotonic: float = field(default_factory=time.monotonic)

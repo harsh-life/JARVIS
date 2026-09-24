@@ -28,3 +28,4 @@ class AgentEvent(str, Enum):
     CONFIRMATION_ACCEPTED = "confirmation.accepted"
     CONFIRMATION_REJECTED = "confirmation.rejected"
     LIMIT_EXCEEDED = "usage.limit.exceeded"
+    BREAKER_TRIPPED = "breaker.tripped"

@@ -54,6 +54,10 @@ _FAILURE_CODES: dict[AgentFailureCode, ErrorCode] = {
     AgentFailureCode.CONFIRMATION_STATE_LOST: ErrorCode.CONFLICT,
     AgentFailureCode.PRINCIPAL_REVOKED: ErrorCode.UNAUTHENTICATED,
     AgentFailureCode.INTERNAL_ERROR: ErrorCode.INTERNAL_ERROR,
+    # 18 §5/§6: the breaker stopped the task. Terminal and not retryable — the
+    # task is never resumed; a new task is the only way on. `failure_code` in
+    # the details distinguishes it from other conflicts.
+    AgentFailureCode.EMERGENCY_STOP: ErrorCode.CONFLICT,
 }
 
 

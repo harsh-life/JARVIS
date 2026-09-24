@@ -13,6 +13,7 @@ there is no authorization logic here of its own:
 | `holds_standing_grant` | `CapabilityGrantService.has_capability` (D5)   |
 | `activate_for_task`    | `CapabilityGrantService.grant` (TASK scope)    |
 | `deactivate_task`      | `CapabilityGrantService.revoke`                |
+| `invalidate_confirmations` | `ConfirmationService.invalidate_for_task` (18 §5.3) |
 | `record`               | `AuditLogger.record` (01 §11.1)                |
 """
 
@@ -76,10 +77,13 @@ EVENT_ACTIONS: dict[AgentEvent, AuditAction] = {
     AgentEvent.CONFIRMATION_ACCEPTED: AuditAction.CONFIRMATION_ACCEPTED,
     AgentEvent.CONFIRMATION_REJECTED: AuditAction.CONFIRMATION_REJECTED,
     AgentEvent.LIMIT_EXCEEDED: AuditAction.USAGE_LIMIT_EXCEEDED,
+    AgentEvent.BREAKER_TRIPPED: AuditAction.BREAKER_TRIPPED,
 }
 
 # Acts of the human, not the agent.
 _USER_EVENTS = frozenset({AgentEvent.CONFIRMATION_ACCEPTED, AgentEvent.CONFIRMATION_REJECTED})
+# Acts of the deterministic supervisor, not the agent (18 §5).
+_SYSTEM_EVENTS = frozenset({AgentEvent.BREAKER_TRIPPED})
 
 _MAX_RESOURCE = 128
 
@@ -255,6 +259,11 @@ class RuntimeSecurityAdapter:
             )
         return len(rows)
 
+    async def invalidate_confirmations(self, *, principal: Principal, task_id: uuid.UUID) -> int:
+        return await self._core.confirmations.invalidate_for_task(
+            self._session, principal_user_id=principal.user_id, task_id=str(task_id)
+        )
+
     # ── identity freshness ──────────────────────────────────────────────
 
     async def principal_active(self, principal: Principal) -> bool:
@@ -290,7 +299,11 @@ class RuntimeSecurityAdapter:
         decision: PermissionDecisionValue | None = None,
     ) -> None:
         await self._audit.record(
-            actor=AuditActor.USER if event in _USER_EVENTS else AuditActor.AGENT,
+            actor=(
+                AuditActor.USER if event in _USER_EVENTS
+                else AuditActor.SYSTEM if event in _SYSTEM_EVENTS
+                else AuditActor.AGENT
+            ),
             action=EVENT_ACTIONS[event],
             resource=resource[:_MAX_RESOURCE],
             result=result,

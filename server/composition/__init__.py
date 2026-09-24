@@ -21,6 +21,7 @@ from typing import Iterable
 from fastapi import FastAPI
 
 from server.agent import AgentRuntime, ConcurrencyGate, ConcurrencyLimits, RuntimeBounds
+from server.agent.breaker import BreakerLimits
 from server.composition.execution_tools import build_execution_tools
 from server.composition.facade import AgentTaskFacade
 from server.composition.models import ProviderFactory, spec_from_entry
@@ -51,6 +52,15 @@ def bounds_from_config(config: AppConfig) -> RuntimeBounds:
         max_input_chars=b.max_input_chars,
         max_observation_chars=b.max_observation_chars,
         max_context_chars=b.max_context_chars,
+    )
+
+
+def breaker_limits_from_config(config: AppConfig) -> BreakerLimits:
+    b = config.agent.breaker
+    return BreakerLimits(
+        denial_limit=b.denial_limit,
+        violation_limit=b.violation_limit,
+        rejection_limit=b.rejection_limit,
     )
 
 
@@ -152,6 +162,7 @@ def build_application(
         bounds=bounds_from_config(config),
         concurrency=ConcurrencyGate(concurrency_from_config(config)),
         tools=tools,
+        breaker_limits=breaker_limits_from_config(config),
     )
     facade = AgentTaskFacade(
         runtime=runtime,
