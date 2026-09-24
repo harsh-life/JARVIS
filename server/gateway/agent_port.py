@@ -17,13 +17,14 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.security.audit import AuditLogger
-from shared.schemas.agent import AgentResult, ToolSummary
+from shared.schemas.agent import AgentResult, TaskMode, ToolSummary
 from shared.schemas.authorization import Principal
 
 
 class AgentTaskPort(Protocol):
     async def submit(
-        self, session: AsyncSession, *, principal: Principal, user_input: str, audit: AuditLogger
+        self, session: AsyncSession, *, principal: Principal, user_input: str, audit: AuditLogger,
+        mode: TaskMode = TaskMode.EXECUTE,
     ) -> AgentResult: ...
 
     async def confirm(

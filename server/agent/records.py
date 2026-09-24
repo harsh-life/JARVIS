@@ -29,6 +29,7 @@ async def create_task_row(
     device_id: uuid.UUID,
     session_id: uuid.UUID,
     graph_id: uuid.UUID | None,
+    mode: str = "execute",
 ) -> AgentTask:
     now = _utcnow()
     row = AgentTask(
@@ -38,7 +39,9 @@ async def create_task_row(
         session_id=session_id,
         graph_id=graph_id,
         status=AgentTaskStatus.RUNNING.value,
+        mode=mode,
         iterations=0,
+        worker_switches=0,
         model_calls=0,
         tool_calls=0,
         created_at=now,
@@ -63,6 +66,7 @@ async def update_task_row(
     tool_calls: int,
     response: str | None = None,
     failure_code: str | None = None,
+    worker_switches: int | None = None,
 ) -> AgentTask | None:
     row = await session.get(AgentTask, task_id)
     if row is None:
@@ -76,6 +80,8 @@ async def update_task_row(
         row.response = response[:MAX_RESPONSE_CHARS]
     if failure_code is not None:
         row.failure_code = failure_code
+    if worker_switches is not None:
+        row.worker_switches = worker_switches
     row.updated_at = now
     if status in TERMINAL_STATUSES:
         row.finished_at = now

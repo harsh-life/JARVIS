@@ -15,6 +15,8 @@ from server.agent.runtime import (
     AgentRuntime,
     ConfirmationMismatch,
     StepUpNeeded,
+    StopOutcome,
+    SubmissionsSuspended,
     TaskNotAwaiting,
     TaskNotFound,
 )
@@ -26,6 +28,8 @@ __all__ = [
     "ConfirmationMismatch",
     "RuntimeBounds",
     "StepUpNeeded",
+    "StopOutcome",
+    "SubmissionsSuspended",
     "TaskNotAwaiting",
     "TaskNotFound",
 ]

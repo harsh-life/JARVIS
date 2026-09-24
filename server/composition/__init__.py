@@ -21,8 +21,12 @@ from typing import Iterable
 from fastapi import FastAPI
 
 from server.agent import AgentRuntime, ConcurrencyGate, ConcurrencyLimits, RuntimeBounds
+from server.agent.breaker import BreakerLimits
+from server.agent.recovery import RecoveryPolicy
 from server.composition.execution_tools import build_execution_tools
 from server.composition.facade import AgentTaskFacade
+from server.composition.latch import InProcessLatch
+from server.composition.supervisor import SupervisorControl
 from server.composition.models import ProviderFactory, spec_from_entry
 from server.composition.secret_context import key_provider_for
 from server.config.errors import ConfigError
@@ -51,6 +55,30 @@ def bounds_from_config(config: AppConfig) -> RuntimeBounds:
         max_input_chars=b.max_input_chars,
         max_observation_chars=b.max_observation_chars,
         max_context_chars=b.max_context_chars,
+    )
+
+
+def breaker_limits_from_config(config: AppConfig) -> BreakerLimits:
+    b = config.agent.breaker
+    return BreakerLimits(
+        denial_limit=b.denial_limit,
+        violation_limit=b.violation_limit,
+        rejection_limit=b.rejection_limit,
+    )
+
+
+def recovery_from_config(config: AppConfig) -> RecoveryPolicy | None:
+    """18 §4/§9. `None` — no `agent.recovery` section — keeps today's
+    behaviour exactly."""
+
+    r = config.agent.recovery
+    if r is None:
+        return None
+    return RecoveryPolicy(
+        max_worker_switches=r.max_worker_switches,
+        escalate_on_unresolved=r.escalate_on_unresolved,
+        stall_window=r.stall_window,
+        loop_repeat_limit=r.loop_repeat_limit,
     )
 
 
@@ -148,10 +176,13 @@ def build_application(
         graphs = await core.graph_repository.graphs_for_user(session, user_id=user_id, limit=1000)
         return {g.graph_id for g in graphs}
 
+    latch = InProcessLatch()
     runtime = AgentRuntime(
         bounds=bounds_from_config(config),
         concurrency=ConcurrencyGate(concurrency_from_config(config)),
         tools=tools,
+        breaker_limits=breaker_limits_from_config(config),
+        recovery=recovery_from_config(config),
     )
     facade = AgentTaskFacade(
         runtime=runtime,
@@ -165,6 +196,7 @@ def build_application(
             top_k=config.agent.bounds.memory_top_k,
         ),
         provider_factory=factory,
+        latch=latch,
     )
     return create_app(
         config=config,
@@ -172,6 +204,9 @@ def build_application(
         security=core,
         unlock_secrets_on_startup=unlock_secrets_on_startup,
         agent_tasks=facade,
+        # 18 §5.4: the operator control path. Reached only through
+        # `/api/v1/admin/control/*`, behind `get_superuser`.
+        supervisor_control=SupervisorControl(runtime=runtime, facade=facade, latch=latch),
     )
 
 

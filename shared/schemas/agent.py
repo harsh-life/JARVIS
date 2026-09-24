@@ -38,6 +38,26 @@ class ExecutionPlatform(str, Enum):
     ANDROID = "android"
 
 
+class TaskMode(str, Enum):
+    """What kind of task it is (18 §3, OD-F1). Set once, at submission, by the
+    caller — never by the worker: no proposal can carry it (proposals are
+    `extra="forbid"`), and nothing after creation changes it.
+
+    * `execute` — the user's explicit instruction; the tier table governs as
+      is (low-risk operations chain automatically; consequential and
+      high-impact ones still need confirmation, and step-up).
+    * `draft` / `suggest` / `observe` — nothing is executed: only `low_read`
+      operations run, everything else is refused outright (never offered for
+      confirmation). Turning a draft or suggestion into action takes a new
+      `execute` task created by the user.
+    """
+
+    EXECUTE = "execute"
+    DRAFT = "draft"
+    SUGGEST = "suggest"
+    OBSERVE = "observe"
+
+
 class AgentTaskStatus(str, Enum):
     """Lifecycle of one agent task (`02` §5). `[PROPOSED]` — `01` has no task
     entity; this is the runtime branch's addition, recorded in
@@ -73,6 +93,14 @@ class AgentFailureCode(str, Enum):
     CONFIRMATION_EXPIRED = "confirmation_expired"
     CONFIRMATION_STATE_LOST = "confirmation_state_lost"
     PRINCIPAL_REVOKED = "principal_revoked"
+    # 18 §5: the circuit breaker stopped the task. Terminal; never resumed.
+    EMERGENCY_STOP = "emergency_stop"
+    # 18 §4.1: no progress (or the same operation over and over) and no other
+    # worker to switch to.
+    STALLED = "stalled"
+    # 18 §4.2/§4.4: recovery needed a switch, and the worker chain (or
+    # `max_worker_switches`) was exhausted.
+    WORKER_CHAIN_EXHAUSTED = "worker_chain_exhausted"
     INTERNAL_ERROR = "internal_error"
 
 
@@ -135,6 +163,7 @@ class TaskCounters(BaseModel):
     iterations: int = 0
     model_calls: int = 0
     tool_calls: int = 0
+    worker_switches: int = 0
 
 
 class PendingAction(BaseModel):
@@ -171,7 +200,11 @@ class AgentResult(BaseModel):
 
     task_id: UUID
     status: AgentTaskStatus
+    mode: TaskMode = TaskMode.EXECUTE
     response: str | None = None
+    # 18 §4.1: the worker said it could not resolve the request. An honest
+    # answer, reported as such — never presented as completed work.
+    unresolved: bool = False
     failure: AgentFailure | None = None
     pending: PendingAction | None = None
     active_capabilities: list[str] = Field(default_factory=list)

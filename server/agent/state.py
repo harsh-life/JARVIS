@@ -15,12 +15,15 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.models.provider import ChatMessage
-from shared.schemas.agent import ExecutionPlatform
+from shared.schemas.agent import ExecutionPlatform, TaskMode
 from shared.schemas.authorization import Operation, Principal, ResourceType
 from shared.schemas.enums import RiskCategory
+
+if TYPE_CHECKING:
+    from server.agent.breaker import Trip
 
 
 @dataclass(frozen=True)
@@ -60,18 +63,42 @@ class TaskState:
     task_id: uuid.UUID
     principal: Principal
     graph_id: uuid.UUID | None
+    # 18 §3: fixed at submission; nothing assigns it afterwards.
+    mode: TaskMode = TaskMode.EXECUTE
     messages: list[ChatMessage] = field(default_factory=list)
     activations: list[Activation] = field(default_factory=list)
     iterations: int = 0
     model_calls: int = 0
     tool_calls: int = 0
     consecutive_parse_failures: int = 0
+    # 18 §4 — the worker chain. The active worker is the only thing a switch
+    # changes; everything else in this object carries over.
+    worker_index: int = 0
+    worker_switches: int = 0
+    # Per-worker detectors, reset on a switch.
+    no_progress_steps: int = 0
+    progressed: bool = False
+    operation_counts: dict[str, int] = field(default_factory=dict)
+    # Where the current run of malformed output began, so a switch can drop it:
+    # a failed worker's malformed text is never shown to the next as authority.
+    malformed_from: int | None = None
     cost: float = 0.0
     run_seconds_used: float = 0.0
     pending: PendingStep | None = None
     cancelled: bool = False
-    # Set by `/cancel`; an in-flight tool call races against it (05 §9).
+    # Set by `/cancel` and by a breaker trip; an in-flight tool call races
+    # against it (05 §9).
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # 18 §5: set once by the circuit breaker and never cleared. A tripped task
+    # is stopped at its next checkpoint and can never be resumed or confirmed.
+    tripped: Trip | None = None
+    # Set once a stop is being enforced, so two requests racing to enforce the
+    # same stop (an operator stop and the owner's /confirm) do it once.
+    stop_enforced: bool = False
+    # The breaker's in-task trigger counters (18 §5.1).
+    denials: int = 0
+    violations: int = 0
+    rejections: int = 0
     notes: list[str] = field(default_factory=list)
     allowed_tool_ids: frozenset[str] | None = None
     created_monotonic: float = field(default_factory=time.monotonic)
@@ -116,6 +143,11 @@ class TaskStateRegistry:
 
     def pop(self, task_id: uuid.UUID) -> TaskState | None:
         return self._states.pop(task_id, None)
+
+    def live(self) -> list[TaskState]:
+        """A snapshot of every task live in this process (running or paused)."""
+
+        return list(self._states.values())
 
     def prune_expired(self) -> None:
         now = datetime.now(timezone.utc)

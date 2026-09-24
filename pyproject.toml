@@ -8,7 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "pydantic>=2.6,<3.0",
     "pydantic-settings>=2.2",
-    "sqlalchemy>=2.0.29",
+    "sqlalchemy[asyncio]>=2.0.29",
     "aiosqlite>=0.20",
     "alembic>=1.13",
     "pyyaml>=6.0",
@@ -219,6 +219,51 @@ name = "Execution/fs/net never import secrets (12 §2, OD-D1)"
 type = "forbidden"
 source_modules = ["server.execution", "server.fs", "server.net"]
 forbidden_modules = ["server.secrets"]
+
+# 12 §4 / SUPER-001 / 02 §12 / 18 §5.4: superuser authority has exactly one
+# origin — the out-of-band credential checked by `server.security.superuser` —
+# and exactly one HTTP entry, `server.gateway.superuser_auth`. The operator
+# control path built on it (the control port and routes, the supervisor service)
+# is just as closed. No layer that could act on a user's, a model's, a tool's, a
+# device's, or a worker's behalf may reach any of them: not directly, not
+# through a chain of imports. Only `server.gateway` (whose routes are the entry)
+# and `server.composition` (which wires them) are left able to. The dashboard is
+# a source here too: it shows, it never acts (28 §0, DASH-002), so its future
+# `/admin/*` views authenticate at the gateway and hand it data — the dashboard
+# never holds superuser authority itself.
+[[tool.importlinter.contracts]]
+name = "Only the gateway reaches superuser authority (12 §4, SUPER-001)"
+type = "forbidden"
+source_modules = [
+    "server.dashboard",
+    "server.agent",
+    "server.tools",
+    "server.modeltools",
+    "server.models",
+    "server.memory",
+    "server.vault",
+    "server.scheduler",
+    "server.voice",
+    "server.intelligence",
+    "server.auth",
+    "server.graph",
+    "server.capabilities",
+    "server.execution",
+    "server.fs",
+    "server.net",
+    "server.secrets",
+    "server.config",
+    "server.storage",
+    "shared",
+]
+forbidden_modules = [
+    "server.security.superuser",
+    "server.gateway.superuser_auth",
+    "server.gateway.control_port",
+    "server.gateway.routers.control",
+    "server.composition.supervisor",
+    "server.composition.latch",
+]
 
 # 09 §8 / 10 §3 (NET-005): the sandbox/egress boundary is worthless if an
 # adapter can reach the host filesystem or a raw socket without going through

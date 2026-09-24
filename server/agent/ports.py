@@ -96,6 +96,8 @@ class CapabilityStatus(str, Enum):
 class CapabilityInfo:
     status: CapabilityStatus
     scope_keys: frozenset[str] = frozenset()
+    # The registry's own tier per enumerated operation (the capability axis).
+    operation_tiers: Mapping[str, RiskCategory] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -117,6 +119,19 @@ class SecurityPort(Protocol):
 
     def describe_capability(self, capability: str) -> CapabilityInfo: ...
 
+    def operation_tier(
+        self,
+        *,
+        capability: str,
+        capability_operation: str,
+        resource_type: ResourceType,
+        operation: Operation,
+    ) -> RiskCategory | None:
+        """The engine's deterministic tier for one operation — read-only, for
+        the supervisor's mode ceiling (18 §3). `None` if it cannot be
+        determined (the ceiling then refuses)."""
+        ...
+
     async def holds_standing_grant(
         self,
         *,
@@ -137,6 +152,11 @@ class SecurityPort(Protocol):
     ) -> None: ...
 
     async def deactivate_task(self, *, principal: Principal, task_id: uuid.UUID) -> int: ...
+
+    async def invalidate_confirmations(self, *, principal: Principal, task_id: uuid.UUID) -> int:
+        """Spend every still-unused confirmation token bound to this task, so no
+        token outlives the task it was issued for (18 §5.3 step 3)."""
+        ...
 
     async def principal_active(self, principal: Principal) -> bool: ...
 
@@ -211,13 +231,35 @@ class ToolCatalog(Protocol):
 # ── models (06) ────────────────────────────────────────────────────────────
 
 
+# 18 §8 — the worker slot. A worker is whatever *proposes the next step*:
+# `invoke` (compacted transcript in, raw proposal text out), `health`, and a
+# `spec` for bounds and metering. Today every worker is an LLM behind the
+# `ModelProvider` interface (06), so the slot *is* that interface rather than a
+# second, parallel one. A future reasoning engine plugs in as another
+# implementation, injected by the composition root, and gets no other port: no
+# authorization handle, no tool handle, no SecretStore, no registry.
+Worker = ModelProvider
+
+
 @dataclass(frozen=True)
 class ResolvedModels:
-    primary: ModelProvider
-    fallback: ModelProvider | None = None
+    """The task's ordered worker chain (18 §4.2): its resolved primary (user →
+    graph → server default, OD-RT-3) first, then operator-configured fallbacks.
+    Selection is configuration alone — no worker, and no evaluator, picks the
+    next one."""
+
+    chain: tuple[Worker, ...]
     # MP-T4: the tools this principal's resolved AgentConfiguration enables.
     # `None` means "every server-enabled tool".
     allowed_tool_ids: frozenset[str] | None = None
+
+    def __post_init__(self) -> None:
+        if not self.chain:
+            raise ValueError("a worker chain has at least one worker")
+
+    @property
+    def primary(self) -> Worker:
+        return self.chain[0]
 
 
 class ModelResolverPort(Protocol):
@@ -244,6 +286,28 @@ class HydratorPort(Protocol):
 # ── the per-request bundle ─────────────────────────────────────────────────
 
 
+# ── supervisor (18 §5.4) ───────────────────────────────────────────────────
+
+
+class SupervisorGatePort(Protocol):
+    """The runtime's **read-only** view of the global emergency latch.
+
+    There is deliberately no method here that sets or clears the latch: that is
+    the superuser control path's alone (`server/composition/supervisor.py`),
+    which the runtime can neither import nor reach. The runtime can only ask.
+    """
+
+    async def submissions_open(self) -> bool:
+        """False while latched — and False whenever the latch cannot be read
+        (fail closed)."""
+        ...
+
+    def latched_now(self) -> bool:
+        """The in-process latch, synchronously — for the check that must not
+        yield to the event loop (see `AgentRuntime.submit`)."""
+        ...
+
+
 @dataclass
 class TaskEnvironment:
     """Everything request-scoped the runtime uses for one API call."""
@@ -253,6 +317,7 @@ class TaskEnvironment:
     usage: UsagePort
     models: ModelResolverPort
     hydrator: HydratorPort
+    supervisor: SupervisorGatePort
 
 
 __all__: Sequence[str] = [
@@ -266,9 +331,11 @@ __all__: Sequence[str] = [
     "ModelResolverPort",
     "ResolvedModels",
     "SecurityPort",
+    "SupervisorGatePort",
     "TaskEnvironment",
     "ToolCatalog",
     "UsageLimitReached",
     "UsagePort",
     "Verdict",
+    "Worker",
 ]

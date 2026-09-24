@@ -663,11 +663,15 @@ class AgentTask(Base):
         Uuid, ForeignKey("graphs.graph_id"), nullable=True
     )
     status: Mapped[str] = mapped_column(String, nullable=False)
+    # 18 §3: immutable after creation; the supervisor's mode ceiling reads it.
+    mode: Mapped[str] = mapped_column(String, nullable=False, default="execute", server_default="execute")
     failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
     response: Mapped[str | None] = mapped_column(String, nullable=True)
     iterations: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     model_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 18 §7: how many times the supervisor replaced the task's worker.
+    worker_switches: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -677,5 +681,32 @@ class AgentTask(Base):
             "status IN ('running','awaiting_confirmation','completed','failed','cancelled')",
             name="ck_agent_tasks_status",
         ),
+        CheckConstraint(
+            "mode IN ('execute','draft','suggest','observe')", name="ck_agent_tasks_mode"
+        ),
         Index("ix_agent_tasks_user_created", "user_id", "created_at"),
     )
+
+
+class SupervisorLatch(Base):
+    """The global emergency latch (18 §5.4) — one row, id 1.
+
+    Persisted so the latch **fails closed across a restart**: an in-memory flag
+    would silently clear when the process restarts, i.e. be cleared by
+    something other than the operator (18 §5.2). No row means the latch has
+    never been set. Only the superuser control path writes it
+    (`server/composition/supervisor.py`); the runtime only reads it, through a
+    read-only port. `reason` is an identifier, never prose (the audit trail and
+    this row carry no free-form text); `changed_by` is the superuser
+    credential's non-reversible fingerprint, never the credential.
+    """
+
+    __tablename__ = "supervisor_latch"
+
+    latch_id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    latched: Mapped[bool] = mapped_column(nullable=False, default=False)
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    changed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    __table_args__ = (CheckConstraint("latch_id = 1", name="ck_supervisor_latch_single_row"),)

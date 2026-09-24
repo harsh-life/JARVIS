@@ -13,6 +13,7 @@ there is no authorization logic here of its own:
 | `holds_standing_grant` | `CapabilityGrantService.has_capability` (D5)   |
 | `activate_for_task`    | `CapabilityGrantService.grant` (TASK scope)    |
 | `deactivate_task`      | `CapabilityGrantService.revoke`                |
+| `invalidate_confirmations` | `ConfirmationService.invalidate_for_task` (18 §5.3) |
 | `record`               | `AuditLogger.record` (01 §11.1)                |
 """
 
@@ -76,10 +77,23 @@ EVENT_ACTIONS: dict[AgentEvent, AuditAction] = {
     AgentEvent.CONFIRMATION_ACCEPTED: AuditAction.CONFIRMATION_ACCEPTED,
     AgentEvent.CONFIRMATION_REJECTED: AuditAction.CONFIRMATION_REJECTED,
     AgentEvent.LIMIT_EXCEEDED: AuditAction.USAGE_LIMIT_EXCEEDED,
+    AgentEvent.BREAKER_TRIPPED: AuditAction.BREAKER_TRIPPED,
+    AgentEvent.WORKER_FAILED: AuditAction.AGENT_WORKER_FAILED,
+    AgentEvent.WORKER_SWITCHED: AuditAction.AGENT_WORKER_SWITCHED,
+    AgentEvent.STALL_DETECTED: AuditAction.AGENT_STALL_DETECTED,
+    AgentEvent.RECOVERY_EXHAUSTED: AuditAction.AGENT_RECOVERY_EXHAUSTED,
 }
 
 # Acts of the human, not the agent.
 _USER_EVENTS = frozenset({AgentEvent.CONFIRMATION_ACCEPTED, AgentEvent.CONFIRMATION_REJECTED})
+# Acts of the deterministic supervisor, not the agent (18 §5).
+_SYSTEM_EVENTS = frozenset({
+    AgentEvent.BREAKER_TRIPPED,
+    AgentEvent.WORKER_FAILED,
+    AgentEvent.WORKER_SWITCHED,
+    AgentEvent.STALL_DETECTED,
+    AgentEvent.RECOVERY_EXHAUSTED,
+})
 
 _MAX_RESOURCE = 128
 
@@ -188,7 +202,28 @@ class RuntimeSecurityAdapter:
             return CapabilityInfo(CapabilityStatus.PROHIBITED)
         if not is_registered(capability):
             return CapabilityInfo(CapabilityStatus.UNKNOWN)
-        return CapabilityInfo(CapabilityStatus.REGISTERED, frozenset(lookup(capability).scope_keys))
+        definition = lookup(capability)
+        return CapabilityInfo(
+            CapabilityStatus.REGISTERED,
+            frozenset(definition.scope_keys),
+            dict(definition.operations),
+        )
+
+    def operation_tier(
+        self,
+        *,
+        capability: str,
+        capability_operation: str,
+        resource_type: ResourceType,
+        operation: Operation,
+    ) -> RiskCategory | None:
+        try:
+            return self._core.engine.risk_tier_for(
+                resource_type=resource_type, operation=operation,
+                capability=capability, capability_operation=capability_operation,
+            )
+        except Exception:  # noqa: BLE001 — an unclassifiable operation is refused by the ceiling
+            return None
 
     async def holds_standing_grant(
         self,
@@ -255,6 +290,11 @@ class RuntimeSecurityAdapter:
             )
         return len(rows)
 
+    async def invalidate_confirmations(self, *, principal: Principal, task_id: uuid.UUID) -> int:
+        return await self._core.confirmations.invalidate_for_task(
+            self._session, principal_user_id=principal.user_id, task_id=str(task_id)
+        )
+
     # ── identity freshness ──────────────────────────────────────────────
 
     async def principal_active(self, principal: Principal) -> bool:
@@ -290,7 +330,11 @@ class RuntimeSecurityAdapter:
         decision: PermissionDecisionValue | None = None,
     ) -> None:
         await self._audit.record(
-            actor=AuditActor.USER if event in _USER_EVENTS else AuditActor.AGENT,
+            actor=(
+                AuditActor.USER if event in _USER_EVENTS
+                else AuditActor.SYSTEM if event in _SYSTEM_EVENTS
+                else AuditActor.AGENT
+            ),
             action=EVENT_ACTIONS[event],
             resource=resource[:_MAX_RESOURCE],
             result=result,

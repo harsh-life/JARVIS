@@ -67,7 +67,17 @@ class AuditLogger:
         device_id: uuid.UUID | None = None,
         session_id: uuid.UUID | None = None,
         graph_id: uuid.UUID | None = None,
+        flush: bool = True,
     ) -> None:
+        """Add one audit row to the request's transaction.
+
+        `flush=False` defers the database write to the transaction's next flush
+        or commit — still within this request, still all-or-nothing with it. It
+        exists for the superuser control path (18 §5.4), which must not take the
+        store's write lock before it has tripped a running task: that task's own
+        request holds the lock until it stops.
+        """
+
         if not isinstance(action, AuditAction):
             # Fail loudly rather than inventing an action name: an
             # unregistered action would be invisible to every query 17's
@@ -92,7 +102,8 @@ class AuditLogger:
                 timestamp=_utcnow(),
             )
         )
-        await self._session.flush()
+        if flush:
+            await self._session.flush()
 
     async def record_permission_decision(
         self,

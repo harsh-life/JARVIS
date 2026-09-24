@@ -92,6 +92,21 @@ class AuditAction(str, Enum):
     # ── usage / rate / budget (13) ──────────────────────────────────────
     USAGE_LIMIT_EXCEEDED = "usage.limit.exceeded"
 
+    # ── supervisory runtime (18 §4, §5, §7) ─────────────────────────────
+    AGENT_WORKER_FAILED = "agent.worker.failed"
+    AGENT_WORKER_SWITCHED = "agent.worker.switched"
+    AGENT_STALL_DETECTED = "agent.stall.detected"
+    AGENT_RECOVERY_EXHAUSTED = "agent.recovery.exhausted"
+    BREAKER_TRIPPED = "breaker.tripped"
+    BREAKER_GLOBAL_LATCHED = "breaker.global.latched"
+    BREAKER_GLOBAL_CLEARED = "breaker.global.cleared"
+
+    # ── superuser control requests (18 §5.4) — one row per privileged call,
+    # whatever it changed; the state transitions above are recorded separately.
+    CONTROL_STOP = "control.stop"
+    CONTROL_GLOBAL_STOP = "control.global_stop"
+    CONTROL_GLOBAL_CLEAR = "control.global_clear"
+
 
 # 12 §5 emits through a port that speaks plain strings (server/secrets is
 # below server/security and cannot import this enum). This is the one

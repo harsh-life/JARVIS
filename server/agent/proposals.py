@@ -45,6 +45,9 @@ class _Strict(BaseModel):
 class FinalAnswer(_Strict):
     type: Literal["final_answer"]
     content: str = Field(min_length=1, max_length=MAX_ANSWER_CHARS)
+    # 18 §4.1: "I could not resolve this". Asking the user a clarifying
+    # question is NOT unresolved — it is a normal answer.
+    unresolved: bool = False
 
 
 class ToolCall(_Strict):
