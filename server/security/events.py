@@ -106,6 +106,13 @@ class AuditAction(str, Enum):
     CONTROL_STOP = "control.stop"
     CONTROL_GLOBAL_STOP = "control.global_stop"
     CONTROL_GLOBAL_CLEAR = "control.global_clear"
+    # A break-glass activation or revoke the control path refused (20 §2.2).
+    CONTROL_BREAK_GLASS = "control.break_glass"
+
+    # ── break-glass / unconfined execution (20 §2.4) ────────────────────
+    BREAK_GLASS_ACTIVATED = "break_glass.activated"
+    BREAK_GLASS_INVOKED = "break_glass.invoked"
+    BREAK_GLASS_ENDED = "break_glass.ended"
 
 
 # 12 §5 emits through a port that speaks plain strings (server/secrets is

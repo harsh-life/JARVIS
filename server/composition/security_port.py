@@ -15,6 +15,7 @@ there is no authorization logic here of its own:
 | `deactivate_task`      | `CapabilityGrantService.revoke`                |
 | `invalidate_confirmations` | `ConfirmationService.invalidate_for_task` (18 §5.3) |
 | `record`               | `AuditLogger.record` (01 §11.1)                |
+| `settle_break_glass`   | `BreakGlassRegistry.end_task` / `drain` → `AuditLogger.record` (20 §2.4) |
 """
 
 from __future__ import annotations
@@ -36,12 +37,14 @@ from server.agent.ports import (
     Verdict,
 )
 from server.capabilities.floor import floor_category_for_capability
+from server.composition.break_glass import BreakGlassEvent, BreakGlassRegistry, EndReason, EventKind
 from server.capabilities.registry import is_registered, lookup
 from server.gateway.security import SecurityCore
 from server.graph.authorization import AccessRequest
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
 from server.storage.models import CapabilityGrant, Device, Session, User
+from shared.schemas.agent import AgentFailureCode, AgentTaskStatus
 from shared.schemas.authorization import (
     ActionBinding,
     CapabilityCheckContext,
@@ -109,10 +112,14 @@ def _aware(value: datetime) -> datetime:
 class RuntimeSecurityAdapter:
     """Request-scoped: one per API call, bound to that call's transaction."""
 
-    def __init__(self, *, core: SecurityCore, session: AsyncSession, audit: AuditLogger) -> None:
+    def __init__(
+        self, *, core: SecurityCore, session: AsyncSession, audit: AuditLogger,
+        break_glass: BreakGlassRegistry | None = None,
+    ) -> None:
         self._core = core
         self._session = session
         self._audit = audit
+        self._break_glass = break_glass
 
     # ── authorization ───────────────────────────────────────────────────
 
@@ -343,4 +350,54 @@ class RuntimeSecurityAdapter:
             device_id=principal.device_id,
             session_id=principal.session_id,
             graph_id=graph_id,
+        )
+
+    async def settle_break_glass(
+        self,
+        *,
+        principal: Principal,
+        graph_id: uuid.UUID | None,
+        task_id: uuid.UUID,
+        ended: AgentTaskStatus | None = None,
+        failure: AgentFailureCode | None = None,
+    ) -> None:
+        if self._break_glass is None:
+            return
+        if ended is not None:
+            self._break_glass.end_task(task_id, _end_reason(ended, failure))
+        await record_break_glass_events(
+            self._audit, self._break_glass.drain(task_id), principal=principal, graph_id=graph_id,
+        )
+
+
+def _end_reason(status: AgentTaskStatus, failure: AgentFailureCode | None) -> EndReason:
+    if status is AgentTaskStatus.COMPLETED:
+        return EndReason.TASK_COMPLETED
+    if status is AgentTaskStatus.CANCELLED:
+        return EndReason.TASK_CANCELLED
+    if failure is AgentFailureCode.EMERGENCY_STOP:
+        return EndReason.BREAKER_TRIP
+    return EndReason.TASK_FAILED
+
+
+async def record_break_glass_events(
+    audit: AuditLogger, events: list[BreakGlassEvent], *, principal: Principal | None = None,
+    graph_id: uuid.UUID | None = None, flush: bool = True,
+) -> None:
+    """20 §2.4: `break_glass.invoked` / `break_glass.ended` — the supervisor's
+    doing, not the agent's, so the actor is `system`. Attributed to the task's
+    owner."""
+
+    for event in events:
+        await audit.record(
+            actor=AuditActor.SYSTEM,
+            action=(AuditAction.BREAK_GLASS_INVOKED if event.kind is EventKind.INVOKED
+                    else AuditAction.BREAK_GLASS_ENDED),
+            resource=event.resource[:_MAX_RESOURCE],
+            result=AuditResult.SUCCESS,
+            user_id=event.user_id,
+            device_id=principal.device_id if principal is not None else None,
+            session_id=principal.session_id if principal is not None else None,
+            graph_id=graph_id,
+            flush=flush,
         )

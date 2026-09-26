@@ -11,6 +11,7 @@ call, so a request can never widen what it was configured with.
 from __future__ import annotations
 
 from server.config.schema import AppConfig
+from server.execution.break_glass import BreakGlassLookup
 from server.execution.process import ConstrainedProcessExecutor
 from server.fs import FilesystemSandbox
 from server.net import EgressClient
@@ -26,7 +27,9 @@ from server.tools.registry import ToolDefinition
 from shared.schemas.execution import EgressPolicy
 
 
-def build_execution_tools(config: AppConfig) -> list[ToolDefinition]:
+def build_execution_tools(
+    config: AppConfig, *, break_glass: BreakGlassLookup | None = None
+) -> list[ToolDefinition]:
     """`file.read`/`file.write` are always real and immediately usable
     (sandboxed, quota-capped) once a principal is granted the capability —
     there is nothing unsafe about that by default (09's containment holds
@@ -38,6 +41,11 @@ def build_execution_tools(config: AppConfig) -> list[ToolDefinition]:
     nothing to actually happen until an operator configures one. The
     Android tools use `UnavailableDeviceTransport` (no `android/` client
     exists yet in this repository) and fail every call deterministically.
+
+    `break_glass` is the record store the composition root built (20 §2). The
+    executor gets it — and the separate break-glass executable list — only
+    when `execution.process.break_glass.enabled` is true; otherwise every
+    child is kernel-confined, with no path around it.
     """
 
     fs_config = config.execution.filesystem
@@ -69,8 +77,13 @@ def build_execution_tools(config: AppConfig) -> list[ToolDefinition]:
         default_timeout_seconds=process_config.default_timeout_seconds,
         max_timeout_seconds=process_config.max_timeout_seconds,
         max_output_bytes=process_config.max_output_bytes,
-        confinement_mode=process_config.confinement_mode,
         read_only_paths=process_config.read_only_paths,
+        **(
+            {"break_glass_executables": process_config.break_glass.allowed_executables,
+             "break_glass": break_glass}
+            if process_config.break_glass.enabled and break_glass is not None
+            else {}
+        ),
     )
 
     return [

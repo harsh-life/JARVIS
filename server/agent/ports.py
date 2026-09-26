@@ -16,7 +16,9 @@ Note what the ports do **not** offer:
   token (PERM-002);
 * no way to set a risk tier, waive a confirmation, or mark an action confirmed —
   `Verdict` is produced by the engine and read by the runtime;
-* no secret resolution of any kind (SECRET-002, INV-6).
+* no secret resolution of any kind (SECRET-002, INV-6);
+* no way to create, widen or extend a break-glass record (20 §2.2) — only to
+  settle and end the task's own.
 """
 
 from __future__ import annotations
@@ -31,7 +33,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.agent.events import AgentEvent
 from server.models.provider import ModelProvider
-from shared.schemas.agent import ExecutionPlatform, ToolHandle, ToolInvocation, ToolOutput
+from shared.schemas.agent import (
+    AgentFailureCode,
+    AgentTaskStatus,
+    ExecutionPlatform,
+    ToolHandle,
+    ToolInvocation,
+    ToolOutput,
+)
 from shared.schemas.authorization import ActionBinding, Operation, Principal, ResourceType
 from shared.schemas.enums import AuditResult, PermissionDecisionValue, RiskCategory, UsageKind
 
@@ -159,6 +168,22 @@ class SecurityPort(Protocol):
         ...
 
     async def principal_active(self, principal: Principal) -> bool: ...
+
+    async def settle_break_glass(
+        self,
+        *,
+        principal: Principal,
+        graph_id: uuid.UUID | None,
+        task_id: uuid.UUID,
+        ended: AgentTaskStatus | None = None,
+        failure: AgentFailureCode | None = None,
+    ) -> None:
+        """Write the audit rows owed for this task's break-glass record (20
+        §2.4) — its invocations, and its end once exhausted or expired. With
+        `ended`, the task has reached that terminal state: any live record
+        ends with it first. The runtime can neither see nor create a record;
+        it can only settle and end one."""
+        ...
 
     async def record(
         self,

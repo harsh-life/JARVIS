@@ -11,6 +11,10 @@ to model output, and it is strict on purpose:
   failure rather than a silently ignored hint — so "the model downgraded the
   risk" or "the model said the user already approved" is not expressible
   (PERM-005, TL-T10, INV-2).
+* **No confinement fields** (20 §2.3). Whether a process runs confined is
+  decided by the executor from a superuser-activated record, never by a
+  proposal — so a key naming confinement or break-glass anywhere in a
+  proposal's arguments or scopes is a parse failure, not an ignored hint.
 * **Bounded.** Oversized arguments or answers are rejected, not truncated into
   something the model did not say.
 
@@ -30,6 +34,28 @@ from shared.schemas.agent import ExecutionPlatform
 MAX_ARGUMENTS_CHARS = 16_000
 MAX_ANSWER_CHARS = 20_000
 MAX_CAPABILITIES_PER_REQUEST = 8
+
+
+# Normalized (lower-case, separators removed) substrings no argument or scope
+# key may contain: a worker can neither request nor name unconfined execution
+# (20 §2.3, BG-T4).
+_CONFINEMENT_KEY_MARKERS = ("confine", "breakglass", "landlock", "seccomp")
+
+
+def _names_confinement(key: object) -> bool:
+    normalized = "".join(c for c in str(key).lower() if c.isalnum())
+    return any(marker in normalized for marker in _CONFINEMENT_KEY_MARKERS)
+
+
+def _reject_confinement_keys(value: object) -> None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if _names_confinement(key):
+                raise ValueError("confinement is not a proposal setting")
+            _reject_confinement_keys(item)
+    elif isinstance(value, list):
+        for item in value:
+            _reject_confinement_keys(item)
 
 
 class ProposalError(Exception):
@@ -67,12 +93,25 @@ class ToolCall(_Strict):
     def _bounded(cls, value: dict) -> dict:
         if len(json.dumps(value, default=str)) > MAX_ARGUMENTS_CHARS:
             raise ValueError("arguments too large")
+        _reject_confinement_keys(value)
+        return value
+
+    @field_validator("scope")
+    @classmethod
+    def _no_confinement_scope(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        _reject_confinement_keys(value)
         return value
 
 
 class CapabilityAsk(_Strict):
     capability: str = Field(min_length=1, max_length=128)
     resource_scope: dict[str, str] | None = None
+
+    @field_validator("resource_scope")
+    @classmethod
+    def _no_confinement_scope(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        _reject_confinement_keys(value)
+        return value
 
 
 class RequestCapabilities(_Strict):

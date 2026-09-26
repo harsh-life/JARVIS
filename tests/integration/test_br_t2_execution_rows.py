@@ -31,11 +31,15 @@ from pathlib import Path
 
 import pytest
 
+from server.composition.break_glass import BreakGlassRegistry
+from server.config.schema import BreakGlassConfig
 from server.execution import confinement
 from server.execution.process import ConstrainedProcessExecutor
 from server.fs import FilesystemSandbox
 from server.tools.platforms import FileReadAdapter
 from shared.schemas.agent import ExecutionPlatform, ToolInvocation
+from shared.schemas.execution import ExecutionError
+from tests.support import make_superuser
 
 pytestmark = pytest.mark.asyncio
 
@@ -60,7 +64,8 @@ def _b_file(sandbox: FilesystemSandbox, user_b: uuid.UUID) -> Path:
     return Path(root) / "diary.txt"
 
 
-async def test_br_t2_execution_dimensions(tmp_path, capsys):
+async def test_br_t2_execution_dimensions(tmp_path, capsys, monkeypatch):
+    superuser = make_superuser(monkeypatch)
     sandbox = FilesystemSandbox(base_root=str(tmp_path / "sandboxes"))
     user_a, user_b = uuid.uuid4(), uuid.uuid4()
     b_path = _b_file(sandbox, user_b)
@@ -106,8 +111,7 @@ async def test_br_t2_execution_dimensions(tmp_path, capsys):
 
     # ── 15/16. An approved system.restricted process, confined (the default) ─
     if confinement.available():
-        confined = ConstrainedProcessExecutor(allowed_executables=["cat"],
-                                              confinement_mode=confinement.LANDLOCK)
+        confined = ConstrainedProcessExecutor(allowed_executables=["cat"])
         b_read = await confined.run(["cat", str(b_path)], cwd=task_temp)
         env_read = await confined.run(["cat", f"/proc/{os.getpid()}/environ"], cwd=task_temp)
         rows.append(Row("read B's sandbox file from an approved shell command", "authorized",
@@ -120,13 +124,41 @@ async def test_br_t2_execution_dimensions(tmp_path, capsys):
             rows.append(Row(attempt, "authorized", None,
                             "no Landlock on this host — `landlock` mode refuses to run anything here"))
 
-    # ── 17. The same command under the explicit `unconfined` opt-out ────────
-    unconfined = ConstrainedProcessExecutor(allowed_executables=["cat"],
-                                            confinement_mode=confinement.UNCONFINED)
-    loose = await unconfined.run(["cat", str(b_path)], cwd=task_temp)
-    rows.append(Row("read B's sandbox file from an approved shell command, confinement_mode=unconfined",
-                    "authorized", B_TEXT in loose.content,
-                    "the operator opt-out removes the boundary — see DECISION_REGISTER"))
+    # ── 17. The same command under break-glass (20 §2, BG-T10) ───────────────
+    # The global `unconfined` opt-out is gone. What replaced it is re-measured
+    # here with a real record store and a real superuser activation: inside an
+    # active window the command reaches B's data and the server's environment
+    # — OD-A1's residual, reached on purpose — and outside one it does not.
+    registry = BreakGlassRegistry(BreakGlassConfig(enabled=True, allowed_executables=["cat"], max_invocations=2))
+    loose = ConstrainedProcessExecutor(break_glass_executables=["cat"], break_glass=registry)
+    task_a, task_other = uuid.uuid4(), uuid.uuid4()
+
+    async def attempt(argv: list[str], task_id: uuid.UUID) -> bool:
+        try:
+            result = await loose.run(argv, cwd=task_temp, task_id=task_id, user_id=user_a)
+        except ExecutionError:
+            return False
+        return bool(result.content)
+
+    rows.append(Row("read B's sandbox file from an approved shell command, break-glass enabled, no record",
+                    "authorized", await attempt(["cat", str(b_path)], task_a),
+                    "enablement alone runs nothing unconfined (20 §2.2 key one of two)"))
+    record = registry.prepare(superuser, task_id=task_a, task_owner=user_a, user_id=user_a, executables=["cat"],
+                              max_invocations=2, window_seconds=60, task_seconds_left=120, reason="br_t2")
+    registry.install(superuser, record)
+    rows.append(Row("read B's sandbox file from another task's approved shell command, break-glass active",
+                    "authorized", await attempt(["cat", str(b_path)], task_other),
+                    "a record binds one task"))
+    rows.append(Row("read B's sandbox file from an approved shell command, break-glass active",
+                    "authorized", B_TEXT in (await loose.run(["cat", str(b_path)], cwd=task_temp,
+                                                             task_id=task_a, user_id=user_a)).content,
+                    "OD-A1 residual, reached deliberately: the record removes the kernel layer (20 §4)"))
+    rows.append(Row("read the server's environment (env: KEK, superuser token), break-glass active",
+                    "authorized", await attempt(["cat", f"/proc/{os.getpid()}/environ"], task_a),
+                    "same: every activation is a cross-user exposure event (20 §4)"))
+    rows.append(Row("read B's sandbox file from an approved shell command, break-glass invocations spent",
+                    "authorized", await attempt(["cat", str(b_path)], task_a),
+                    "max_invocations=2 used: the record has ended"))
 
     print("\nBR-T2 (execution dimensions) measured blast radius:")
     for row in rows:
@@ -141,9 +173,17 @@ async def test_br_t2_execution_dimensions(tmp_path, capsys):
                     "read the server's environment (env: KEK, superuser token) from an approved shell command"):
         assert measured[attempt] in (False, None), attempt
 
+    # Contained: break-glass outside its one live window.
+    for contained in ("read B's sandbox file from an approved shell command, break-glass enabled, no record",
+                      "read B's sandbox file from another task's approved shell command, break-glass active",
+                      "read B's sandbox file from an approved shell command, break-glass invocations spent"):
+        assert measured[contained] is False, contained
+
     # Reachable, and asserted so: the accepted app-RCE class (OD-A1 (a)), and
-    # the explicit opt-out. If one of these starts failing, a boundary improved
-    # and docs/OD_A1_BR_T2.md must be updated — not the assertion deleted.
+    # break-glass inside its window — recorded, never claimed closed (BG-T10).
+    # If one of these starts failing, a boundary improved and
+    # docs/OD_A1_BR_T2.md must be updated — not the assertion deleted.
     assert measured["read B's sandbox file by opening its path in-process"] is True
     assert measured["open a raw socket to an undeclared destination in-process"] is True
-    assert measured["read B's sandbox file from an approved shell command, confinement_mode=unconfined"] is True
+    assert measured["read B's sandbox file from an approved shell command, break-glass active"] is True
+    assert measured["read the server's environment (env: KEK, superuser token), break-glass active"] is True

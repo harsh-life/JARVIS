@@ -32,7 +32,7 @@ from server.tools.platforms import (
 from server.tools.registry import ToolRegistry
 from shared.schemas.agent import ExecutionPlatform, ToolInvocation
 from shared.schemas.execution import EgressPolicy
-from tests.support import TEST_PROCESS_CONFINEMENT
+from tests.support import landlock_or_disposable_executor
 
 
 def invocation(tool_id, operation, *, user_id=None, task_id=None, arguments=None, scope=None,
@@ -167,7 +167,7 @@ def fs_for_process(tmp_path) -> FilesystemSandbox:
 
 
 async def test_shell_adapter_runs_an_allowlisted_command(fs_for_process):
-    executor = ConstrainedProcessExecutor(confinement_mode=TEST_PROCESS_CONFINEMENT, allowed_executables=["echo"], default_timeout_seconds=5.0)
+    executor = landlock_or_disposable_executor(allowed_executables=["echo"], default_timeout_seconds=5.0)
     adapter = ShellCommandAdapter(executor, sandbox=fs_for_process)
     out = await adapter.execute(invocation(
         "system.shell", "run_shell_command", arguments={"argv": ["echo", "hi"]},
@@ -177,7 +177,7 @@ async def test_shell_adapter_runs_an_allowlisted_command(fs_for_process):
 
 
 async def test_shell_adapter_refuses_unauthorized_executable(fs_for_process):
-    executor = ConstrainedProcessExecutor(confinement_mode=TEST_PROCESS_CONFINEMENT, allowed_executables=["echo"])
+    executor = landlock_or_disposable_executor(allowed_executables=["echo"])
     adapter = ShellCommandAdapter(executor, sandbox=fs_for_process)
     out = await adapter.execute(invocation(
         "system.shell", "run_shell_command", arguments={"argv": ["rm", "-rf", "/"]},
@@ -187,7 +187,7 @@ async def test_shell_adapter_refuses_unauthorized_executable(fs_for_process):
 
 
 async def test_shell_adapter_runs_in_the_tasks_own_sandbox_temp(fs_for_process):
-    executor = ConstrainedProcessExecutor(confinement_mode=TEST_PROCESS_CONFINEMENT, allowed_executables=["pwd"])
+    executor = landlock_or_disposable_executor(allowed_executables=["pwd"])
     adapter = ShellCommandAdapter(executor, sandbox=fs_for_process)
     task_id = uuid.uuid4()
     out = await adapter.execute(invocation(
@@ -199,7 +199,7 @@ async def test_shell_adapter_runs_in_the_tasks_own_sandbox_temp(fs_for_process):
 
 
 async def test_shell_adapter_rejects_non_list_argv(fs_for_process):
-    executor = ConstrainedProcessExecutor(confinement_mode=TEST_PROCESS_CONFINEMENT, allowed_executables=["echo"])
+    executor = landlock_or_disposable_executor(allowed_executables=["echo"])
     adapter = ShellCommandAdapter(executor, sandbox=fs_for_process)
     out = await adapter.execute(invocation(
         "system.shell", "run_shell_command", arguments={"argv": "echo hi"},

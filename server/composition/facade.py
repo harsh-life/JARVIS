@@ -19,6 +19,7 @@ from server.agent import (
 )
 from server.agent.ports import Hydration, TaskEnvironment, UsageLimitReached
 from server.auth.errors import StepUpRequired
+from server.composition.break_glass import BreakGlassRegistry
 from server.composition.latch import InProcessLatch, SupervisorGate
 from server.composition.models import ConfiguredModelResolver, ProviderFactory
 from server.composition.secret_context import CURRENT_SECRET_RESOLVER, SecretUnavailable
@@ -64,8 +65,10 @@ class AgentTaskFacade:
         hydrator: AuthorizedContextHydrator,
         provider_factory: ProviderFactory,
         latch: InProcessLatch,
+        break_glass: BreakGlassRegistry | None = None,
     ) -> None:
         self._latch = latch
+        self._break_glass = break_glass
         self._runtime = runtime
         self._core = core
         self._config = config
@@ -81,7 +84,8 @@ class AgentTaskFacade:
     def environment(self, session: AsyncSession, audit: AuditLogger) -> TaskEnvironment:
         return TaskEnvironment(
             session=session,
-            security=RuntimeSecurityAdapter(core=self._core, session=session, audit=audit),
+            security=RuntimeSecurityAdapter(core=self._core, session=session, audit=audit,
+                                            break_glass=self._break_glass),
             usage=RuntimeUsageAdapter(policy=self._usage, session=session, request_id=audit.request_id),
             models=ConfiguredModelResolver(
                 config=self._config,
@@ -92,6 +96,14 @@ class AgentTaskFacade:
             hydrator=_BoundHydrator(self._hydrator, session),
             supervisor=SupervisorGate(self._latch, session),
         )
+
+    def _observe(self, result: AgentResult) -> AgentResult:
+        """20 §2.4 "observable": the task status says when a live break-glass
+        record exists for it, so the owner's device and the console can show it."""
+
+        if self._break_glass is not None and self._break_glass.active_for(result.task_id):
+            return result.model_copy(update={"break_glass_active": True})
+        return result
 
     @contextmanager
     def _secret_scope(self, session: AsyncSession, audit: AuditLogger) -> Iterator[None]:
@@ -133,10 +145,10 @@ class AgentTaskFacade:
     ) -> AgentResult:
         with self._secret_scope(session, audit):
             try:
-                return await self._runtime.submit(
+                return self._observe(await self._runtime.submit(
                     self.environment(session, audit), principal=principal, user_input=user_input,
                     mode=mode,
-                )
+                ))
             except UsageLimitReached as exc:
                 raise AppError(
                     ErrorCode.RATE_LIMITED,
@@ -167,14 +179,14 @@ class AgentTaskFacade:
     ) -> AgentResult:
         with self._secret_scope(session, audit):
             try:
-                return await self._runtime.confirm(
+                return self._observe(await self._runtime.confirm(
                     self.environment(session, audit),
                     caller=principal,
                     task_id=task_id,
                     confirmation_token=confirmation_token,
                     approve=approve,
                     step_up_fresh=step_up_fresh,
-                )
+                ))
             except TaskNotFound:
                 raise AppError(ErrorCode.NOT_FOUND, "not found") from None
             except TaskNotAwaiting:
@@ -194,9 +206,9 @@ class AgentTaskFacade:
         self, session: AsyncSession, *, principal: Principal, task_id: uuid.UUID, audit: AuditLogger
     ) -> AgentResult:
         try:
-            return await self._runtime.cancel(
+            return self._observe(await self._runtime.cancel(
                 self.environment(session, audit), caller=principal, task_id=task_id
-            )
+            ))
         except TaskNotFound:
             raise AppError(ErrorCode.NOT_FOUND, "not found") from None
 
@@ -204,9 +216,9 @@ class AgentTaskFacade:
         self, session: AsyncSession, *, principal: Principal, task_id: uuid.UUID, audit: AuditLogger
     ) -> AgentResult:
         try:
-            return await self._runtime.get(
+            return self._observe(await self._runtime.get(
                 self.environment(session, audit), caller=principal, task_id=task_id
-            )
+            ))
         except TaskNotFound:
             raise AppError(ErrorCode.NOT_FOUND, "not found") from None
 

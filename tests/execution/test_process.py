@@ -16,9 +16,23 @@ import pytest
 
 from server.execution.process import ConstrainedProcessExecutor
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode
-from tests.support import TEST_PROCESS_CONFINEMENT
+from tests.support import HAS_LANDLOCK, NO_LANDLOCK_REASON, DisposableHostExecutor
 
 pytestmark = pytest.mark.asyncio
+
+_PATH = {"current": "confined"}
+
+
+@pytest.fixture(autouse=True, params=["confined", "break_glass"])
+def execution_path(request):
+    """Every test runs on both paths a child can take: kernel-confined, and
+    under a break-glass record (20 §2.1 — the lifecycle guarantees here are
+    exactly what break-glass must keep, BG-T8). Confined needs Landlock."""
+
+    if request.param == "confined" and not HAS_LANDLOCK:
+        pytest.skip(NO_LANDLOCK_REASON)
+    _PATH["current"] = request.param
+    yield request.param
 
 
 def executor(**overrides) -> ConstrainedProcessExecutor:
@@ -27,9 +41,10 @@ def executor(**overrides) -> ConstrainedProcessExecutor:
         default_timeout_seconds=5.0,
         max_timeout_seconds=10.0,
         max_output_bytes=1_000_000,
-        confinement_mode=TEST_PROCESS_CONFINEMENT,
     )
     defaults.update(overrides)
+    if _PATH["current"] == "break_glass":
+        return DisposableHostExecutor(**defaults)
     return ConstrainedProcessExecutor(**defaults)
 
 

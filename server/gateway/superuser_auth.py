@@ -28,8 +28,8 @@ A deployment with no superuser credential configured has no superuser: every
 attempt is refused, with the same response as a wrong credential, so the
 response does not reveal whether one is configured.
 
-No route depends on this yet; operator controls (18 §5.4), break-glass
-activation (20 §2.2) and the operator console (28) will.
+Operator controls (18 §5.4) and break-glass activation (20 §2.2) depend on it
+(`server/gateway/routers/control.py`); the operator console (28) will.
 """
 
 from __future__ import annotations

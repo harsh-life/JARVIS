@@ -516,6 +516,10 @@ CONTRACT = "Only the gateway reaches superuser authority (12 §4, SUPER-001)"
     ("server/tools/registry.py", "from server.gateway.control_port import ControlScope\n"),
     ("server/dashboard/__init__.py", "from server.gateway.superuser_auth import get_superuser\n"),
     ("server/memory/hydration.py", "import server.composition.latch\n"),
+    # 20 §2.2: no worker, tool, or executor path reaches break-glass records.
+    ("server/agent/runtime.py", "from server.composition.break_glass import BreakGlassRegistry\n"),
+    ("server/execution/process.py", "import server.composition.break_glass\n"),
+    ("server/tools/platforms.py", "from server.composition.break_glass import BreakGlassRecord\n"),
 ])
 async def test_the_control_modules_are_import_restricted(tmp_path, module, line):
     script = Path(sys.executable).parent / "lint-imports"

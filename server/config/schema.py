@@ -291,6 +291,36 @@ class NetworkEgressConfig(StrictModel):
     default_private_net: bool = False
 
 
+class BreakGlassConfig(StrictModel):
+    """20 §2.2 key one — operator enablement of break-glass (unconfined)
+    execution. It only makes a per-task activation *possible*: nothing runs
+    unconfined until a superuser activates a record for one live task
+    (`POST /api/v1/admin/control/break-glass`), and then only the executables
+    that record names, at most `max_invocations` times, for at most
+    `max_window_minutes`.
+
+    `allowed_executables` is its own list (20 §2.3): enabling break-glass
+    never widens `process.allowed_executables`."""
+
+    enabled: bool = False
+    allowed_executables: list[str] = Field(default_factory=list)
+    # Ceilings on what one activation may ask for — not the values it gets.
+    max_window_minutes: int = Field(default=15, ge=1, le=15)
+    max_invocations: int = Field(default=1, ge=1, le=100)
+
+
+def _landlock_only(value: str) -> str:
+    # 20 §2.5: the global `unconfined` switch is gone. Unconfined execution
+    # exists only as a task-bound, superuser-activated break-glass record.
+    if value != "landlock":
+        raise ValueError(
+            f"confinement_mode {value!r} is not supported: the only mode is 'landlock'. "
+            "Unconfined execution is available only through execution.process.break_glass — "
+            "a per-task, superuser-activated record (docs/20_CONFINEMENT_BREAK_GLASS.md §2)"
+        )
+    return value
+
+
 class ProcessExecutionConfig(StrictModel):
     """The `system.restricted` executor's ceilings (08 §6 / 07 §5). No
     executable is allowed unless a tool declares it — an empty default
@@ -303,17 +333,16 @@ class ProcessExecutionConfig(StrictModel):
     default_timeout_seconds: float = Field(default=10.0, gt=0)
     max_timeout_seconds: float = Field(default=60.0, gt=0)
     max_output_bytes: int = Field(default=1_000_000, gt=0)
-    # `landlock` (default): every child is confined by the kernel — no reads
-    # outside system directories and its own task temp, no sockets, no
-    # signalling the server (server/execution/confinement.py). Where the kernel
-    # cannot do that (macOS, pre-5.13 Linux), nothing runs. `unconfined` is an
-    # explicit operator opt-out: a child can then read anything the server's OS
-    # user can and open its own network connections — never choose it on a
-    # server holding other users' data.
-    confinement_mode: str = Field(default="landlock", pattern="^(landlock|unconfined)$")
+    # Every child is confined by the kernel — no reads outside system
+    # directories and its own task temp, no sockets, no signalling the server
+    # (server/execution/confinement.py). Where the kernel cannot do that
+    # (macOS, pre-5.13 Linux), nothing runs. `landlock` is the only value
+    # (20 §2.5); a config still saying `unconfined` fails to load.
+    confinement_mode: Annotated[str, AfterValidator(_landlock_only)] = "landlock"
     # Extra read-only paths an allow-listed program needs (its own libraries or
     # data outside /usr). Read-only, never writable.
     read_only_paths: list[str] = Field(default_factory=list)
+    break_glass: BreakGlassConfig = Field(default_factory=BreakGlassConfig)
 
 
 class ExecutionConfig(StrictModel):

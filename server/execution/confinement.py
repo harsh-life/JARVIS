@@ -40,8 +40,6 @@ from functools import lru_cache
 from typing import Iterable
 
 LANDLOCK = "landlock"
-UNCONFINED = "unconfined"
-MODES = frozenset({LANDLOCK, UNCONFINED})
 
 # What a program needs to start and run: the dynamic loader and libraries, the
 # binaries themselves, and the handful of /etc files libc reads by name. Deny
@@ -306,8 +304,6 @@ def build_plan(*, writable: str, read_only: Iterable[str] = ()) -> ConfinementPl
 __all__ = [
     "DEFAULT_READ_ONLY_PATHS",
     "LANDLOCK",
-    "MODES",
-    "UNCONFINED",
     "ConfinementPlan",
     "ConfinementUnavailable",
     "available",

@@ -23,6 +23,7 @@ from fastapi import FastAPI
 from server.agent import AgentRuntime, ConcurrencyGate, ConcurrencyLimits, RuntimeBounds
 from server.agent.breaker import BreakerLimits
 from server.agent.recovery import RecoveryPolicy
+from server.composition.break_glass import BreakGlassRegistry
 from server.composition.execution_tools import build_execution_tools
 from server.composition.facade import AgentTaskFacade
 from server.composition.latch import InProcessLatch
@@ -150,6 +151,7 @@ def build_application(
     provider_factory: ProviderFactory | None = None,
     extra_tools: Iterable[ToolDefinition] | None = None,
     memory_store: MemoryStore | None = None,
+    break_glass_registry: BreakGlassRegistry | None = None,
 ) -> FastAPI:
     """Assemble the full server: Security Core, runtime, tools, models, memory.
 
@@ -157,6 +159,9 @@ def build_application(
     modes: production passes neither and gets the configured providers and
     — until `11` supplies a Mem0 store — explicit FAIL-008 degradation for
     long-term memory.
+
+    `break_glass_registry` lets a test share one record store with the
+    execution tools it passes in `extra_tools`; production passes nothing.
 
     `extra_tools` changed meaning with the execution branch: passing `None`
     (the default — production passes nothing) now gets the real execution
@@ -169,7 +174,13 @@ def build_application(
 
     core = security or build_security_core(config)
     factory = provider_factory or build_provider
-    tool_definitions = build_execution_tools(config) if extra_tools is None else extra_tools
+    # 20 §2: the one store of break-glass records, shared by the executor
+    # (claim), the runtime's security adapter (settle/end) and the superuser
+    # control path (activate/revoke). Inert unless the operator enabled it.
+    break_glass = break_glass_registry or BreakGlassRegistry(config.execution.process.break_glass)
+    tool_definitions = (
+        build_execution_tools(config, break_glass=break_glass) if extra_tools is None else extra_tools
+    )
     tools = build_tool_registry(config, provider_factory=factory, extra_tools=tool_definitions)
 
     async def active_graph_ids(session, user_id):
@@ -197,6 +208,7 @@ def build_application(
         ),
         provider_factory=factory,
         latch=latch,
+        break_glass=break_glass,
     )
     return create_app(
         config=config,
@@ -206,7 +218,8 @@ def build_application(
         agent_tasks=facade,
         # 18 §5.4: the operator control path. Reached only through
         # `/api/v1/admin/control/*`, behind `get_superuser`.
-        supervisor_control=SupervisorControl(runtime=runtime, facade=facade, latch=latch),
+        supervisor_control=SupervisorControl(runtime=runtime, facade=facade, latch=latch,
+                                             break_glass=break_glass),
     )
 
 

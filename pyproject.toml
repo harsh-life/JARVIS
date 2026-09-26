@@ -263,6 +263,10 @@ forbidden_modules = [
     "server.gateway.routers.control",
     "server.composition.supervisor",
     "server.composition.latch",
+    # 20 §2.2: break-glass records are created only on superuser authority.
+    # The executor reaches them through `server.execution.break_glass`'s
+    # claim-only Protocol, the runtime through `SecurityPort.settle_break_glass`.
+    "server.composition.break_glass",
 ]
 
 # 09 §8 / 10 §3 (NET-005): the sandbox/egress boundary is worthless if an
