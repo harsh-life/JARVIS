@@ -49,6 +49,7 @@ from shared.schemas.device_channel import (
     DeviceOperationEnvelope,
     DevicePlatformDependency,
     GridToggle,
+    ResultKind,
 )
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode, ExecutionResult
 
@@ -110,6 +111,10 @@ class PrimitiveSpec:
     # named one way, never ambiguously).
     one_of: tuple[tuple[str, ...], ...] = ()
     max_result_bytes: int = MAX_RESULT_FRAME_BYTES
+    # The shape an `ok` result must have. The server validates every device
+    # result against it before anything reaches the worker (untrusted input,
+    # PRD §24); the device builds exactly that shape.
+    result: ResultKind = ResultKind.ACTION
 
     def document(self) -> dict[str, Any]:
         return {
@@ -121,6 +126,7 @@ class PrimitiveSpec:
             "arguments": {name: spec.document() for name, spec in sorted(self.arguments.items())},
             "one_of": [list(group) for group in self.one_of],
             "max_result_bytes": self.max_result_bytes,
+            "result": self.result.value,
         }
 
 
@@ -170,6 +176,7 @@ DEVICE_MAPPING: Mapping[str, Mapping[str, PrimitiveSpec]] = MappingProxyType(
                 "read_screen_element": PrimitiveSpec(
                     "accessibility.read_element", DeviceMechanism.ACCESSIBILITY,
                     GridToggle.SCREEN_READ, "required", _A11Y, _SELECTOR_ARGS, _SELECTOR_ONE_OF,
+                    result=ResultKind.SCREEN_READ,
                 ),
                 "launch_activity": PrimitiveSpec(
                     "android.intent.launch_activity", DeviceMechanism.ANDROID_API,
@@ -194,17 +201,18 @@ DEVICE_MAPPING: Mapping[str, Mapping[str, PrimitiveSpec]] = MappingProxyType(
                 # own operation below.
                 "read_screen": PrimitiveSpec(
                     "accessibility.read_tree", DeviceMechanism.ACCESSIBILITY,
-                    GridToggle.SCREEN_READ, "required", _A11Y,
+                    GridToggle.SCREEN_READ, "required", _A11Y, result=ResultKind.SCREEN_READ,
                 ),
                 "read_battery": PrimitiveSpec(
                     "android.api.battery_state", DeviceMechanism.ANDROID_API,
-                    GridToggle.DEVICE_STATE, "forbidden", (), {}, (), 4096,
+                    GridToggle.DEVICE_STATE, "forbidden", (), {}, (), 4096, ResultKind.BATTERY,
                 ),
                 "read_notification": PrimitiveSpec(
                     "android.api.notification_query", DeviceMechanism.ANDROID_API,
                     GridToggle.SCREEN_READ, "required",
                     (DevicePlatformDependency.NOTIFICATION_ACCESS,),
                     {"limit": ArgumentSpec("int", minimum=1, maximum=50)},
+                    result=ResultKind.NOTIFICATIONS,
                 ),
                 # [PROPOSED] OD-AND-4 (docs/23 §6 level 4). Its own grid toggle,
                 # off by default on the device, and refused for FLAG_SECURE
@@ -213,7 +221,7 @@ DEVICE_MAPPING: Mapping[str, Mapping[str, PrimitiveSpec]] = MappingProxyType(
                     "accessibility.screenshot", DeviceMechanism.ACCESSIBILITY,
                     GridToggle.SCREENSHOT, "required",
                     (DevicePlatformDependency.ACCESSIBILITY_SERVICE, DevicePlatformDependency.SCREEN_CAPTURE),
-                    {}, (), MAX_SCREENSHOT_FRAME_BYTES,
+                    {}, (), MAX_SCREENSHOT_FRAME_BYTES, ResultKind.SCREENSHOT,
                 ),
             }
         ),

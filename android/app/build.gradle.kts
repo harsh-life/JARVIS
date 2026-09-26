@@ -100,6 +100,9 @@ tasks.withType<Test>().configureEach {
     dependsOn(robolectricJars)
     systemProperty("robolectric.offline", "true")
     systemProperty("robolectric.dependency.dir", robolectricJarDir.get().asFile.absolutePath)
+    // Unit tests read the shared contract artifacts from their one location.
+    systemProperty("jarvis.shared.dir", sharedAndroidDir.absolutePath)
+    inputs.dir(sharedAndroidDir)
 }
 
 dependencies {
@@ -119,6 +122,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.okhttp)
     implementation(libs.tink.android)
+    // docs/23 §6 level 3: the bundled (on-device) Latin model — no model
+    // download, no image upload.
+    implementation(libs.mlkit.text.recognition)
 
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 

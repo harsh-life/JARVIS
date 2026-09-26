@@ -3,6 +3,8 @@ package com.hypermind.jarvis.channel
 import com.hypermind.jarvis.auth.EnrollmentLost
 import com.hypermind.jarvis.contract.CloseCode
 import com.hypermind.jarvis.contract.Hello
+import com.hypermind.jarvis.contract.PlatformDependency
+import com.hypermind.jarvis.contract.PlatformStatus
 import com.hypermind.jarvis.contract.Reauth
 import com.hypermind.jarvis.contract.ServerFrame
 import com.hypermind.jarvis.contract.encode
@@ -167,6 +169,16 @@ class DeviceChannel(
             t: Throwable,
             response: Response?,
         ) = closed(webSocket, null, "")
+    }
+
+    /**
+     * Tell the server which on-device dependencies are available (docs/23
+     * §5.3). Informational only — the server never treats it as authority —
+     * and sent only on an authenticated connection.
+     */
+    fun reportPlatforms(platforms: Map<PlatformDependency, Boolean>) {
+        val current = synchronized(this) { socket.takeIf { _state.value is ChannelState.Connected } } ?: return
+        current.send(PlatformStatus(platforms = platforms).encode())
     }
 
     @Synchronized

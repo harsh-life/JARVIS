@@ -79,6 +79,18 @@ class DevicePlatformDependency(str, Enum):
     OCR = "ocr"
 
 
+class ResultKind(str, Enum):
+    """The shape of a primitive's `ok` result — part of the shared mapping, so
+    both sides agree on what each primitive may return, and the server
+    validates every device result against it (untrusted input, PRD §24)."""
+
+    SCREEN_READ = "screen_read"
+    ACTION = "action"
+    BATTERY = "battery"
+    NOTIFICATIONS = "notifications"
+    SCREENSHOT = "screenshot"
+
+
 class GridToggle(str, Enum):
     """The per-app grid column (PRD §13) that governs an operation on the
     device. The grid can only refuse; it never grants (docs/23 §5.2)."""
@@ -312,12 +324,45 @@ class ScreenReadResult(_Strict):
     ocr_blocks: list[OcrBlock] = Field(default_factory=list, max_length=MAX_OCR_BLOCKS)
     truncated: bool = False
 
+    @model_validator(mode="after")
+    def _a_tree(self) -> "ScreenReadResult":
+        ids = [n.id for n in self.nodes]
+        if len(ids) != len(set(ids)):
+            raise ValueError("node ids must be unique")
+        known = set(ids)
+        for node in self.nodes:
+            if node.parent is not None and (node.parent not in known or node.parent >= node.id):
+                raise ValueError("a node's parent must be an earlier node")
+        return self
+
+
+class BatteryState(_Strict):
+    """What `android.api.battery_state` returns."""
+
+    level_percent: int = Field(ge=0, le=100)
+    charging: bool
+    plugged: Literal["ac", "usb", "wireless", "dock", "none"]
+
 
 class NotificationItem(_Strict):
     package_name: str = Field(max_length=255, pattern=PACKAGE_NAME_PATTERN)
     title: str | None = Field(default=None, max_length=MAX_NODE_TEXT)
     text: str | None = Field(default=None, max_length=MAX_NODE_TEXT)
     posted_at: datetime
+
+
+class NotificationList(_Strict):
+    """What `android.api.notification_query` returns: the posted
+    notifications of the one package the operation names."""
+
+    notifications: list[NotificationItem] = Field(default_factory=list, max_length=MAX_NOTIFICATIONS)
+
+
+class ActionResult(_Strict):
+    """What a UI or app action reports: that it was performed, and on what."""
+
+    performed: Literal[True] = True
+    target: ScreenNode | None = None
 
 
 class ScreenshotResult(_Strict):
@@ -352,7 +397,9 @@ __all__ = [
     "MAX_SCREENSHOT_FRAME_BYTES",
     "MAX_SCREEN_NODES",
     "PACKAGE_NAME_PATTERN",
+    "ActionResult",
     "AppMetadata",
+    "BatteryState",
     "DeviceCancel",
     "DeviceCloseCode",
     "DeviceFailureReason",
@@ -370,8 +417,10 @@ __all__ = [
     "DeviceWakePush",
     "GridToggle",
     "NotificationItem",
+    "NotificationList",
     "OcrBlock",
     "PerceptionLevel",
+    "ResultKind",
     "ScreenNode",
     "ScreenReadResult",
     "ScreenshotResult",

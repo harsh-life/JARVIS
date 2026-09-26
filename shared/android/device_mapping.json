@@ -11,7 +11,8 @@
         "mechanism": "shizuku",
         "one_of": [],
         "package_scope": "required",
-        "primitive": "shizuku.force_stop_package"
+        "primitive": "shizuku.force_stop_package",
+        "result": "action"
       },
       "input_text": {
         "arguments": {
@@ -34,7 +35,8 @@
         "mechanism": "accessibility",
         "one_of": [],
         "package_scope": "required",
-        "primitive": "accessibility.input_text"
+        "primitive": "accessibility.input_text",
+        "result": "action"
       },
       "launch_activity": {
         "arguments": {},
@@ -44,7 +46,8 @@
         "mechanism": "android_api",
         "one_of": [],
         "package_scope": "required",
-        "primitive": "android.intent.launch_activity"
+        "primitive": "android.intent.launch_activity",
+        "result": "action"
       },
       "read_screen_element": {
         "arguments": {
@@ -88,7 +91,8 @@
           ]
         ],
         "package_scope": "required",
-        "primitive": "accessibility.read_element"
+        "primitive": "accessibility.read_element",
+        "result": "screen_read"
       },
       "swipe": {
         "arguments": {
@@ -116,7 +120,8 @@
         "mechanism": "accessibility",
         "one_of": [],
         "package_scope": "required",
-        "primitive": "accessibility.swipe"
+        "primitive": "accessibility.swipe",
+        "result": "action"
       },
       "tap": {
         "arguments": {
@@ -160,7 +165,8 @@
           ]
         ],
         "package_scope": "required",
-        "primitive": "accessibility.tap"
+        "primitive": "accessibility.tap",
+        "result": "action"
       }
     },
     "device.read": {
@@ -175,7 +181,8 @@
         "mechanism": "accessibility",
         "one_of": [],
         "package_scope": "required",
-        "primitive": "accessibility.screenshot"
+        "primitive": "accessibility.screenshot",
+        "result": "screenshot"
       },
       "read_battery": {
         "arguments": {},
@@ -185,7 +192,8 @@
         "mechanism": "android_api",
         "one_of": [],
         "package_scope": "forbidden",
-        "primitive": "android.api.battery_state"
+        "primitive": "android.api.battery_state",
+        "result": "battery"
       },
       "read_notification": {
         "arguments": {
@@ -204,7 +212,8 @@
         "mechanism": "android_api",
         "one_of": [],
         "package_scope": "required",
-        "primitive": "android.api.notification_query"
+        "primitive": "android.api.notification_query",
+        "result": "notifications"
       },
       "read_screen": {
         "arguments": {},
@@ -216,7 +225,8 @@
         "mechanism": "accessibility",
         "one_of": [],
         "package_scope": "required",
-        "primitive": "accessibility.read_tree"
+        "primitive": "accessibility.read_tree",
+        "result": "screen_read"
       }
     },
     "device.ui_control": {
@@ -241,7 +251,8 @@
         "mechanism": "accessibility",
         "one_of": [],
         "package_scope": "required",
-        "primitive": "accessibility.global_action"
+        "primitive": "accessibility.global_action",
+        "result": "action"
       },
       "input_text": {
         "arguments": {
@@ -264,7 +275,8 @@
         "mechanism": "accessibility",
         "one_of": [],
         "package_scope": "required",
-        "primitive": "accessibility.input_text"
+        "primitive": "accessibility.input_text",
+        "result": "action"
       },
       "swipe": {
         "arguments": {
@@ -292,7 +304,8 @@
         "mechanism": "accessibility",
         "one_of": [],
         "package_scope": "required",
-        "primitive": "accessibility.swipe"
+        "primitive": "accessibility.swipe",
+        "result": "action"
       },
       "tap": {
         "arguments": {
@@ -336,10 +349,11 @@
           ]
         ],
         "package_scope": "required",
-        "primitive": "accessibility.tap"
+        "primitive": "accessibility.tap",
+        "result": "action"
       }
     }
   },
-  "mapping_version": "1-e612ce2607c0586e",
+  "mapping_version": "1-1b2779ec44bf7918",
   "schema": 1
 }
