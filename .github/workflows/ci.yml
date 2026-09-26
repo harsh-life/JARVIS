@@ -108,3 +108,41 @@ jobs:
         env:
           HYPERMIND_REQUIRE_MEMORY_STACK: "1"
         run: python -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py tests/integration/test_br_t2_memory_rows.py -q -s
+
+  android:
+    # docs/23 §8: Kotlin lint and unit tests from the first commit. Like the job
+    # above, it needs no secret: the client ships none (REPO-T2), and the last
+    # step proves that about the built APK rather than asserting it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Lint (ktlint, detekt)
+        run: ./gradlew --no-daemon ktlintCheck detekt
+
+      - name: Unit tests — :contract on the JVM, :app under Robolectric
+        # :contract recomputes the shared mapping's digest, so a hand-edited
+        # shared/android/device_mapping.json fails here (the python job fails
+        # if the table and the artifact differ).
+        run: ./gradlew --no-daemon :contract:test :app:testDebugUnitTest
+
+      - name: Build and Android lint
+        run: ./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
+
+      - name: APK carries no server secret (ANDC-T11, REPO-T2)
+        working-directory: .
+        run: python3 tests/tools/check_apk_secrets.py android/app/build/outputs/apk/debug/app-debug.apk

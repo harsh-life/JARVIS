@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The orb, as the launcher icon: six dots on a ring around a core. Same mark the
+  app animates, so the icon and the running app read as the same object.
+  Drawn as a vector so the build needs no binary assets at any density.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- core -->
+    <path
+        android:fillColor="#D4A24C"
+        android:pathData="M54,50 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+
+    <!-- ring of six dots, 60 degrees apart, radius 20 about (54,50) -->
+    <path
+        android:fillColor="#E9C784"
+        android:pathData="M74,50 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path
+        android:fillColor="#E9C784"
+        android:pathData="M64,67.3 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path
+        android:fillColor="#E9C784"
+        android:pathData="M44,67.3 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path
+        android:fillColor="#E9C784"
+        android:pathData="M34,50 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path
+        android:fillColor="#E9C784"
+        android:pathData="M44,32.7 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path
+        android:fillColor="#E9C784"
+        android:pathData="M64,32.7 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+</vector>
