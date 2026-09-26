@@ -116,6 +116,12 @@ def _registry() -> Mapping[str, CapabilityDefinition]:
                     "input_text": RiskCategory.CONSEQUENTIAL,
                     "read_screen_element": RiskCategory.LOW_READ,
                     "launch_activity": RiskCategory.LOW_WRITE,
+                    # [PROPOSED] (docs/23 §5.3, docs/CAPABILITY_MATRIX.md §3.1):
+                    # the one Shizuku-backed primitive in the Android build.
+                    # Force-stopping an app discards its unsaved state and stops
+                    # its background work until reopened — not reversible by the
+                    # actor, so never automatic.
+                    "force_stop": RiskCategory.CONSEQUENTIAL,
                 }
             ),
             scope_keys=frozenset({"package_name"}),
@@ -128,6 +134,10 @@ def _registry() -> Mapping[str, CapabilityDefinition]:
                     "read_screen": RiskCategory.LOW_READ,
                     "read_battery": RiskCategory.LOW_READ,
                     "read_notification": RiskCategory.LOW_READ,
+                    # [PROPOSED] OD-AND-4 (docs/23 §6 level 4): a separate
+                    # operation from `read_screen`, at the recommended tier, and
+                    # refused for sensitive packages and FLAG_SECURE windows.
+                    "capture_screenshot": RiskCategory.LOW_READ,
                 }
             ),
             scope_keys=frozenset({"package_name"}),

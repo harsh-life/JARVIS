@@ -233,7 +233,7 @@ class _FakeDeviceTransport:
 
         return ExecutionResult(content="tapped")
 
-    async def is_connected(self, *, user_id):
+    async def is_connected(self, *, device_id):
         return True
 
 
@@ -241,7 +241,7 @@ async def test_android_adapter_dispatches_through_the_transport():
     transport = _FakeDeviceTransport()
     adapter = AndroidDeviceAdapter("app.interact", transport)
     out = await adapter.execute(invocation(
-        "device.app_interact", "tap", arguments={"x": 1, "y": 2},
+        "device.app_interact", "tap", arguments={"view_id": "send"},
         scope={"package_name": "com.example"},
     ))
     assert out.ok
@@ -253,7 +253,8 @@ async def test_android_adapter_dispatches_through_the_transport():
 async def test_android_adapter_defaults_to_unavailable_and_fails_closed():
     adapter = AndroidDeviceAdapter("app.interact", UnavailableDeviceTransport())
     out = await adapter.execute(invocation(
-        "device.app_interact", "tap", arguments={}, scope={"package_name": "com.example"},
+        "device.app_interact", "tap", arguments={"view_id": "send"},
+        scope={"package_name": "com.example"},
     ))
     assert not out.ok
     assert out.error == "device_unavailable"

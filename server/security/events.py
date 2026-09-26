@@ -34,6 +34,9 @@ class AuditAction(str, Enum):
     DEVICE_CREDENTIAL_ROTATED = "device.credential.rotated"
     DEVICE_REVOKED = "device.revoked"
     DEVICE_PROOF_REJECTED = "device.proof.rejected"
+    DEVICE_CHANNEL_OPENED = "device.channel.opened"
+    DEVICE_CHANNEL_REJECTED = "device.channel.rejected"
+    DEVICE_CHANNEL_CLOSED = "device.channel.closed"
 
     # ── sessions / access tokens (03 §5, §6) ────────────────────────────
     ACCESS_TOKEN_ISSUED = "session.token.issued"

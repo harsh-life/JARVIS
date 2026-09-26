@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Legacy launcher icon, API 21-25.
+
+  Adaptive icons (mipmap-anydpi-v26/ic_launcher.xml) only exist from API 26, so
+  without this the icon resolves to nothing below that and the package fails to
+  install. Same orb mark, drawn full-bleed with its own background instead of
+  relying on the adaptive-icon background layer.
+
+  A vector rather than PNGs so the build still needs no binary assets at any
+  density — vector drawables are supported from API 21, which is the floor here.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- background -->
+    <path
+        android:fillColor="#0E1424"
+        android:pathData="M0,0 L108,0 L108,108 L0,108 Z" />
+
+    <!-- core -->
+    <path
+        android:fillColor="#D4A24C"
+        android:pathData="M54,54 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+
+    <!-- six dots on a ring, radius 20 about (54,54) -->
+    <path
+        android:fillColor="#E9C784"
+        android:pathData="M74,54 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path
+        android:fillColor="#E9C784"
+        android:pathData="M64,71.3 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path
+        android:fillColor="#E9C784"
+        android:pathData="M44,71.3 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path
+        android:fillColor="#E9C784"
+        android:pathData="M34,54 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path
+        android:fillColor="#E9C784"
+        android:pathData="M44,36.7 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path
+        android:fillColor="#E9C784"
+        android:pathData="M64,36.7 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+</vector>

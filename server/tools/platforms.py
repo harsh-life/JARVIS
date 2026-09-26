@@ -28,6 +28,7 @@ regardless).
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Mapping
 from uuid import UUID
 
@@ -297,9 +298,18 @@ class AndroidDeviceAdapter:
     which capability it was constructed for, since `build_operation` already
     encodes the enumerated operation→primitive mapping per capability."""
 
-    def __init__(self, capability: str, transport: DeviceTransport) -> None:
+    def __init__(self, capability: str, transport: DeviceTransport, *, operation_ttl_seconds: int = 30) -> None:
         self._capability = capability
         self._transport = transport
+        self._ttl = timedelta(seconds=operation_ttl_seconds)
+
+    def release_task(self, task_id: UUID) -> None:
+        """The task ended: any operation of it still on a device is cancelled
+        there and its late result discarded (docs/23 §4, 18 §5.3 step 5)."""
+
+        cancel_task = getattr(self._transport, "cancel_task", None)
+        if cancel_task is not None:
+            cancel_task(task_id)
 
     async def execute(self, invocation: ToolInvocation) -> ToolOutput:
         request = ExecutionRequest.from_invocation(invocation)
@@ -309,6 +319,7 @@ class AndroidDeviceAdapter:
                 capability=self._capability, operation=request.operation,
                 package_name=package_name, arguments=request.arguments,
                 user_id=request.user_id, task_id=request.task_id, device_id=request.device_id,
+                ttl=self._ttl,
             )
             result = await self._transport.send(operation)
         except ExecutionError as exc:
@@ -320,8 +331,12 @@ def _device_transport_or_default(transport: DeviceTransport | None) -> DeviceTra
     return transport if transport is not None else UnavailableDeviceTransport()
 
 
-def android_app_interact_tool(transport: DeviceTransport | None = None) -> ToolDefinition:
-    adapter = AndroidDeviceAdapter("app.interact", _device_transport_or_default(transport))
+def android_app_interact_tool(
+    transport: DeviceTransport | None = None, *, operation_ttl_seconds: int = 30
+) -> ToolDefinition:
+    adapter = AndroidDeviceAdapter(
+        "app.interact", _device_transport_or_default(transport), operation_ttl_seconds=operation_ttl_seconds
+    )
     contract = _contract(
         "device.app_interact", "app.interact", RiskCategory.CONSEQUENTIAL, True,
         description="Compose UI interactions within a named app (08 §2).",
@@ -333,8 +348,12 @@ def android_app_interact_tool(transport: DeviceTransport | None = None) -> ToolD
     )
 
 
-def android_device_read_tool(transport: DeviceTransport | None = None) -> ToolDefinition:
-    adapter = AndroidDeviceAdapter("device.read", _device_transport_or_default(transport))
+def android_device_read_tool(
+    transport: DeviceTransport | None = None, *, operation_ttl_seconds: int = 30
+) -> ToolDefinition:
+    adapter = AndroidDeviceAdapter(
+        "device.read", _device_transport_or_default(transport), operation_ttl_seconds=operation_ttl_seconds
+    )
     contract = _contract(
         "device.read", "device.read", RiskCategory.LOW_READ, False,
         description="Read device state the user has exposed (08 §2).",

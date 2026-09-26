@@ -28,6 +28,7 @@ from server.composition.execution_tools import build_execution_tools
 from server.composition.facade import AgentTaskFacade
 from server.composition.latch import InProcessLatch
 from server.composition.supervisor import SupervisorControl
+from server.execution.device_hub import DeviceHub
 from server.composition.models import ProviderFactory, spec_from_entry
 from server.composition.secret_context import key_provider_for
 from server.config.errors import ConfigError
@@ -188,8 +189,13 @@ def build_application(
     # (claim), the runtime's security adapter (settle/end) and the superuser
     # control path (activate/revoke). Inert unless the operator enabled it.
     break_glass = break_glass_registry or BreakGlassRegistry(config.execution.process.break_glass)
+    # docs/23 §4: one hub is both the Android tools' transport and the
+    # gateway's device channel — built only when the operator enabled it.
+    device_hub = DeviceHub() if config.android.enabled else None
     tool_definitions = (
-        build_execution_tools(config, break_glass=break_glass) if extra_tools is None else extra_tools
+        build_execution_tools(config, break_glass=break_glass, device_transport=device_hub)
+        if extra_tools is None
+        else extra_tools
     )
     tools = build_tool_registry(config, provider_factory=factory, extra_tools=tool_definitions)
 
@@ -250,6 +256,7 @@ def build_application(
                                              break_glass=break_glass),
         memory_port=memory_facade,
         vault_port=vault_facade,
+        device_hub=device_hub,
     )
 
 

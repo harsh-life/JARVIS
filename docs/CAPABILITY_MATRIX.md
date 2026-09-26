@@ -7,7 +7,9 @@ label; nothing here becomes `[LOCKED]` just by appearing in this table.
 **Authority:** `00_CANONICAL_PRD.md` §13–§16, `07` §2–§4/§7, `08` §2/§5/§6,
 `05` §3–§4. Decision record: `docs/DECISION_REGISTER.md`.
 **Code of record:** `server/capabilities/registry.py` (capabilities, operations,
-tiers), `server/capabilities/risk.py` (tier → disposition),
+tiers), `server/execution/android.py` → `shared/android/device_mapping.json` (the
+versioned Android capability → operation → primitive table, docs/23 §5.1),
+`server/capabilities/risk.py` (tier → disposition),
 `server/capabilities/floor.py` (absolute floor), `server/tools/platforms.py`
 (platform adapters), `server/fs/` (09), `server/net/` (10),
 `server/execution/` (process + Android dispatch, `system.restricted` and 08's
@@ -86,10 +88,10 @@ capability is **rejected** on that platform (`unsupported_platform`) · 🚫 nev
 |---|---|---|---|---|---|---|---|---|
 | read_files | `file.read` | `read_file`, `list_directory`, `stat` → low_read | ✅ `server/fs`, `server/tools/platforms.py` | ⛔ | ⛔ `08` | `sandbox_root` (a **label**, not a path — see `server/fs/__init__.py`); **fs:** `09` sandbox root, path derived never accepted raw; **net:** none | addressed by `sandbox_root` label + `relative_path`, not by a `FileResource.resource_ref` — individual-file D3/D4 visibility inside a shared sandbox is not wired by this branch (no DB session reaches an adapter); cross-*user* isolation is structural (root derivation) regardless | name `[LOCKED]` (07 §2) · ops/tiers `[PROPOSED]` · **adapter execution branch** |
 | write_files | `file.write` | `write_file`, `create_file` → low_write · `delete_file` → consequential · `bulk_delete` → high_irreversible | ✅ `server/fs`, `server/tools/platforms.py` | ⛔ | ⛔ `08` | `sandbox_root` (label); **fs:** `09` | same addressing note as `file.read` above | name `[LOCKED]` · ops/tiers `[PROPOSED]` · **adapter execution branch** |
-| access_device_context | `device.read` | `read_screen`, `read_battery`, `read_notification` → low_read | 🚫 | ⛔ | ✅\* `server/execution/android.py` | `package_name` | \*dispatch adapter exists and is registered; every call fails `device_unavailable` — no `android/` client exists in this repository (`UnavailableDeviceTransport`, `docs/RUNNING_EXECUTION.md` §4) | name `[LOCKED]` · ops/tiers `[PROPOSED]` · adapter **dispatch-only** |
+| access_device_context | `device.read` | `read_screen`, `read_battery`, `read_notification` → low_read · `capture_screenshot` → low_read `[PROPOSED]` (OD-AND-4) | 🚫 | ⛔ | ✅\* `server/execution/android.py` | `package_name` (required for everything but `read_battery`) | \*dispatch adapter exists; every call fails `device_unavailable` until the device channel (docs/23 §4) is enabled. `read_screen` is the perception ladder (Accessibility → app metadata → on-device OCR); `capture_screenshot` is a **separate** operation with its own grid toggle, refused for sensitive packages and FLAG_SECURE windows, image transient (docs/23 §6) | name `[LOCKED]` · ops/tiers `[PROPOSED]` · adapter **dispatch-only** |
 | control_ui | `device.ui_control` | `tap`, `swipe` → low_write · `input_text`, `global_action` → consequential | 🚫 | ⛔ desktop adapter not planned | ⛔\*\* | `package_name` | can compose into a send — see §5.1. \*\*mapping table exists (`server/execution/android.py`) but no tool factory registers it yet (only `app.interact`/`device.read` do) | name `[LOCKED]` · ops/tiers `[PROPOSED]` · adapter `[FUTURE]` |
-| control_ui (per app) | `app.interact` | `read_screen_element` → low_read · `tap`, `swipe`, `launch_activity` → low_write · `input_text` → consequential | 🚫 | 🚫 | ✅\* `server/execution/android.py` | `package_name` (per-app grid, PRD §13) | see §5.1; \*same dispatch-only caveat as `device.read` above. Refused without a `package_name` scope and without the authorizing `device_id` (OD-DEV-1) | name + op set `[LOCKED]` (07 §3 example) · tiers `[PROPOSED]` · adapter **dispatch-only** |
-| execute_process | `system.restricted` | `run_shell_command` → high_irreversible | ✅ `server/execution/process.py`, `server/tools/platforms.py` | ✅ (same adapter) | ⛔ `08` Shizuku | none; isolated from every other capability (08 §6) | the highest-risk surface; never folded into ordinary capabilities. Registered but **closed by default** — `execution.process.allowed_executables` is empty until an operator opts executables in (`docs/RUNNING_EXECUTION.md` §5); every run is kernel-confined (Landlock + seccomp, fail-closed — `DECISION_REGISTER.md` OD-EXEC-1) | name `[LOCKED]` · ops/tiers `[PROPOSED]` · **adapter execution branch** |
+| control_ui (per app) | `app.interact` | `read_screen_element` → low_read · `tap`, `swipe`, `launch_activity` → low_write · `input_text` → consequential · `force_stop` → consequential `[PROPOSED]` (the one Shizuku-backed primitive, docs/23 §5.3) | 🚫 | 🚫 | ✅\* `server/execution/android.py` | `package_name` (per-app grid, PRD §13) | see §5.1; \*same dispatch-only caveat as `device.read` above. Refused without a `package_name` scope and without the authorizing `device_id` (OD-DEV-1). UI targets are Accessibility selectors, never raw coordinates (08 §7). `force_stop` is a typed Shizuku call with no arguments — Shizuku is on-demand, never a shell | name + op set `[LOCKED]` (07 §3 example) · `force_stop` and tiers `[PROPOSED]` · adapter **dispatch-only** |
+| execute_process | `system.restricted` | `run_shell_command` → high_irreversible | ✅ `server/execution/process.py`, `server/tools/platforms.py` | ✅ (same adapter) | 🚫 not in the Android mapping (docs/23 §5.3) | none; isolated from every other capability (08 §6) | the highest-risk surface; never folded into ordinary capabilities. Registered but **closed by default** — `execution.process.allowed_executables` is empty until an operator opts executables in (`docs/RUNNING_EXECUTION.md` §5); every run is kernel-confined (Landlock + seccomp, fail-closed — `DECISION_REGISTER.md` OD-EXEC-1) | name `[LOCKED]` · ops/tiers `[PROPOSED]` · **adapter execution branch** |
 | (LLM-as-tool) | `model.invoke` | `invoke` → low_read | ✅ `server/modeltools` | ⛔ | 🚫 | `model_tool_id`; **net:** the provider endpoint only (`10` will enforce); **secrets:** the provider key resolved at the models boundary by handle | the prompt carries the principal's authorized context to the configured provider; the output is **untrusted data** (06 §4) | **`[PROPOSED]` — added by the runtime branch** (06 requires every model-tool to be capability-gated, MODELTOOL-001, and no canonical name existed) |
 | network_access | `net.request` | `get` → low_read · `post` → consequential | ✅ `server/net`, `server/tools/platforms.py` | ⛔ | 🚫 | none; the tool's own operator-configured `EgressPolicy` narrows destinations, never a grant-level scope key | registered but **closed by default** — `execution.network.default_destinations`/`default_internet` are empty/false until an operator opts a destination in; egress itself is default-deny regardless (`10` §1) | **`[PROPOSED]` — added by the execution branch**, which owns `10` (moved from §3.2 below now that the egress boundary exists to back it) |
 
@@ -167,20 +169,31 @@ task starts with NO active capabilities
 
 ## 5. Open items this matrix surfaces
 
-### 5.1 Generic UI primitives can complete a consequential action — `[PROPOSED]`, owner decision needed
+### 5.1 Generic UI primitives can complete a consequential action — mechanism implemented; classification `[OPEN — OWNER]`
 
 `app.interact.tap` is `low_write`. In a messaging or banking app, a single tap on
-"Send" or "Pay" can *be* the consequential act. Today the mitigations are:
-`input_text` is `consequential` (so composing a message or an amount pauses), and
-every grant is per-app (`package_name`). That does not cover a one-tap
-consequential flow (a pre-filled "Buy now").
+"Send" or "Pay" can *be* the consequential act. `input_text` being
+`consequential` and every grant being per-app (`package_name`) does not cover a
+one-tap consequential flow (a pre-filled "Buy now").
 
-Proposal for the `08` branch: an owner-maintained **sensitive-app classification**
-under which every `app.interact`/`device.ui_control` operation scoped to a
-classified `package_name` is at least `consequential` (payment apps:
-`high_irreversible`). This is a tier-table change keyed on `resource_scope`,
-deterministic, and never model-judged. It is not implemented here because no
-device adapter exists to exercise it.
+**Implemented** (`server/capabilities/app_classification.py`, consulted by the
+engine through `RiskPolicy.scope_denial`/`risk_tier`): an owner-maintained
+classification, `android.app_classification` in config, keyed on the
+operation's `resource_scope.package_name`, deterministic, never model-judged:
+
+| Package class | UI-acting operations (grid toggle `ui_interaction`) | `capture_screenshot` |
+|---|---|---|
+| **unclassified — every app by default** | **denied**, never confirmable (`app_not_classified`) | **denied** |
+| `non_sensitive` | registry tier | allowed |
+| `sensitive` | ≥ `consequential` | **denied** |
+| `payment` | `high_irreversible` (confirmation + step-up) | **denied** |
+
+Reads are never affected. Which operations are UI-acting is the shared device
+mapping's own grid toggle, not a second list. **The lists themselves are the
+owner's decision and ship empty** — so until the owner classifies an app, the
+Android build does perception and `device.read` only (docs/23 §5.5). The device
+caches the same classification (`GET /devices/app-policy`) purely to refuse
+early; it can never make an operation allowed.
 
 ### 5.2 Other `[PROPOSED]` rows awaiting ratification
 

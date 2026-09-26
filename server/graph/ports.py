@@ -91,12 +91,14 @@ class CapabilityChecker(Protocol):
 
 
 class RiskPolicy(Protocol):
-    """PERM-004/005. Satisfied by `server.capabilities.risk`.
+    """PERM-004/005. Satisfied by `server.capabilities.policy`.
 
     Note what is absent from the signature: no model output, no confidence
     score, no free-form text. The tier is a function of the operation, the
-    resource type, and the capability's registry entry — nothing else can reach
-    it (TL-T10).
+    resource type, the capability's registry entry and — for device
+    operations — the app it acts in (`resource_scope`, the sensitive-app
+    classification, docs/CAPABILITY_MATRIX.md §5.1). Nothing else can reach it
+    (TL-T10).
     """
 
     def risk_tier(
@@ -106,7 +108,16 @@ class RiskPolicy(Protocol):
         operation: Operation,
         capability_name: str | None,
         capability_operation: str | None,
+        resource_scope: Mapping[str, str] | None = None,
     ) -> RiskCategory: ...
+
+    def scope_denial(
+        self,
+        *,
+        capability_name: str | None,
+        capability_operation: str | None,
+        resource_scope: Mapping[str, str] | None,
+    ) -> str | None: ...
 
     def requires_confirmation(self, tier: RiskCategory) -> bool: ...
 

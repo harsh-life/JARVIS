@@ -62,6 +62,8 @@ class LoginCompletion:
     created: bool
     needs_device_registration: bool
     bootstrap_token: str
+    # The app-generated nonce this login was started with, if any (docs/23 §3).
+    app_state: str | None = None
 
 
 class OIDCLoginFlow:
@@ -78,7 +80,9 @@ class OIDCLoginFlow:
         self._repo = repository or AuthRepository()
         self._state_ttl = state_ttl
 
-    async def start(self, session: AsyncSession, *, audit: AuditLogger) -> LoginStart:
+    async def start(
+        self, session: AsyncSession, *, audit: AuditLogger, app_state: str | None = None
+    ) -> LoginStart:
         """03 §2.1: generate state, nonce, and a PKCE verifier/challenge pair,
         store `{state → (nonce, code_verifier)}` with a short TTL, and return the
         provider redirect.
@@ -100,6 +104,7 @@ class OIDCLoginFlow:
                 redirect_uri=self._redirect_uri,
                 created_at=_utcnow(),
                 expires_at=_utcnow() + self._state_ttl,
+                app_state=app_state,
             )
         )
         await session.flush()
@@ -180,6 +185,7 @@ class OIDCLoginFlow:
             created=created,
             needs_device_registration=not devices,
             bootstrap_token=bootstrap_token,
+            app_state=state_row.app_state,
         )
 
     async def _spend_state(self, session: AsyncSession, state: str) -> OIDCLoginState:

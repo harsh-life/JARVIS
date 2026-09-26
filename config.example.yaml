@@ -129,6 +129,30 @@ execution:
       max_window_minutes: 15             # ceiling per activation (1–15)
       max_invocations: 1                 # ceiling per activation
 
+# docs/23 — the Android client. Everything here is off until set; with the
+# defaults every device operation fails `device_unavailable`.
+android:
+  enabled: false                       # the device channel (WebSocket transport)
+  operation_ttl_seconds: 30            # device operation authority lifetime (5–60)
+  app_links:
+    # The stable public HTTPS origin (the named tunnel hostname that is also
+    # the Google redirect URI host). Enables the browser → app login return.
+    base_url: null                     # e.g. "https://jarvis.example.com"
+    package_name: com.hypermind.jarvis
+    # SHA-256 of the signing certificate(s) of the APK you install — public
+    # values (`keytool -list -v -keystore <your.jks>`), never a key.
+    sha256_cert_fingerprints: []
+  # docs/CAPABILITY_MATRIX.md §5.1 — the owner's sensitive-app classification.
+  # An app in none of these lists is UNCLASSIFIED: JARVIS may read it (with the
+  # user's grant) but never tap, type, swipe, launch or stop it, and never
+  # screenshot it. `sensitive` apps need confirmation for every UI action;
+  # `payment` apps need confirmation plus fresh re-authentication. Screenshots
+  # only ever of `non_sensitive` apps.
+  app_classification:
+    non_sensitive: []                  # e.g. [com.android.settings]
+    sensitive: []                      # e.g. [com.whatsapp]
+    payment: []                        # e.g. [com.google.android.apps.nbu.paisa.user]
+
 security:
   oidc:
     client_id: "REPLACE_WITH_YOUR_OWN_GOOGLE_OIDC_CLIENT_ID"

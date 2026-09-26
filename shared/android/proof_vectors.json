@@ -1,0 +1,11 @@
+{
+  "bootstrap_token": "bootstrap-token-for-vectors-only",
+  "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-0123456789ab",
+  "issued_at": 1790000000,
+  "nonce": "fixed-test-nonce_0123456789",
+  "proof": "v1.6f1c2d3e-4a5b-4c6d-8e7f-0123456789ab.fixed-test-nonce_0123456789.1790000000.vR7qb4Ey5ruN16duNiJOcz6q54lMXyiMtPSJ-0vh7_7nLEZR0hW4odQupei1fPbzF4sqdnWtsggfedGQRDYwDw",
+  "public_key_b64": "ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ",
+  "registration_signature": "2XjDTHrNn07xKZ-tYwqiP4sR9KplZJlOSCU9vr-RYTcQDqnV5rv7OWx-BS4lTToOa6HNseNi8F6JyUZWkZDiAQ",
+  "rotation_signature": "LwABTbjPDFHNhAOzG0Je-yelF4NMrydozxLV-VeILDG9tGRRv_0QtGFL6jFSsti3SgQFA8JOqdesU8_aRZk0Cw",
+  "seed_b64": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+}

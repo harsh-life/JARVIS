@@ -1,8 +1,8 @@
 """server/execution/android.py — 08_ANDROID_SHIZUKU.md's server-side half.
 
-08 §4 needs a device-side re-check this repository does not contain
-(`android/` does not exist yet); what these tests hold this module to is the
-server-side half it actually owns: every enumerated capability/operation
+08 §4's device-side re-check lives in the Android client (`android/`) and is
+held to the same table through `shared/android/device_mapping.json`; what these tests hold this
+module to is the server-side half it owns: every enumerated capability/operation
 pair maps to a named primitive and nothing else is dispatchable (AND-006),
 a malformed/unmapped op is rejected before ever reaching a transport
 (08 §7), and the shipped default transport fails every operation
@@ -53,8 +53,24 @@ def test_app_interact_matches_the_capability_registrys_enumerated_operations():
 def test_device_read_and_ui_control_match_the_registry_too():
     from server.capabilities.registry import lookup
 
-    for capability in ("device.read", "device.ui_control", "system.restricted"):
+    for capability in ("device.read", "device.ui_control"):
         assert set(lookup(capability).operations) == set(PRIMITIVE_BY_OPERATION[capability])
+
+
+def test_system_restricted_has_no_android_mapping_at_all():
+    """08 §6 / docs/23 §5.3 (AND-T7): the elevated Shizuku shell stays
+    unexposed in this build — `system.restricted` is not dispatchable to a
+    phone, whatever the server authorizes."""
+
+    assert "system.restricted" not in PRIMITIVE_BY_OPERATION
+    user_id, task_id = _ids()
+    with pytest.raises(ExecutionError) as excinfo:
+        build_operation(
+            capability="system.restricted", operation="run_shell_command",
+            package_name=None, arguments={"argv": ["id"]}, user_id=user_id, task_id=task_id,
+            device_id=uuid.uuid4(),
+        )
+    assert excinfo.value.code == ExecutionErrorCode.PLATFORM_UNSUPPORTED
 
 
 def test_unmapped_capability_is_rejected_before_reaching_a_transport():
@@ -86,13 +102,13 @@ def test_valid_operation_builds_a_well_formed_device_operation():
     user_id, task_id = _ids()
     op = build_operation(
         capability="app.interact", operation="tap",
-        package_name="com.example.app", arguments={"x": 10, "y": 20},
+        package_name="com.example.app", arguments={"view_id": "send_button"},
         user_id=user_id, task_id=task_id, device_id=uuid.uuid4(),
     )
     assert isinstance(op, DeviceOperation)
     assert op.primitive == "accessibility.tap"
     assert op.package_name == "com.example.app"
-    assert op.arguments == {"x": 10, "y": 20}
+    assert op.arguments == {"view_id": "send_button"}
 
 
 def test_system_restricted_is_kept_out_of_ordinary_capability_mappings():
@@ -121,7 +137,7 @@ async def test_unavailable_transport_fails_every_operation_deterministically():
 
 async def test_unavailable_transport_reports_not_connected():
     transport = UnavailableDeviceTransport()
-    assert await transport.is_connected(user_id=uuid.uuid4()) is False
+    assert await transport.is_connected(device_id=uuid.uuid4()) is False
 
 
 async def test_unavailable_transport_never_returns_a_fabricated_success():
@@ -148,7 +164,7 @@ class _RecordingTransport:
         self.sent.append(operation)
         return ExecutionResult(content="ok", metadata={"primitive": operation.primitive})
 
-    async def is_connected(self, *, user_id: uuid.UUID) -> bool:
+    async def is_connected(self, *, device_id: uuid.UUID) -> bool:
         return True
 
 
@@ -156,7 +172,7 @@ async def test_a_connected_transport_receives_exactly_the_built_operation():
     user_id, task_id = _ids()
     op = build_operation(
         capability="app.interact", operation="read_screen_element",
-        package_name="com.example", arguments={"selector": "id/login"},
+        package_name="com.example", arguments={"view_id": "login"},
         user_id=user_id, task_id=task_id, device_id=uuid.uuid4(),
     )
     transport = _RecordingTransport()
@@ -190,7 +206,7 @@ def test_app_interact_without_a_named_app_is_refused():
     with pytest.raises(ExecutionError) as excinfo:
         build_operation(
             capability="app.interact", operation="tap", package_name=None,
-            arguments={"x": 1, "y": 1}, user_id=user_id, task_id=task_id, device_id=uuid.uuid4(),
+            arguments={"view_id": "send"}, user_id=user_id, task_id=task_id, device_id=uuid.uuid4(),
         )
     assert excinfo.value.code == ExecutionErrorCode.MISSING_CONTEXT
 
@@ -200,6 +216,6 @@ def test_the_built_operation_carries_exactly_the_authorizing_device():
     device_id = uuid.uuid4()
     op = build_operation(
         capability="app.interact", operation="tap", package_name="com.example",
-        arguments={}, user_id=user_id, task_id=task_id, device_id=device_id,
+        arguments={"text": "Send"}, user_id=user_id, task_id=task_id, device_id=device_id,
     )
     assert op.device_id == device_id

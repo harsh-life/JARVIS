@@ -173,6 +173,7 @@ class AuthorizationEngine:
         operation: Operation,
         capability: str | None,
         capability_operation: str | None,
+        resource_scope: Mapping[str, str] | None = None,
     ) -> RiskCategory:
         """The tier this engine would compute for an action — the same policy
         object `_decide` uses, exposed read-only so the supervisor's mode
@@ -184,6 +185,7 @@ class AuthorizationEngine:
             operation=operation,
             capability_name=capability,
             capability_operation=capability_operation,
+            resource_scope=resource_scope,
         )
 
     async def authorize(
@@ -336,12 +338,28 @@ class AuthorizationEngine:
                 resource=resource,
             )
 
+        # SENSITIVE-APP GATE (docs/CAPABILITY_MATRIX.md §5.1, docs/23 §5.5)
+        #
+        # A device UI operation in an app the owner has not classified — or a
+        # screenshot of any app not classified non-sensitive — is refused
+        # outright, never offered for confirmation: "not classified" is not
+        # permission. Checked after the floor (a prohibited action is never
+        # weighed) and before the tier (which the classification may raise).
+        scope_denial = self._risk.scope_denial(
+            capability_name=request.required_capability,
+            capability_operation=request.capability_operation,
+            resource_scope=request.resource_scope,
+        )
+        if scope_denial is not None:
+            return _deny(scope_denial, DenialSurface.FORBIDDEN)
+
         # RISK TIER (PERM-004/005)
         tier = self._risk.risk_tier(
             resource_type=request.resource_type,
             operation=request.operation,
             capability_name=request.required_capability,
             capability_operation=request.capability_operation,
+            resource_scope=request.resource_scope,
         )
 
         if self._risk.requires_confirmation(tier):

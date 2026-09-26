@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +27,7 @@ from server.gateway.security import SecurityCore
 from server.graph.authorization import AccessRequest
 from server.security.audit import AuditLogger
 from shared.schemas.authorization import DenialSurface, Operation, ResourceType
+from shared.schemas.device_channel import DeviceCloseCode
 from shared.schemas.errors import ErrorCode
 
 router = APIRouter(tags=["sessions"])
@@ -84,6 +85,7 @@ async def issue_token(
 
 @router.post("/sessions/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
+    request: Request,
     session: AsyncSession = Depends(get_db_session),
     core: SecurityCore = Depends(get_security_core),
     resolved: ResolvedSession = Depends(get_resolved_session),
@@ -92,6 +94,12 @@ async def logout(
     """03 §6 — end this session. Does not revoke the device credential."""
 
     await core.sessions.logout(session, resolved=resolved, audit=audit)
+    # The device's socket was authenticated by a session that just ended —
+    # closed only once that end is committed.
+    hub = getattr(request.app.state, "device_hub", None)
+    if hub is not None:
+        await session.commit()
+        await hub.disconnect(resolved.principal.device_id, DeviceCloseCode.AUTH_EXPIRED, "logged out")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

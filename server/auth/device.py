@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -81,6 +82,8 @@ from shared.schemas.enums import (
 
 PROOF_VERSION = "v1"
 PROOF_PREFIX = "hypermind-device-proof"
+REGISTRATION_PREFIX = "hypermind-device-register"
+ROTATION_PREFIX = "hypermind-device-rotate"
 
 # How stale a proof may be. Wide enough for ordinary clock drift and network
 # latency, narrow enough that the replay-nonce table stays small and a captured
@@ -121,10 +124,48 @@ class RegisteredDevice:
     not stored anywhere server-side, is never re-fetchable, and never appears in
     a log, audit record, or usage record (SECRET-004, AUTH-T4). A lost credential
     is handled by revoke-and-re-register, never by re-fetch (02 §3).
+
+    It is `None` when the device generated its own key pair and registered only
+    the public half (docs/23 §3: the private key lives in the Android Keystore
+    and never exists anywhere else) — there is then nothing to return.
     """
 
     device: Device
-    device_credential: str
+    device_credential: str | None
+
+
+def registration_message(*, bootstrap_token: str, public_key: str) -> bytes:
+    """What a device signs, with the key it is registering, to prove it holds
+    that key. Binding the bootstrap token's digest means the signature is
+    useless for any other registration; the token itself never appears."""
+
+    digest = hashlib.sha256(bootstrap_token.encode("utf-8")).hexdigest()
+    return f"{REGISTRATION_PREFIX}|{PROOF_VERSION}|{digest}|{public_key}".encode("utf-8")
+
+
+def rotation_message(*, device_id: uuid.UUID | str, public_key: str) -> bytes:
+    """What a device signs with its *new* key when rotating to it."""
+
+    return f"{ROTATION_PREFIX}|{PROOF_VERSION}|{device_id}|{public_key}".encode("utf-8")
+
+
+def _verified_public_key(public_key: str, key_proof: str, message: bytes) -> str:
+    """Decode a device-supplied Ed25519 public key and check the device signed
+    `message` with the matching private key. Returns the key re-encoded
+    canonically. Any failure is the same `InvalidDeviceProof`."""
+
+    try:
+        raw = _b64d(public_key)
+        signature = _b64d(key_proof)
+    except (ValueError, binascii.Error) as exc:
+        raise InvalidDeviceProof("malformed_public_key") from exc
+    if len(raw) != 32:
+        raise InvalidDeviceProof("malformed_public_key")
+    try:
+        Ed25519PublicKey.from_public_bytes(raw).verify(signature, message)
+    except (InvalidSignature, ValueError) as exc:
+        raise InvalidDeviceProof("key_not_held") from exc
+    return _b64e(raw)
 
 
 @dataclass(frozen=True)
@@ -206,13 +247,33 @@ class DeviceService:
         bootstrap_token: str,
         platform: DevicePlatform,
         audit: AuditLogger,
+        public_key: str | None = None,
+        key_proof: str | None = None,
     ) -> RegisteredDevice:
         """03 §3.1, in the document's own order.
 
         The bootstrap token is spent first: if registration fails afterwards, the
         token is still consumed, so a failed attempt cannot be retried into two
         devices. The user must re-authenticate — the safe direction.
+
+        With `public_key` (and `key_proof`, its signature over
+        `registration_message`), the device supplies its own key pair's public
+        half and the server never holds a private key at all (03 §4.2's
+        asymmetric option, docs/23 §3's Keystore-held key). Without it, the
+        server mints the key pair and returns the private half once.
         """
+
+        if (public_key is None) != (key_proof is None):
+            raise InvalidDeviceProof("incomplete_public_key")
+        verified_public: str | None = None
+        if public_key is not None and key_proof is not None:
+            # Checked before the token is spent, so a malformed request does not
+            # burn the user's login.
+            verified_public = _verified_public_key(
+                public_key,
+                key_proof,
+                registration_message(bootstrap_token=bootstrap_token, public_key=public_key),
+            )
 
         try:
             user_id = await consume_bootstrap_token(session, bootstrap_token)
@@ -225,8 +286,12 @@ class DeviceService:
             )
             raise
 
-        private_key = Ed25519PrivateKey.generate()
-        public_raw = private_key.public_key().public_bytes_raw()
+        private_key = Ed25519PrivateKey.generate() if verified_public is None else None
+        public_b64 = (
+            verified_public
+            if verified_public is not None
+            else _b64e(private_key.public_key().public_bytes_raw())
+        )
 
         device = Device(
             user_id=user_id,
@@ -245,7 +310,7 @@ class DeviceService:
             secret_class=SecretClass.DEVICE_CREDENTIAL,
             # Only the public verifier. The private key below never reaches the
             # store, the database, or a log.
-            value=_b64e(public_raw),
+            value=public_b64,
             requester=SecretRequester.server(),
             audit=audit,
         )
@@ -264,7 +329,9 @@ class DeviceService:
 
         return RegisteredDevice(
             device=device,
-            device_credential=_b64e(private_key.private_bytes_raw()),
+            device_credential=(
+                _b64e(private_key.private_bytes_raw()) if private_key is not None else None
+            ),
         )
 
     # ── 03 §4 validation ────────────────────────────────────────────────
@@ -382,8 +449,14 @@ class DeviceService:
     # ── 03 §4.3 rotation ────────────────────────────────────────────────
 
     async def rotate_credential(
-        self, session: AsyncSession, *, device: Device, audit: AuditLogger
-    ) -> str:
+        self,
+        session: AsyncSession,
+        *,
+        device: Device,
+        audit: AuditLogger,
+        public_key: str | None = None,
+        key_proof: str | None = None,
+    ) -> str | None:
         """Issue a new credential and invalidate the old one atomically.
 
         `[LOCKED]` (03 §4.3, AUTH-T6) no window where both work. There is exactly
@@ -391,16 +464,29 @@ class DeviceService:
         place, so the old private key stops verifying the instant the new one
         starts — not "shortly after", and never both at once.
 
-        Returns the new raw private key — again, exactly once.
+        Returns the new raw private key — again, exactly once — or `None` when
+        the device rotated to a key pair it generated itself (`public_key`,
+        signed over `rotation_message` by the new private key).
         """
 
-        private_key = Ed25519PrivateKey.generate()
+        if (public_key is None) != (key_proof is None):
+            raise InvalidDeviceProof("incomplete_public_key")
+        private_key: Ed25519PrivateKey | None = None
+        if public_key is not None and key_proof is not None:
+            new_public = _verified_public_key(
+                public_key,
+                key_proof,
+                rotation_message(device_id=device.device_id, public_key=public_key),
+            )
+        else:
+            private_key = Ed25519PrivateKey.generate()
+            new_public = _b64e(private_key.public_key().public_bytes_raw())
         await self._store.rotate(
             session,
             device.credential_ref,
             SecretRequester.user(device.user_id),
             audit,
-            new_value=_b64e(private_key.public_key().public_bytes_raw()),
+            new_value=new_public,
         )
 
         # Live tokens were issued against the *previous* credential. Rotation is
@@ -417,7 +503,7 @@ class DeviceService:
             device_id=device.device_id,
         )
 
-        return _b64e(private_key.private_bytes_raw())
+        return _b64e(private_key.private_bytes_raw()) if private_key is not None else None
 
     # ── 03 §4.4 revocation ──────────────────────────────────────────────
 

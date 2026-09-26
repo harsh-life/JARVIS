@@ -1,0 +1,345 @@
+{
+  "capabilities": {
+    "app.interact": {
+      "force_stop": {
+        "arguments": {},
+        "dependencies": [
+          "shizuku"
+        ],
+        "grid_toggle": "ui_interaction",
+        "max_result_bytes": 4096,
+        "mechanism": "shizuku",
+        "one_of": [],
+        "package_scope": "required",
+        "primitive": "shizuku.force_stop_package"
+      },
+      "input_text": {
+        "arguments": {
+          "text": {
+            "kind": "string",
+            "max_length": 2000,
+            "required": true
+          },
+          "view_id": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          }
+        },
+        "dependencies": [
+          "accessibility_service"
+        ],
+        "grid_toggle": "ui_interaction",
+        "max_result_bytes": 4096,
+        "mechanism": "accessibility",
+        "one_of": [],
+        "package_scope": "required",
+        "primitive": "accessibility.input_text"
+      },
+      "launch_activity": {
+        "arguments": {},
+        "dependencies": [],
+        "grid_toggle": "ui_interaction",
+        "max_result_bytes": 4096,
+        "mechanism": "android_api",
+        "one_of": [],
+        "package_scope": "required",
+        "primitive": "android.intent.launch_activity"
+      },
+      "read_screen_element": {
+        "arguments": {
+          "content_description": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          },
+          "index": {
+            "kind": "int",
+            "maximum": 50,
+            "minimum": 0,
+            "required": false
+          },
+          "text": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          },
+          "view_id": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          }
+        },
+        "dependencies": [
+          "accessibility_service"
+        ],
+        "grid_toggle": "screen_read",
+        "max_result_bytes": 65536,
+        "mechanism": "accessibility",
+        "one_of": [
+          [
+            "view_id"
+          ],
+          [
+            "text"
+          ],
+          [
+            "content_description"
+          ]
+        ],
+        "package_scope": "required",
+        "primitive": "accessibility.read_element"
+      },
+      "swipe": {
+        "arguments": {
+          "direction": {
+            "kind": "enum",
+            "required": true,
+            "values": [
+              "up",
+              "down",
+              "left",
+              "right"
+            ]
+          },
+          "view_id": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          }
+        },
+        "dependencies": [
+          "accessibility_service"
+        ],
+        "grid_toggle": "ui_interaction",
+        "max_result_bytes": 4096,
+        "mechanism": "accessibility",
+        "one_of": [],
+        "package_scope": "required",
+        "primitive": "accessibility.swipe"
+      },
+      "tap": {
+        "arguments": {
+          "content_description": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          },
+          "index": {
+            "kind": "int",
+            "maximum": 50,
+            "minimum": 0,
+            "required": false
+          },
+          "text": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          },
+          "view_id": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          }
+        },
+        "dependencies": [
+          "accessibility_service"
+        ],
+        "grid_toggle": "ui_interaction",
+        "max_result_bytes": 4096,
+        "mechanism": "accessibility",
+        "one_of": [
+          [
+            "view_id"
+          ],
+          [
+            "text"
+          ],
+          [
+            "content_description"
+          ]
+        ],
+        "package_scope": "required",
+        "primitive": "accessibility.tap"
+      }
+    },
+    "device.read": {
+      "capture_screenshot": {
+        "arguments": {},
+        "dependencies": [
+          "accessibility_service",
+          "screen_capture"
+        ],
+        "grid_toggle": "screenshot",
+        "max_result_bytes": 2097152,
+        "mechanism": "accessibility",
+        "one_of": [],
+        "package_scope": "required",
+        "primitive": "accessibility.screenshot"
+      },
+      "read_battery": {
+        "arguments": {},
+        "dependencies": [],
+        "grid_toggle": "device_state",
+        "max_result_bytes": 4096,
+        "mechanism": "android_api",
+        "one_of": [],
+        "package_scope": "forbidden",
+        "primitive": "android.api.battery_state"
+      },
+      "read_notification": {
+        "arguments": {
+          "limit": {
+            "kind": "int",
+            "maximum": 50,
+            "minimum": 1,
+            "required": false
+          }
+        },
+        "dependencies": [
+          "notification_access"
+        ],
+        "grid_toggle": "screen_read",
+        "max_result_bytes": 65536,
+        "mechanism": "android_api",
+        "one_of": [],
+        "package_scope": "required",
+        "primitive": "android.api.notification_query"
+      },
+      "read_screen": {
+        "arguments": {},
+        "dependencies": [
+          "accessibility_service"
+        ],
+        "grid_toggle": "screen_read",
+        "max_result_bytes": 65536,
+        "mechanism": "accessibility",
+        "one_of": [],
+        "package_scope": "required",
+        "primitive": "accessibility.read_tree"
+      }
+    },
+    "device.ui_control": {
+      "global_action": {
+        "arguments": {
+          "action": {
+            "kind": "enum",
+            "required": true,
+            "values": [
+              "back",
+              "home",
+              "recents",
+              "notifications"
+            ]
+          }
+        },
+        "dependencies": [
+          "accessibility_service"
+        ],
+        "grid_toggle": "ui_interaction",
+        "max_result_bytes": 4096,
+        "mechanism": "accessibility",
+        "one_of": [],
+        "package_scope": "required",
+        "primitive": "accessibility.global_action"
+      },
+      "input_text": {
+        "arguments": {
+          "text": {
+            "kind": "string",
+            "max_length": 2000,
+            "required": true
+          },
+          "view_id": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          }
+        },
+        "dependencies": [
+          "accessibility_service"
+        ],
+        "grid_toggle": "ui_interaction",
+        "max_result_bytes": 4096,
+        "mechanism": "accessibility",
+        "one_of": [],
+        "package_scope": "required",
+        "primitive": "accessibility.input_text"
+      },
+      "swipe": {
+        "arguments": {
+          "direction": {
+            "kind": "enum",
+            "required": true,
+            "values": [
+              "up",
+              "down",
+              "left",
+              "right"
+            ]
+          },
+          "view_id": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          }
+        },
+        "dependencies": [
+          "accessibility_service"
+        ],
+        "grid_toggle": "ui_interaction",
+        "max_result_bytes": 4096,
+        "mechanism": "accessibility",
+        "one_of": [],
+        "package_scope": "required",
+        "primitive": "accessibility.swipe"
+      },
+      "tap": {
+        "arguments": {
+          "content_description": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          },
+          "index": {
+            "kind": "int",
+            "maximum": 50,
+            "minimum": 0,
+            "required": false
+          },
+          "text": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          },
+          "view_id": {
+            "kind": "string",
+            "max_length": 200,
+            "required": false
+          }
+        },
+        "dependencies": [
+          "accessibility_service"
+        ],
+        "grid_toggle": "ui_interaction",
+        "max_result_bytes": 4096,
+        "mechanism": "accessibility",
+        "one_of": [
+          [
+            "view_id"
+          ],
+          [
+            "text"
+          ],
+          [
+            "content_description"
+          ]
+        ],
+        "package_scope": "required",
+        "primitive": "accessibility.tap"
+      }
+    }
+  },
+  "mapping_version": "1-e612ce2607c0586e",
+  "schema": 1
+}

@@ -82,8 +82,8 @@ Execution owns constrained execution."):
 - **Android/Shizuku** (`08`), server-side half: the capability→operation→
   primitive mapping and dispatch contract, with `UnavailableDeviceTransport`
   as the only shipped transport — every call fails deterministically until a
-  real device channel is wired in (`android/` does not exist in this
-  repository yet).
+  real device channel is wired in. The mapping is exported as the versioned
+  shared artifact `shared/android/device_mapping.json` (docs/23 §5.1).
 
 **`integration-hardening`** — a review of the composed system against the
 canonical PRD and the locked decisions, fixing what only shows once the layers
@@ -144,8 +144,19 @@ The owner's decisions (OD-A1, OD-D1, OD-E1, OD-F1, OD-TOOL-1) are recorded in
 Disabled by default (`memory.enabled`, `vault.enabled`); the stack is the
 optional `memory` extra.
 
-**Still not built:** the scheduler, the dashboard, voice, and a real Android
-client (`android/`). Their capabilities (where any exist) are absent from the
+**In progress:** the Android client (`android/`, docs/23). Built: the wire
+contract (`shared/schemas/device_channel.py`), the shared mapping artifact,
+device-held Ed25519 keys (Keystore) registered by public key, the App Link
+login return, and the authenticated device channel (`WS
+/api/v1/devices/channel`, `server/execution/device_hub.py`) with exact-device
+delivery, no queue, cancellation and revocation — **off by default**
+(`android.enabled`); the device-side guard (docs/23 §5.2) held to the shared
+conformance vectors on both sides; and the sensitive-app gate
+(`android.app_classification` — every app unclassified by default, so no UI
+control until the owner classifies one). Not yet: perception, execution
+primitives, the per-app grid UI and confirmation screen.
+
+**Still not built:** the scheduler, the dashboard, voice. Their capabilities (where any exist) are absent from the
 registry or, for Android, dispatch to a transport that refuses every call — the
 runtime and execution layer both refuse rather than run unbounded, not silently
 degrade.
@@ -165,8 +176,12 @@ memory rows need an owner decision (`docs/OD_A1_BR_T2.md` §3c/§5).
 
 ```
 server/    the modular-monolith FastAPI application (one package per subsystem)
+android/   the Android client (docs/23): :contract (pure-Kotlin wire contract and
+           device-side guard) and :app; shares only shared/ with the server
 shared/    schemas/  — canonical Pydantic data contracts, importable by both
-                        server/ and a future android/ client
+                        server/ and the android/ client
+           android/  — the versioned device mapping table (and, later, the
+                        conformance vectors) both sides read
 tests/     pytest suite (tests/foundation/, tests/security_core/, tests/runtime/,
                           tests/execution/, tests/integration/, tests/memory/)
 docs/      RUNNING_*.md, OD_A1_BR_T2.md, CAPABILITY_MATRIX.md, DECISION_REGISTER.md

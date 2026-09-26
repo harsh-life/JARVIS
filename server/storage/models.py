@@ -489,6 +489,10 @@ class OIDCLoginState(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # docs/23 §3's App Link handoff: a nonce the *app* generated before opening
+    # the browser, echoed back with the bootstrap token so the app accepts only
+    # the login it started (login-CSRF). Null for a plain JSON login.
+    app_state: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class BootstrapToken(Base):

@@ -455,4 +455,16 @@ async def test_no_filesystem_network_or_device_execution_bypass_was_added():
             continue
         code = code_only(path)
         for forbidden in forbidden_primitives:
-            assert forbidden not in code, f"{path}: {forbidden}"
+            if forbidden == "socket":
+                # The raw `socket` module as an identifier (`import socket`,
+                # `from socket import …`, `socket.socket(…)`), not the ASGI
+                # WebSocket API the device channel is served on (docs/23 §4,
+                # `router.websocket`, a `websocket` parameter) — that is
+                # Starlette's protocol object, not a raw connection.
+                assert not re.search(r"(?<![A-Za-z0-9_])socket(?![A-Za-z0-9_])", code), f"{path}: socket"
+            else:
+                assert forbidden not in code, f"{path}: {forbidden}"
+
+    # And the one module that does speak WebSocket reaches no raw socket.
+    channel = code_only(Path("server/gateway/routers/device_channel.py"))
+    assert "import socket" not in channel and "from socket" not in channel

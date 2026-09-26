@@ -15,12 +15,25 @@ from typing import AsyncIterator
 from fastapi import APIRouter, FastAPI
 
 from server.config import AppConfig
+from server.config.schema import AndroidConfig
+from server.execution.device_hub import DeviceHub
 from server.gateway.errors import install_error_handlers
 from server.gateway.request_context import RequestIdMiddleware
 from server.gateway.agent_port import AgentTaskPort
 from server.gateway.control_port import SupervisorControlPort
 from server.gateway.memory_port import MemoryPort, VaultPort
-from server.gateway.routers import agent, auth, capabilities, control, graphs, health, memory, sessions, vault
+from server.gateway.routers import (
+    agent,
+    auth,
+    capabilities,
+    control,
+    device_channel,
+    graphs,
+    health,
+    memory,
+    sessions,
+    vault,
+)
 from server.gateway.security import SecurityCore, build_security_core
 from server.gateway.security_errors import install_security_error_handlers
 from server.storage import StorageBackend
@@ -41,6 +54,8 @@ def create_app(
     supervisor_control: SupervisorControlPort | None = None,
     memory_port: MemoryPort | None = None,
     vault_port: VaultPort | None = None,
+    android_config: AndroidConfig | None = None,
+    device_hub: DeviceHub | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
 
@@ -99,7 +114,9 @@ def create_app(
     v1.include_router(control.router)
     v1.include_router(memory.router)
     v1.include_router(vault.router)
+    v1.include_router(device_channel.router)
     app.include_router(v1)
+    app.include_router(auth.public_router)
 
     # The agent runtime is assembled above this layer (server/composition/) and
     # handed in through the `AgentTaskPort` Protocol: the gateway sits below
@@ -114,6 +131,13 @@ def create_app(
     app.state.memory = memory_port
     app.state.vault = vault_port
     app.state.intelligence_enabled = bool(config.intelligence.enabled) if config else False
+    # docs/23 — App Links, the device channel. An explicit argument wins over
+    # the loaded config; with neither, the defaults (everything off) apply.
+    app.state.android = android_config or (config.android if config else AndroidConfig())
+    # The device channel's hub, built by the composition root when
+    # `android.enabled` (the same object the Android tools send through).
+    # Without one the channel endpoint closes every socket as disabled.
+    app.state.device_hub = device_hub
 
     # Storage is attached synchronously at construction time, not deferred
     # to lifespan startup: deterministic initialization (§11), and it does

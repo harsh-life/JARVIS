@@ -132,6 +132,10 @@ def risk_tier(
     return tier
 
 
+def more_restrictive(a: RiskCategory, b: RiskCategory) -> RiskCategory:
+    return a if _SEVERITY[a] >= _SEVERITY[b] else b
+
+
 def disposition(tier: RiskCategory) -> Disposition:
     """PRD §15's tier→disposition mapping.
 
