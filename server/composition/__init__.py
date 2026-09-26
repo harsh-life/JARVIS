@@ -34,13 +34,17 @@ from server.config.errors import ConfigError
 from server.config.schema import AppConfig
 from server.gateway.app import create_app
 from server.gateway.security import SecurityCore, build_security_core
-from server.memory.hydration import AuthorizedContextHydrator, MemoryStore
+from server.composition.memory import MemoryFacade, MemoryFactLoader, VaultFacade
+from server.memory.hydration import AuthorizedContextHydrator
+from server.memory.provider import MemoryProvider, MemoryStore
+from server.vault.index import VaultIndex
 from server.models.factory import build_provider
 from server.modeltools import model_tool_definition
 from server.secrets.requester import SecretRequester
 from server.security.usage import UsageLimits, UsagePolicy
 from server.storage import StorageBackend
 from server.tools.registry import ToolDefinition, ToolRegistry
+from shared.schemas.authorization import ResourceType
 
 
 def bounds_from_config(config: AppConfig) -> RuntimeBounds:
@@ -153,13 +157,18 @@ def build_application(
     extra_tools: Iterable[ToolDefinition] | None = None,
     memory_store: MemoryStore | None = None,
     break_glass_registry: BreakGlassRegistry | None = None,
+    memory_provider: MemoryProvider | None = None,
+    vault_index: VaultIndex | None = None,
 ) -> FastAPI:
     """Assemble the full server: Security Core, runtime, tools, models, memory.
 
-    `provider_factory` and `memory_store` are injection seams, not test
-    modes: production passes neither and gets the configured providers and
-    — until `11` supplies a Mem0 store — explicit FAIL-008 degradation for
-    long-term memory.
+    `provider_factory`, `memory_provider`, `memory_store` and `vault_index` are
+    injection seams, not test modes: production passes none of them and gets the
+    configured model providers, the self-hosted Mem0 store when
+    `memory.enabled`, and the vault index when `vault.enabled`. With memory
+    disabled, hydration degrades explicitly (FAIL-008) and the memory endpoints
+    answer `503`. `memory_store` supplies hydration alone (a read-only store with
+    no API or formation), for tests of the hydration boundary.
 
     `break_glass_registry` lets a test share one record store with the
     execution tools it passes in `extra_tools`; production passes nothing.
@@ -184,6 +193,21 @@ def build_application(
     )
     tools = build_tool_registry(config, provider_factory=factory, extra_tools=tool_definitions)
 
+    provider = memory_provider
+    if provider is None and memory_store is None and config.memory.enabled:
+        provider = _open_memory_provider(config)
+    memory_facade: MemoryFacade | None = None
+    if provider is not None:
+        # The engine decides `mem0fact` operations like any other resource;
+        # this is the projection it decides on (04 §1).
+        core.resource_loader.register(ResourceType.MEM0FACT, MemoryFactLoader(provider))
+        memory_facade = MemoryFacade(provider=provider, core=core, config=config.memory)
+
+    index = vault_index
+    if index is None and config.vault.enabled:
+        index = _open_vault_index(config)
+    vault_facade = VaultFacade(index=index, config=config.vault) if index is not None else None
+
     async def active_graph_ids(session, user_id):
         graphs = await core.graph_repository.graphs_for_user(session, user_id=user_id, limit=1000)
         return {g.graph_id for g in graphs}
@@ -203,13 +227,15 @@ def build_application(
         usage_policy=UsagePolicy(limits=usage_limits_from_config(config)),
         tools=tools,
         hydrator=AuthorizedContextHydrator(
-            store=memory_store,
+            store=provider if provider is not None else memory_store,
             active_graph_ids=active_graph_ids,
             top_k=config.agent.bounds.memory_top_k,
         ),
         provider_factory=factory,
         latch=latch,
         break_glass=break_glass,
+        memory=memory_facade,
+        vault=vault_facade,
     )
     return create_app(
         config=config,
@@ -222,7 +248,32 @@ def build_application(
         # `/api/v1/admin/control/*`, behind `get_superuser`.
         supervisor_control=SupervisorControl(runtime=runtime, facade=facade, latch=latch,
                                              break_glass=break_glass),
+        memory_port=memory_facade,
+        vault_port=vault_facade,
     )
+
+
+def _open_memory_provider(config: AppConfig) -> MemoryProvider:
+    """`memory.enabled` is an operator's explicit request, so a stack that cannot
+    start safely stops the server rather than silently running without memory."""
+
+    from server.memory.mem0_provider import Mem0SetupError, build_mem0_provider
+    from server.models.embedding import EmbedderUnavailable
+
+    try:
+        return build_mem0_provider(config.memory.mem0)
+    except (Mem0SetupError, EmbedderUnavailable) as exc:
+        raise ConfigError(f"memory.enabled is true but the memory store cannot start: {exc}") from None
+
+
+def _open_vault_index(config: AppConfig) -> VaultIndex:
+    from server.models.embedding import EmbedderUnavailable
+    from server.vault.index import open_vault_index
+
+    try:
+        return open_vault_index(config.vault)
+    except EmbedderUnavailable as exc:
+        raise ConfigError(f"vault.enabled is true but the vault index cannot start: {exc}") from None
 
 
 __all__ = [

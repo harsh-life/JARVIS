@@ -171,9 +171,29 @@ ratification. None of it reopens OD-A1 or OD-D1.
   (OD-FS-1, OD-NET-1): application-level for in-process code. BR-T2 §3b rows 13
   and 14 are inside OD-A1 (a); `mount_isolated` and `netns_filtered` stay future
   hardening (§4).
-- Mem0 (`11`) and the Android device client (`08`) do not exist; their BR-T2 rows
-  and release-blocking suites are pending. The real-data gate (17 §5) stays
+- The Android device client (`08`) does not exist; its BR-T2 rows and
+  release-blocking suite are pending. (Mem0 now exists — see §2C.) The real-data gate (17 §5) stays
   closed: **disposable or test data only**.
+
+## 2C. Memory-build proposals (`[PROPOSED]`, pending ratification)
+
+The memory build (`docs/21_MEMORY_PROVIDER_VAULT.md`) implements the recommended
+reading of every `[OPEN — OWNER]` item in docs/21 §8. None is ratified by being
+implemented; each stands until the owner confirms or changes it.
+
+| ID | Decision | Value implemented | Where |
+|---|---|---|---|
+| OD-MEM-A | PRD §41's `litellm/deepseek` Mem0 LLM | Read as "never default to OpenAI; provider is config". Stronger in practice: Mem0 has **no** model at all (a refusing stub), so no Mem0 provider or key is configurable. | `server/memory/mem0_provider.py` |
+| OD-MEM-B | Pilot mechanism (a) or (b) | **(a)**: extraction by JARVIS through the task's own metered model call; Mem0 stores with `infer=False`. Off by default (`memory.auto_extract`). | `server/agent/runtime.py` (`_form_memory`), `server/memory/extraction.py` |
+| OD-AUTHZ-1 | Shared facts on graph-leave | **Stay** shared; the leaver loses read access at once (membership is read live). | engine D1/D4 |
+| OD-VLT-1 | API write path to the vault | **None.** Git commit + `python -m server.vault reindex` only; `vault.git_backed: false` fails to load. | `server/vault/`, `server/config/schema.py` |
+| OD-MB-1 | Mem0 version | `mem0ai==2.2.1`, exact pin; the adapter refuses any other version. | `pyproject.toml` |
+| OD-MB-2 | HTTP semantics of memory share/delete | The tier table already makes `mem0fact` share and delete `consequential`, so `PATCH`/`DELETE` return `403 confirmation_required` and run with the single-use token in `X-Confirmation-Token`. | `server/composition/memory.py` |
+| OD-MB-3 | Emotional/relationship classifier (docs/21 §4 step 2) | Deterministic lexicon, reject-only, conservative. A model-assisted classifier can be added under the same reject-only contract. | `server/memory/gate.py` |
+| OD-MB-4 | Memory at rest (BR-T2 §3c rows 27–28) | **Owner decision needed.** Store is plaintext with 0700 permissions; deletion removes text from every store file, but deleted facts' embedding vectors remain in Chroma's HNSW file until an index rebuild. Accept for the pilot, or require encryption / rebuild first. | `docs/OD_A1_BR_T2.md` §3c/§5 |
+
+The real-data gate (17 §5) stays closed: the memory suites now run on a real
+Mem0 store, but the Android suite does not exist yet and OD-MB-4 is open.
 
 ---
 
@@ -195,6 +215,8 @@ ratification. None of it reopens OD-A1 or OD-D1.
 - Per-user / per-graph key separation for persistent memory at rest. This protects
   stored ciphertext against storage and backup compromise; it does **not** protect
   against a compromised live process that is legitimately using the plaintext.
+- A periodic or on-demand rebuild of the memory vector index, so deleted facts'
+  embedding vectors do not persist in Chroma's HNSW file (BR-T2 §3c row 28).
 - A separate model-service process holding no auth DB, SecretStore, or vector store.
   Today the model adapter runs in the gateway process and is handed only the
   authorized, hydrated context for the task.

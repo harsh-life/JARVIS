@@ -10,11 +10,13 @@
 # runs `lint-imports` only satisfies that hook if something runs the test on
 # every push — which is what this workflow is for.
 #
-# Deliberately minimal: it runs exactly the three checks a contributor runs
-# locally (docs/RUNNING_SECURITY_CORE.md §10), no more. Nothing here needs a
-# `config.yaml`, a KEK, or any credential: the suites build their own throwaway
-# config and generate a fresh key per test (17 §6 — "No fixture contains a real
-# secret"), so CI requires no secrets at all. That is itself a property worth
+# Deliberately minimal: it runs exactly the checks a contributor runs locally
+# (docs/RUNNING_SECURITY_CORE.md §10, docs/RUNNING_MEMORY.md §7), no more. The
+# one network step is provisioning the public embedding model, the same command
+# a self-hoster runs. Nothing here needs a `config.yaml`, a KEK, or any
+# credential: the suites build their own throwaway config and generate a fresh
+# key per test (17 §6 — "No fixture contains a real secret"), so CI requires no
+# secrets at all. That is itself a property worth
 # keeping: a CI job that needed the owner's credentials would contradict
 # HOST-001.
 
@@ -50,7 +52,21 @@ jobs:
           cache: pip
 
       - name: Install
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+        # `memory` is the pinned Mem0 / Chroma / fastembed stack (docs/21). CI
+        # installs it so the real-store suites run — they are release-blocking.
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev,memory]"
+
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: data/models
+          key: embedder-bge-small-en-v1.5-fastembed-0.8.1
+
+      - name: Provision the embedding model (15 §3 step 5)
+        # The one sanctioned download, by the operator command a self-hoster
+        # runs. Everything after this step loads the model offline; the egress
+        # suites assert no test makes a network call.
+        run: python -m server.memory provision --config config.example.yaml
 
       - name: Module boundary contracts (16 §8 — REPO-T1/T4/T6/T7)
         # First, and its own step: a boundary violation should be legible as
@@ -58,7 +74,17 @@ jobs:
         run: lint-imports --config pyproject.toml
 
       - name: Tests
-        run: python -m pytest tests/ -q
+        env:
+          HYPERMIND_REQUIRE_MEMORY_STACK: "1"
+        run: python -m pytest tests/ -q --ignore=tests/memory
+
+      - name: Memory release-blocking suite (17 §5, docs/21 §9 — MEM-T1..T10, MP-T1..T12)
+        # Its own step so the real-data gate's evidence is legible in the checks
+        # list. With HYPERMIND_REQUIRE_MEMORY_STACK=1 a missing store or model is
+        # a failure, never a skip: MEM-T1 cannot pass by not running.
+        env:
+          HYPERMIND_REQUIRE_MEMORY_STACK: "1"
+        run: python -m pytest tests/memory -q
 
       - name: Migrations round-trip
         # 15 §3 / STORE-004: migrations must be reproducible, and `downgrade
@@ -78,4 +104,7 @@ jobs:
         # The original eleven rows (relational store, SecretStore) plus the
         # execution dimensions integration made measurable (09/10, the process
         # executor) — docs/OD_A1_BR_T2.md §3/§4.
-        run: python -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py -q -s
+        # The memory rows (docs/21 MP-T12) re-measure with the real Mem0 store present.
+        env:
+          HYPERMIND_REQUIRE_MEMORY_STACK: "1"
+        run: python -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py tests/integration/test_br_t2_memory_rows.py -q -s

@@ -57,16 +57,42 @@ models_as_tools: []
 
 tools: []
 
+# Persistent memory (11, docs/21): self-hosted Mem0 OSS + a local Chroma store.
+# Off by default. To turn it on (docs/RUNNING_MEMORY.md):
+#   1. pip install -e '.[memory]'
+#   2. python -m server.memory provision      # the one step that downloads (the embedding model)
+#   3. set enabled: true
+# The server itself never downloads a model and Mem0 never calls a model: Mem0 is
+# a store here (docs/21 §2.2 option (a)); any model call memory needs is JARVIS's,
+# metered like every other. There is no provider key to configure.
 memory:
+  enabled: false
+  provider: "mem0"                 # the only adapter
+  writes_enabled: true             # memory formation on/off; list/correct/delete stay available
+  auto_extract: false              # extract facts at task end with the task's own (metered) model call
+  max_fact_chars: 500
+  max_facts_per_task: 3
   mem0:
     collection: "hypermind_memories"
-    path: "./data/mem0_storage"
+    path: "./data/mem0_storage"    # owner-only (0700); plaintext at rest — see docs/RUNNING_MEMORY.md §5
     embedder: "bge-small-en-v1.5"
+    embedder_cache: "./data/models"
+    mode: "jarvis_extraction"      # the only mode
 
+# Knowledge Vault (11 §7, docs/21 §5): curated markdown in a Git repository,
+# indexed into its own store. Content changes only by Git commit + reindex:
+#   python -m server.vault reindex
 vault:
+  enabled: false
   collection: "hypermind_vault"    # MUST differ from memory.mem0.collection (VAULT-003)
-  git_backed: true
-  path: "./data/vault"
+  git_backed: true                 # the only value in the pilot (OD-VLT-1)
+  path: "./data/vault"             # the Git repository (source of truth)
+  index_path: "./data/vault_index" # MUST NOT be, contain, or sit inside memory.mem0.path
+  embedder: "bge-small-en-v1.5"
+  embedder_cache: "./data/models"
+  chunk_chars: 1200
+  hydration_top_k: 3               # vault chunks added to a task's context (0 = none)
+  hydration_max_chars: 3000
 
 # Disabled by default (INTEL-003) — Track B is fully functional this way.
 intelligence:

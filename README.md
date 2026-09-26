@@ -19,9 +19,9 @@ HUMAN CONFIRMS WHERE REQUIRED
 
 Model output is never the security boundary.
 
-## Current state: `integration-hardening` branch
+## Current state: the memory build
 
-Five branches are in:
+Five branches, the runtime foundation (U0–U6), and the memory build are in:
 
 **`foundation`** — the technical substrate: shared data contracts,
 configuration, persistence/migrations, and the API skeleton (versioning,
@@ -124,11 +124,31 @@ The owner's decisions (OD-A1, OD-D1, OD-E1, OD-F1, OD-TOOL-1) are recorded in
 `docs/CAPABILITY_MATRIX.md`. See `docs/RUNNING_RUNTIME.md` and
 `docs/RUNNING_EXECUTION.md` to run it.
 
-**Still not built:** Mem0 (`11`), the scheduler, the Knowledge Vault, the
-dashboard, voice, and a real Android client (`android/`). Their capabilities
-(where any exist) are absent from the registry or, for Android, dispatch to a
-transport that refuses every call — the runtime and execution layer both
-refuse rather than run unbounded, not silently degrade.
+**Memory build** — persistent memory and the Knowledge Vault (`11`,
+`docs/21_MEMORY_PROVIDER_VAULT.md`; operator guide `docs/RUNNING_MEMORY.md`):
+
+- **`MemoryProvider`** (`server/memory/provider.py`): the one interface JARVIS
+  depends on. Providers store and retrieve; the authorization engine decides —
+  `mem0fact` operations go through the same five-dimension engine as every other
+  resource, and hydration re-checks every result with its `readable()` predicate.
+- **Mem0 OSS, self-hosted, as a library** (`server/memory/mem0_provider.py`,
+  pinned `mem0ai==2.2.1`, not forked): telemetry off, no Mem0 model calls
+  (writes use no-inference mode; extraction, when enabled, is JARVIS's own
+  metered call), an offline local embedder, no history file, and deletion that
+  removes the text from the store files.
+- **A deterministic write gate** (`server/memory/gate.py`): typed facts only; no
+  secrets, emotional/relationship content, tool observations or payloads.
+- **The Knowledge Vault** (`server/vault/`): Git-backed markdown, indexed from the
+  committed tree into its own Chroma client and directory; no HTTP write path.
+
+Disabled by default (`memory.enabled`, `vault.enabled`); the stack is the
+optional `memory` extra.
+
+**Still not built:** the scheduler, the dashboard, voice, and a real Android
+client (`android/`). Their capabilities (where any exist) are absent from the
+registry or, for Android, dispatch to a transport that refuses every call — the
+runtime and execution layer both refuse rather than run unbounded, not silently
+degrade.
 
 ### Before putting real data anywhere near this
 
@@ -137,7 +157,9 @@ application-level RCE (BR-T2). The owner decided OD-A1 as **RESOLVED FOR PILOT �
 ACCEPTED RESIDUAL** (option (a)): logical isolation, with the measured in-process
 residual accepted for the pilot. That is not an isolation claim. Real-user
 readiness additionally needs 17 §5's full release-blocking set, which includes
-the `09`/`10`/`11`/`08` suites that do not exist yet.
+the `08` suites that do not exist yet. The memory suites (MEM-T1 on a real Mem0
+store, and the BR-T2 memory re-run) now exist and run in CI; BR-T2's at-rest
+memory rows need an owner decision (`docs/OD_A1_BR_T2.md` §3c/§5).
 
 ## Repository layout
 
@@ -146,7 +168,7 @@ server/    the modular-monolith FastAPI application (one package per subsystem)
 shared/    schemas/  — canonical Pydantic data contracts, importable by both
                         server/ and a future android/ client
 tests/     pytest suite (tests/foundation/, tests/security_core/, tests/runtime/,
-                          tests/execution/)
+                          tests/execution/, tests/integration/, tests/memory/)
 docs/      RUNNING_*.md, OD_A1_BR_T2.md, CAPABILITY_MATRIX.md, DECISION_REGISTER.md
 Working Markdown/   the architecture/PRD document package (source of truth)
 ```

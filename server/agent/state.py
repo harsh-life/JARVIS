@@ -65,6 +65,9 @@ class TaskState:
     graph_id: uuid.UUID | None
     # 18 §3: fixed at submission; nothing assigns it afterwards.
     mode: TaskMode = TaskMode.EXECUTE
+    # The user's own request, verbatim — one of the two inputs memory extraction
+    # may use (docs/21 §3). Never the hydrated context or any observation.
+    user_input: str = ""
     messages: list[ChatMessage] = field(default_factory=list)
     activations: list[Activation] = field(default_factory=list)
     iterations: int = 0

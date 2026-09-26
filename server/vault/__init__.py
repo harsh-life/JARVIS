@@ -1,12 +1,18 @@
-"""vault — placeholder package (foundation branch).
+"""Knowledge Vault — 11 §7, docs/21 §5 (VAULT-001..005).
 
-Not implemented in the `foundation` branch. This package exists only so that:
-  1. the repository layout matches 00_CANONICAL_PRD.md §45 / 16_REPOSITORY_MODULE_BOUNDARIES.md §1, and
-  2. module-boundary (import-linter) contracts about this package are meaningful
-     for later branches (e.g. "server.agent must never import server.secrets").
+Static, shared, curated knowledge, kept apart from persistent memory in storage
+and retrieval: its own Chroma client and directory (`vault.index_path`), its own
+collection (`hypermind_vault`), and no import of `server.memory` or Mem0.
 
-Do not add implementation logic here from the `foundation` branch. The subsystem
-document that owns this package's real implementation is named below.
+* `ingest` — Git-backed ingestion of the committed tree at `HEAD` (operator
+  command: `python -m server.vault reindex`).
+* `index` — the read side: `query` for `GET /api/v1/vault/query` and for
+  runtime hydration, whose chunks reach a model only as untrusted data.
 
-Owning subsystem doc: 11_MEMORY_CONTEXT_VISIBILITY.md
+Pilot restriction (OD-VLT-1): content changes only through Git review and a
+reindex. There is no HTTP write path.
 """
+
+from server.vault.index import VaultIndex, VaultStatus, VaultUnavailable, open_vault_index
+
+__all__ = ["VaultIndex", "VaultStatus", "VaultUnavailable", "open_vault_index"]

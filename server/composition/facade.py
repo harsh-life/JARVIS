@@ -21,6 +21,7 @@ from server.agent.ports import Hydration, TaskEnvironment, UsageLimitReached
 from server.auth.errors import StepUpRequired
 from server.composition.break_glass import BreakGlassRegistry
 from server.composition.latch import InProcessLatch, SupervisorGate
+from server.composition.memory import MemoryFacade, VaultFacade
 from server.composition.models import ConfiguredModelResolver, ProviderFactory
 from server.composition.secret_context import CURRENT_SECRET_RESOLVER, SecretUnavailable
 from server.composition.security_port import RuntimeSecurityAdapter
@@ -42,15 +43,26 @@ from shared.schemas.errors import ErrorCode
 
 
 class _BoundHydrator:
-    def __init__(self, hydrator: AuthorizedContextHydrator, session: AsyncSession) -> None:
+    """11 §3's hydration order: authorized, relevance-bounded memory, then
+    relevant vault knowledge (from the vault's own index — never the memory
+    store), both as untrusted data."""
+
+    def __init__(self, hydrator: AuthorizedContextHydrator, session: AsyncSession,
+                 vault: VaultFacade | None = None) -> None:
         self._hydrator = hydrator
         self._session = session
+        self._vault = vault
 
     async def hydrate(self, *, principal: Principal, graph_id: uuid.UUID | None, query: str) -> Hydration:
         hydrated = await self._hydrator.hydrate(
             self._session, principal=principal, graph_id=graph_id, query=query
         )
-        return Hydration(items=list(hydrated.items), notes=list(hydrated.notes))
+        notes = list(hydrated.notes)
+        knowledge: list[str] = []
+        if self._vault is not None:
+            knowledge, vault_notes = await self._vault.hydrate(query)
+            notes.extend(vault_notes)
+        return Hydration(items=list(hydrated.items), notes=notes, knowledge=knowledge)
 
 
 class AgentTaskFacade:
@@ -66,7 +78,11 @@ class AgentTaskFacade:
         provider_factory: ProviderFactory,
         latch: InProcessLatch,
         break_glass: BreakGlassRegistry | None = None,
+        memory: MemoryFacade | None = None,
+        vault: VaultFacade | None = None,
     ) -> None:
+        self._memory = memory
+        self._vault = vault
         self._latch = latch
         self._break_glass = break_glass
         self._runtime = runtime
@@ -93,8 +109,9 @@ class AgentTaskFacade:
                 graph_repository=self._core.graph_repository,
                 provider_factory=self._provider_factory,
             ),
-            hydrator=_BoundHydrator(self._hydrator, session),
+            hydrator=_BoundHydrator(self._hydrator, session, self._vault),
             supervisor=SupervisorGate(self._latch, session),
+            memory=self._memory.bound_formation(session, audit) if self._memory is not None else None,
         )
 
     def _observe(self, result: AgentResult) -> AgentResult:

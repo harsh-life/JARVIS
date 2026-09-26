@@ -413,6 +413,8 @@ async def make_harness(tmp_path, monkeypatch) -> AsyncIterator[Callable]:
         transport: httpx.AsyncBaseTransport | None = None,
         extra_tools: list[ToolDefinition] | None = None,
         use_real_execution_tools: bool = False,
+        memory_provider: Any = None,
+        vault_index: Any = None,
     ) -> Harness:
         storage = SQLAlchemyStorageBackend(f"sqlite+aiosqlite:///{tmp_path / uuid.uuid4().hex}.db")
         await storage.init_models()
@@ -453,11 +455,14 @@ async def make_harness(tmp_path, monkeypatch) -> AsyncIterator[Callable]:
             tools = build_execution_tools(app_config, break_glass=break_glass)
         else:
             tools = [*file_tools(reads, writes), android_ui_tool(ui)]
+        if memory_provider is not None:
+            memory = None  # the real provider serves hydration, the API and formation
         memory_store = InMemoryMemoryStore() if memory is True else (memory or None)
 
         app = build_application(
             app_config, storage=storage, security=core, provider_factory=factory,
             extra_tools=tools, memory_store=memory_store, break_glass_registry=break_glass,
+            memory_provider=memory_provider, vault_index=vault_index,
         )
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
         opened.append((client, storage))

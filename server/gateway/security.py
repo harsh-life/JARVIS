@@ -63,6 +63,9 @@ class SecurityCore:
     confirmations: ConfirmationService
     engine: AuthorizationEngine
     kek_source: str
+    # The engine's resource loader, exposed so the composition root can register
+    # a loader for a store outside this layer (`mem0fact`). Additive only.
+    resource_loader: SecurityCoreResourceLoader
 
 
 def build_security_core(
@@ -88,9 +91,10 @@ def build_security_core(
         issuer=config.security.oidc.issuer,
     )
 
+    resource_loader = SecurityCoreResourceLoader()
     engine = AuthorizationEngine(
         memberships=graph_repository,
-        resources=SecurityCoreResourceLoader(),
+        resources=resource_loader,
         capabilities=capability_grants,
         risk=RiskPolicyAdapter(),
         floor=FloorPolicyAdapter(),
@@ -113,6 +117,7 @@ def build_security_core(
         confirmations=confirmations,
         engine=engine,
         kek_source=config.secrets.kek_source,
+        resource_loader=resource_loader,
     )
 
 
