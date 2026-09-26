@@ -11,6 +11,7 @@ call, so a request can never widen what it was configured with.
 from __future__ import annotations
 
 from server.config.schema import AppConfig
+from server.execution.android import DeviceTransport
 from server.execution.break_glass import BreakGlassLookup
 from server.execution.process import ConstrainedProcessExecutor
 from server.fs import FilesystemSandbox
@@ -28,7 +29,10 @@ from shared.schemas.execution import EgressPolicy
 
 
 def build_execution_tools(
-    config: AppConfig, *, break_glass: BreakGlassLookup | None = None
+    config: AppConfig,
+    *,
+    break_glass: BreakGlassLookup | None = None,
+    device_transport: DeviceTransport | None = None,
 ) -> list[ToolDefinition]:
     """`file.read`/`file.write` are always real and immediately usable
     (sandboxed, quota-capped) once a principal is granted the capability —
@@ -39,8 +43,9 @@ def build_execution_tools(
     "closed by default" posture): an empty destination list and an empty
     executable allow-list mean granting the capability still authorizes
     nothing to actually happen until an operator configures one. The
-    Android tools use `UnavailableDeviceTransport` (no `android/` client
-    exists yet in this repository) and fail every call deterministically.
+    Android tools send through `device_transport` — the device channel's hub
+    when `android.enabled` — and otherwise through `UnavailableDeviceTransport`,
+    failing every call deterministically.
 
     `break_glass` is the record store the composition root built (20 §2). The
     executor gets it — and the separate break-glass executable list — only
@@ -91,8 +96,8 @@ def build_execution_tools(
         file_write_tool(sandbox),
         net_request_tool(egress_client, egress_policy=default_policy),
         shell_command_tool(executor, sandbox=sandbox),
-        android_app_interact_tool(),
-        android_device_read_tool(),
+        android_app_interact_tool(device_transport, operation_ttl_seconds=config.android.operation_ttl_seconds),
+        android_device_read_tool(device_transport, operation_ttl_seconds=config.android.operation_ttl_seconds),
     ]
 
 

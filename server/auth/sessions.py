@@ -80,6 +80,9 @@ class ResolvedSession:
     principal: Principal
     token_issued_at: datetime
     token_hash: str
+    # When this token stops being valid — a long-lived connection authenticated
+    # by it (the device channel, docs/23 §4) closes then unless re-authenticated.
+    token_expires_at: datetime | None = None
 
 
 class SessionService:
@@ -211,6 +214,7 @@ class SessionService:
             ),
             token_issued_at=as_utc(token_row.issued_at),
             token_hash=token_row.token_hash,
+            token_expires_at=min(as_utc(token_row.expires_at), as_utc(session_row.expires_at)),
         )
 
     # ── 03 §5.5 step-up (SESSION-003) ───────────────────────────────────

@@ -115,3 +115,24 @@ def test_donor_architecture_is_absent(pattern):
     for path in _text_files():
         if path.suffix == ".kt" or path.name == "AndroidManifest.xml":
             assert not compiled.search(path.read_text(encoding="utf-8")), (path, pattern)
+
+
+def test_the_shared_proof_vectors_match_the_servers_formats():
+    """The Android client reproduces these byte for byte; they must be exactly
+    what the server's own format functions produce today."""
+
+    from tests.tools.export_proof_vectors import PATH, render
+
+    assert PATH.read_text(encoding="ascii") == render()
+
+
+def test_the_proof_vector_verifies_against_the_real_server_verifier():
+    import json as _json
+
+    from server.auth.device import DeviceProof, _b64d
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    from tests.tools.export_proof_vectors import PATH
+
+    vector = _json.loads(PATH.read_text(encoding="ascii"))
+    proof = DeviceProof.parse(vector["proof"])
+    Ed25519PublicKey.from_public_bytes(_b64d(vector["public_key_b64"])).verify(proof.signature, proof.message())

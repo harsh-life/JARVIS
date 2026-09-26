@@ -144,12 +144,16 @@ The owner's decisions (OD-A1, OD-D1, OD-E1, OD-F1, OD-TOOL-1) are recorded in
 Disabled by default (`memory.enabled`, `vault.enabled`); the stack is the
 optional `memory` extra.
 
-**In progress:** the Android client (`android/`, docs/23) — the project,
-its wire contract (`shared/schemas/device_channel.py`), the shared mapping
-artifact and CI exist; the device channel, perception and execution do not yet.
+**In progress:** the Android client (`android/`, docs/23). Built: the wire
+contract (`shared/schemas/device_channel.py`), the shared mapping artifact,
+device-held Ed25519 keys (Keystore) registered by public key, the App Link
+login return, and the authenticated device channel (`WS
+/api/v1/devices/channel`, `server/execution/device_hub.py`) with exact-device
+delivery, no queue, cancellation and revocation — **off by default**
+(`android.enabled`). Not yet: the device-side guard, perception, execution
+primitives, and the sensitive-app gate.
 
-**Still not built:** the scheduler, the dashboard, voice, and the Android
-client's device channel. Their capabilities (where any exist) are absent from the
+**Still not built:** the scheduler, the dashboard, voice. Their capabilities (where any exist) are absent from the
 registry or, for Android, dispatch to a transport that refuses every call — the
 runtime and execution layer both refuse rather than run unbounded, not silently
 degrade.

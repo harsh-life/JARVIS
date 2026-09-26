@@ -32,6 +32,12 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // docs/23 §3: the App Link host — the server's stable public hostname,
+        // set per deployment (`-Pjarvis.appLinkHost=jarvis.example.com`). A
+        // hostname is not a secret. The default can never verify, so a build
+        // without it simply has no working browser return.
+        manifestPlaceholders["appLinkHost"] =
+            providers.gradleProperty("jarvis.appLinkHost").getOrElse("app-link-host.invalid")
     }
 
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/sharedAssets"))
@@ -111,6 +117,8 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.okhttp)
+    implementation(libs.tink.android)
 
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 
@@ -119,6 +127,7 @@ dependencies {
     robolectricRuntime(libs.robolectric.android.all)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.okhttp.mockwebserver)
 
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.androidx.test.ext.junit)

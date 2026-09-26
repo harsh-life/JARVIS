@@ -24,6 +24,8 @@ style:
     active: false
   ReturnCount:
     max: 6
+  ThrowsCount:
+    max: 4
   WildcardImport:
     active: true
   ForbiddenComment:

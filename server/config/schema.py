@@ -402,6 +402,52 @@ class ExecutionConfig(StrictModel):
     process: ProcessExecutionConfig = Field(default_factory=ProcessExecutionConfig)
 
 
+_APP_LINK_FINGERPRINT = re.compile(r"^(?:[0-9A-F]{2}:){31}[0-9A-F]{2}$")
+_ANDROID_PACKAGE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$")
+
+
+class AndroidAppLinksConfig(StrictModel):
+    """docs/23 §3: the browser → app return after Google login. `base_url` is
+    the server's stable public HTTPS origin (the named tunnel hostname that is
+    also Google's redirect URI host); Android verifies the app owns links there
+    through `/.well-known/assetlinks.json`, built from the two fields below.
+    Signing-certificate fingerprints are public values, not secrets."""
+
+    base_url: str | None = None
+    package_name: str = "com.hypermind.jarvis"
+    sha256_cert_fingerprints: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _shape(self) -> "AndroidAppLinksConfig":
+        if self.base_url is not None:
+            if not self.base_url.startswith("https://") or self.base_url.rstrip("/").count("/") != 2:
+                raise ValueError("android.app_links.base_url must be a bare https:// origin")
+        if not _ANDROID_PACKAGE.match(self.package_name):
+            raise ValueError("android.app_links.package_name is not a package name")
+        for fingerprint in self.sha256_cert_fingerprints:
+            if not _APP_LINK_FINGERPRINT.match(fingerprint):
+                raise ValueError("android.app_links.sha256_cert_fingerprints: expected AA:BB:… (32 bytes)")
+        return self
+
+    @property
+    def configured(self) -> bool:
+        return self.base_url is not None and bool(self.sha256_cert_fingerprints)
+
+
+class AndroidConfig(StrictModel):
+    """docs/23 — the Android client's server-side surface.
+
+    `enabled` turns on the device channel (the WebSocket `DeviceTransport`).
+    Off by default: until an operator enables it, every device operation fails
+    `device_unavailable` exactly as before this section existed."""
+
+    enabled: bool = False
+    # docs/23 §4: short-lived operation authority (default 30 s, never above
+    # the contract's 60 s ceiling).
+    operation_ttl_seconds: int = Field(default=30, ge=5, le=60)
+    app_links: AndroidAppLinksConfig = Field(default_factory=AndroidAppLinksConfig)
+
+
 class OIDCConfig(StrictModel):
     client_id: str
     issuer: str
@@ -451,6 +497,7 @@ class AppConfig(StrictModel):
     intelligence: IntelligenceConfig = Field(default_factory=IntelligenceConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    android: AndroidConfig = Field(default_factory=AndroidConfig)
     security: SecurityConfig
     secrets: SecretsStoreConfig
 

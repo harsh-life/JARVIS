@@ -57,6 +57,16 @@ class ExecutionErrorCode(str, Enum):
     RESPONSE_TOO_LARGE = "response_too_large"
     PLATFORM_UNSUPPORTED = "platform_unsupported"
     DEVICE_UNAVAILABLE = "device_unavailable"
+    # docs/23 §4/§5.2: the device's own guard refused the operation (toggle
+    # off, wrong device, not in its mapping, malformed, sensitive package…).
+    DEVICE_REFUSED = "device_refused"
+    # The operation's short authority window closed before it ran (docs/23 §4).
+    OPERATION_EXPIRED = "operation_expired"
+    # An on-device dependency the operation needs is not available right now —
+    # Shizuku after a reboot, Accessibility turned off (docs/23 §5.3).
+    PLATFORM_UNAVAILABLE = "platform_unavailable"
+    # Allowed and attempted, and it did not work (08 §7: e.g. target absent).
+    DEVICE_ACTION_FAILED = "device_action_failed"
     TIMEOUT = "timeout"
     CANCELLED = "cancelled"
     RESOURCE_EXHAUSTED = "resource_exhausted"

@@ -188,6 +188,11 @@ class DeviceHelloAck(_Strict):
     session_expires_at: datetime
 
 
+class DeviceReauthAck(_Strict):
+    type: Literal["reauth_ok"] = "reauth_ok"
+    session_expires_at: datetime
+
+
 class DeviceWakePush(_Strict):
     """The entire push payload (docs/23 §4, ANDC-T9): "reconnect", nothing
     else. No operation, no user or screen content, no identifiers beyond what
@@ -358,6 +363,7 @@ __all__ = [
     "DevicePlatformDependency",
     "DevicePlatformStatus",
     "DeviceReauth",
+    "DeviceReauthAck",
     "DeviceRefusalReason",
     "DeviceResultEnvelope",
     "DeviceResultStatus",
