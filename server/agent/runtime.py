@@ -60,7 +60,13 @@ from server.agent.proposals import (
     ToolCall,
     parse_proposal,
 )
-from server.agent.records import create_task_row, load_task_row, update_task_row
+from server.agent.records import (
+    close_if_live,
+    create_task_row,
+    load_task_row,
+    non_terminal_task_ids,
+    update_task_row,
+)
 from server.agent.state import Activation, PendingStep, TaskState, TaskStateRegistry
 from server.models.provider import ModelProvider, ModelUnavailable
 from shared.schemas.agent import (
@@ -289,19 +295,22 @@ class AgentRuntime:
             if env.supervisor.latched_now():
                 self._breaker.trip(BreakerScope.TASK, task_id, reason=TripSource.GLOBAL_LATCH.value,
                                    source=TripSource.GLOBAL_LATCH.value)
-            await self._event(env, state, AgentEvent.TASK_SUBMITTED, AuditResult.SUCCESS)
-            if state.tripped is not None:
-                return await self._emergency_stop(env, state)
+            try:
+                await self._event(env, state, AgentEvent.TASK_SUBMITTED, AuditResult.SUCCESS)
+                if state.tripped is not None:
+                    return await self._emergency_stop(env, state)
 
-            hydration = await env.hydrator.hydrate(
-                principal=principal, graph_id=graph_id, query=user_input
-            )
-            state.notes.extend(hydration.notes)
-            state.messages = [
-                ctx.ChatMessage("system", ""),  # regenerated every step
-                ctx.context_message(hydration.items, hydration.notes, user_input),
-            ]
-            return await self._drive(env, state)
+                hydration = await env.hydrator.hydrate(
+                    principal=principal, graph_id=graph_id, query=user_input
+                )
+                state.notes.extend(hydration.notes)
+                state.messages = [
+                    ctx.ChatMessage("system", ""),  # regenerated every step
+                    ctx.context_message(hydration.items, hydration.notes, user_input),
+                ]
+                return await self._drive(env, state)
+            except Exception as exc:  # noqa: BLE001 — see _internal_failure
+                return await self._internal_failure(env, state, exc)
 
     async def confirm(
         self,
@@ -328,8 +337,14 @@ class AgentRuntime:
             raise TaskNotAwaiting()
 
         state = self._states.get(task_id)
-        if state is None or state.pending is None:
+        if state is None:
             return await self._fail_row(env, row, AgentFailureCode.CONFIRMATION_STATE_LOST, caller)
+        if state.pending is None:
+            # Live, and another request already claimed the pending action (a
+            # double tap, a retried request): it is running, not awaiting. The
+            # row still reads "awaiting" only because that request has not
+            # committed yet — it must never be closed from here.
+            raise TaskNotAwaiting()
         if state.tripped is not None:
             # 18 §5.2/§6: a stopped task is terminal. No approval, whatever the
             # token, runs or resumes anything once the breaker has tripped.
@@ -370,7 +385,14 @@ class AgentRuntime:
             # cleared, a concurrent `/cancel` treats the task as paused and may
             # finish it — and this approval must then not go on to execute.
             state.pending = None
-            await self._set_status(env, state, AgentTaskStatus.RUNNING)
+            try:
+                await self._set_status(env, state, AgentTaskStatus.RUNNING)
+            except Exception:
+                # The store could not take the write (e.g. busy): nothing ran,
+                # so the action goes back to pending, exactly as it was, for a
+                # retry — rather than being lost with the failed request.
+                state.pending = pending
+                raise
             try:
                 if state.tripped is not None:
                     return await self._emergency_stop(env, state)
@@ -388,6 +410,8 @@ class AgentRuntime:
                 state.pending = pending
                 await self._set_status(env, state, AgentTaskStatus.AWAITING_CONFIRMATION)
                 raise
+            except Exception as exc:  # noqa: BLE001 — see _internal_failure
+                return await self._internal_failure(env, state, exc)
             return await self._drive(env, state)
 
     async def cancel(
@@ -412,19 +436,8 @@ class AgentRuntime:
             return self._result_from_state(state, AgentTaskStatus.RUNNING)
 
         if state is None:
-            principal = Principal(
-                user_id=row.user_id, device_id=row.device_id, session_id=row.session_id,
-                active_graph_id=row.graph_id,
-            )
-            await env.security.settle_break_glass(principal=principal, graph_id=row.graph_id, task_id=task_id,
-                                                  ended=AgentTaskStatus.CANCELLED)
-            await env.security.deactivate_task(principal=principal, task_id=task_id)
-            await env.security.invalidate_confirmations(principal=principal, task_id=task_id)
-            self._tools.release_task(task_id)
-            updated = await update_task_row(
-                env.session, task_id, status=AgentTaskStatus.CANCELLED,
-                iterations=row.iterations, model_calls=row.model_calls, tool_calls=row.tool_calls,
-            )
+            updated, _ = await self._close_from_row(env, row, AgentTaskStatus.CANCELLED, None,
+                                                    event=AgentEvent.TASK_CANCELLED)
             return self._result_from_row(updated)
 
         state.pending = None  # the paused action is dropped, never performed
@@ -477,19 +490,12 @@ class AgentRuntime:
             return StopOutcome.NOT_FOUND
         if AgentTaskStatus(row.status) in TERMINAL_STATUSES:
             return StopOutcome.ALREADY_TERMINAL
+        _, closed = await self._close_from_row(env, row, AgentTaskStatus.FAILED,
+                                               AgentFailureCode.EMERGENCY_STOP, event=AgentEvent.TASK_FAILED)
+        if not closed:
+            return StopOutcome.ALREADY_TERMINAL
         principal = Principal(user_id=row.user_id, device_id=row.device_id,
                               session_id=row.session_id, active_graph_id=row.graph_id)
-        await env.security.settle_break_glass(principal=principal, graph_id=row.graph_id, task_id=task_id,
-                                              ended=AgentTaskStatus.FAILED,
-                                              failure=AgentFailureCode.EMERGENCY_STOP)
-        await env.security.deactivate_task(principal=principal, task_id=task_id)
-        await env.security.invalidate_confirmations(principal=principal, task_id=task_id)
-        self._tools.release_task(task_id)
-        await update_task_row(
-            env.session, task_id, status=AgentTaskStatus.FAILED, iterations=row.iterations,
-            model_calls=row.model_calls, tool_calls=row.tool_calls,
-            failure_code=AgentFailureCode.EMERGENCY_STOP.value,
-        )
         await env.security.record(
             AgentEvent.BREAKER_TRIPPED, principal=principal, graph_id=row.graph_id,
             resource=_trip_resource(BreakerScope.TASK, task_id, source, reason),
@@ -553,6 +559,13 @@ class AgentRuntime:
                     text = await self._model_step(env, state, models, remaining)
                 except _Interrupted:
                     continue  # the checkpoint above decides: stop or cancel
+                # A stop or cancel that landed while the model was answering is
+                # enforced before its proposal is acted on — even a final answer:
+                # a stopped task never ends as "completed".
+                if state.tripped is not None:
+                    return await self._emergency_stop(env, state)
+                if state.cancelled:
+                    return await self._finish(env, state, AgentTaskStatus.CANCELLED)
 
                 try:
                     proposal = parse_proposal(text)
@@ -599,6 +612,8 @@ class AgentRuntime:
                     await self._check_progress(env, state, models)
         except _Stop as stop:
             return await self._fail(env, state, stop.code)
+        except Exception as exc:  # noqa: BLE001 — see _internal_failure
+            return await self._internal_failure(env, state, exc)
         finally:
             state.run_seconds_used += time.monotonic() - segment_start
 
@@ -644,6 +659,10 @@ class AgentRuntime:
         against the task's cancel event. `None` means the worker was
         unavailable (recorded, never retried silently)."""
 
+        if state.cancel_event.is_set():
+            # A stop or cancel landed (e.g. while the previous worker failed and
+            # the next was being chosen): no new call is started at all.
+            raise _Interrupted()
         if state.model_calls >= self._bounds.max_model_calls:
             raise _Stop(AgentFailureCode.MAX_MODEL_CALLS)
         if remaining() <= 0:
@@ -1256,6 +1275,25 @@ class AgentRuntime:
     async def _fail(self, env: TaskEnvironment, state: TaskState, code: AgentFailureCode) -> AgentResult:
         return await self._finish(env, state, AgentTaskStatus.FAILED, failure=code)
 
+    async def _internal_failure(self, env: TaskEnvironment, state: TaskState, exc: Exception) -> AgentResult:
+        """Anything unexpected — an exception from a dependency, or from input
+        no check anticipated — fails the task closed, like any other failure:
+        in-flight work is aborted, grants revoked, tokens spent, temp released,
+        any break-glass record ended, and the failure recorded. Without this
+        the request would error out, its transaction (task row and audit
+        included) would roll back, and the task's live state would be left
+        behind in this process."""
+
+        logger.error("task %s failed on an unexpected %s", state.task_id, type(exc).__name__, exc_info=exc)
+        state.cancel_event.set()
+        try:
+            return await self._fail(env, state, AgentFailureCode.INTERNAL_ERROR)
+        except Exception:
+            # The store itself is failing: the request cannot record anything.
+            # At least nothing of the task survives in this process.
+            self._states.pop(state.task_id)
+            raise
+
     async def _emergency_stop(self, env: TaskEnvironment, state: TaskState) -> AgentResult:
         """Enforce a breaker trip (18 §5.3). By the time this runs, `trip()`
         has already set the cancel event, so an in-flight tool call was aborted
@@ -1285,20 +1323,76 @@ class AgentRuntime:
 
     async def _fail_row(self, env: TaskEnvironment, row, code: AgentFailureCode,
                         caller: Principal) -> AgentResult:
-        principal = Principal(user_id=row.user_id, device_id=row.device_id,
-                              session_id=row.session_id, active_graph_id=row.graph_id)
-        await env.security.settle_break_glass(principal=principal, graph_id=row.graph_id, task_id=row.task_id,
-                                              ended=AgentTaskStatus.FAILED, failure=code)
-        await env.security.deactivate_task(principal=principal, task_id=row.task_id)
-        await env.security.invalidate_confirmations(principal=principal, task_id=row.task_id)
-        self._tools.release_task(row.task_id)
-        updated = await update_task_row(
-            env.session, row.task_id, status=AgentTaskStatus.FAILED, iterations=row.iterations,
-            model_calls=row.model_calls, tool_calls=row.tool_calls, failure_code=code.value,
-        )
+        """A paused task whose live state is gone (a restart, a pruned pause):
+        closed from its row, fail-closed. If another request ended it first,
+        its outcome stands and this is simply not awaiting any more."""
+
+        updated, closed = await self._close_from_row(env, row, AgentTaskStatus.FAILED, code,
+                                                     event=AgentEvent.TASK_ABANDONED)
+        if not closed:
+            raise TaskNotAwaiting()
         result = self._result_from_row(updated)
         result.failure = AgentFailure(code=code, message=_FAILURE_MESSAGES[code])
         return result
+
+    async def _close_from_row(self, env: TaskEnvironment, row, status: AgentTaskStatus,
+                              failure: AgentFailureCode | None, *, event: AgentEvent):
+        """Close a task that has no live state in this process, from its row.
+
+        The row is closed first and only if it is still non-terminal
+        (`close_if_live`): that write waits for any request still finishing the
+        same task and then sees its outcome, so a completed task is never
+        rewritten, and the cleanup below never runs twice. Then, exactly as
+        `_finish` does for a live task: any break-glass record ends, task
+        grants are revoked, confirmation tokens spent, the temp root released,
+        and the close is audited. Returns (row as it now is, whether closed)."""
+
+        updated, closed = await close_if_live(env.session, row.task_id, status=status,
+                                              failure_code=failure.value if failure else None)
+        if not closed:
+            return updated, False
+        principal = Principal(user_id=row.user_id, device_id=row.device_id,
+                              session_id=row.session_id, active_graph_id=row.graph_id)
+        await env.security.settle_break_glass(principal=principal, graph_id=row.graph_id, task_id=row.task_id,
+                                              ended=status, failure=failure)
+        await env.security.deactivate_task(principal=principal, task_id=row.task_id)
+        await env.security.invalidate_confirmations(principal=principal, task_id=row.task_id)
+        self._tools.release_task(row.task_id)
+        await env.security.record(
+            event, principal=principal, graph_id=row.graph_id,
+            resource=f"agent_task:{row.task_id}" + (f":{failure.value}" if failure else ""),
+            result=AuditResult.FAILURE,
+        )
+        return updated, True
+
+    async def reconcile_after_restart(self, env: TaskEnvironment) -> list[uuid.UUID]:
+        """Close every task a previous run of the server left unfinished
+        (18 §2, DECISION_REGISTER "a restart fails a paused task closed").
+
+        Called once at startup, before any request is served, when no task can
+        be live in this process: the transcript and the paused action were
+        volatile (MEM-001), so none of them can continue. A paused one fails
+        `confirmation_state_lost`, a running one `internal_error`, and each is
+        cleaned up and audited like any other end — its task grants no longer
+        wait out their expiry, its tokens are spent, its temp root is removed.
+        Assumes one server process owns the store (the pilot's deployment
+        model; the latch, breaker and records are per-process too)."""
+
+        closed: list[uuid.UUID] = []
+        for task_id in await non_terminal_task_ids(env.session):
+            if self._states.get(task_id) is not None:
+                continue
+            row = await load_task_row(env.session, task_id)
+            if row is None:
+                continue
+            code = (AgentFailureCode.CONFIRMATION_STATE_LOST
+                    if row.status == AgentTaskStatus.AWAITING_CONFIRMATION.value
+                    else AgentFailureCode.INTERNAL_ERROR)
+            _, did = await self._close_from_row(env, row, AgentTaskStatus.FAILED, code,
+                                                event=AgentEvent.TASK_ABANDONED)
+            if did:
+                closed.append(task_id)
+        return closed
 
     async def _event(self, env: TaskEnvironment, state: TaskState, event: AgentEvent,
                      result: AuditResult, *, resource: str | None = None,

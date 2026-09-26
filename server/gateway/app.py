@@ -8,6 +8,7 @@ one (the doc's own guidance).
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
@@ -25,6 +26,8 @@ from server.storage import StorageBackend
 
 API_V1_PREFIX = "/api/v1"
 
+logger = logging.getLogger("hypermind.gateway.app")
+
 
 def create_app(
     *,
@@ -32,6 +35,7 @@ def create_app(
     storage: StorageBackend | None = None,
     security: SecurityCore | None = None,
     unlock_secrets_on_startup: bool = False,
+    reconcile_tasks_on_startup: bool = False,
     agent_tasks: AgentTaskPort | None = None,
     supervisor_control: SupervisorControlPort | None = None,
 ) -> FastAPI:
@@ -56,6 +60,11 @@ def create_app(
             from server.gateway.security import unlock_secret_store
 
             await unlock_secret_store(app.state.security, app.state.storage)
+        if reconcile_tasks_on_startup and agent_tasks is not None:
+            # 18 / DECISION_REGISTER: a restart fails the tasks it interrupted
+            # closed. Done before the first request is served, so nothing can
+            # race it; a failure here stops the server from starting.
+            await _reconcile_tasks(app.state.storage, agent_tasks)
         try:
             yield
         finally:
@@ -129,3 +138,17 @@ def create_app(
         )
 
     return app
+
+
+async def _reconcile_tasks(storage, agent_tasks: AgentTaskPort) -> None:
+    import uuid
+
+    from server.security.audit import AuditLogger
+
+    async with storage.session() as session:
+        closed = await agent_tasks.reconcile_after_restart(
+            session, audit=AuditLogger(session, request_id=uuid.uuid4())
+        )
+        await session.commit()
+    if closed:
+        logger.warning("closed %d task(s) left unfinished by the previous server run", len(closed))

@@ -98,7 +98,7 @@ containers = ["server"]
 layers = [
     "composition",
     "dashboard",
-    "agent | modeltools | tools | memory | vault | scheduler | voice",
+    "agent | modeltools | tools | memory | vault | scheduler | voice | evaluation",
     "models",
     "gateway",
     "auth",
@@ -245,6 +245,7 @@ source_modules = [
     "server.scheduler",
     "server.voice",
     "server.intelligence",
+    "server.evaluation",
     "server.auth",
     "server.graph",
     "server.capabilities",
@@ -267,6 +268,25 @@ forbidden_modules = [
     # The executor reaches them through `server.execution.break_glass`'s
     # claim-only Protocol, the runtime through `SecurityPort.settle_break_glass`.
     "server.composition.break_glass",
+]
+
+# 19 (JDG-T2): the Judge scores and recommends; it never authorizes, executes,
+# resolves secrets, or reaches a tool. The layers contract above already keeps
+# `server.agent` and `server.evaluation` independent of each other (the runtime
+# never depends on the Judge); this names what the Judge may not reach below
+# it. Its superuser/control/break-glass reach is closed by the contract above.
+[[tool.importlinter.contracts]]
+name = "The Judge is never an authority (19, JDG-T2)"
+type = "forbidden"
+source_modules = ["server.evaluation"]
+forbidden_modules = [
+    "server.capabilities",
+    "server.graph",
+    "server.secrets",
+    "server.execution",
+    "server.fs",
+    "server.net",
+    "server.tools",
 ]
 
 # 09 §8 / 10 §3 (NET-005): the sandbox/egress boundary is worthless if an

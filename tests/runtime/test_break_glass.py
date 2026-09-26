@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import sqlite3
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -43,6 +44,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from sqlalchemy import update
+from sqlalchemy.exc import OperationalError
 
 from server.agent import ports as agent_ports
 from server.composition.break_glass import BreakGlassRefused, RefusalCode
@@ -65,6 +67,13 @@ from tests.runtime.conftest import (  # noqa: F401
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+def make_superuser_principal():
+    from server.gateway.superuser_auth import SuperuserPrincipal
+    from server.security.superuser import authenticate_superuser
+
+    return SuperuserPrincipal(grant=authenticate_superuser(TOKEN), request_id=uuid.uuid4())
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TOKEN = "TEST-ONLY-superuser-credential-0123456789abcdef"
@@ -724,3 +733,85 @@ async def test_cancelling_a_task_with_no_live_state_ends_its_record(bg):
     assert resp.json()["status"] == "cancelled"
     assert h.break_glass.active() == []
     assert await ended_reasons(h) == ["task_cancelled"]
+
+
+# ── integration hardening through U6: the remaining lifecycle cells ────────
+
+
+@pytest.mark.skipif(not Path("/proc").exists(), reason="needs /proc to observe the child process")
+async def test_a_global_stop_kills_an_unconfined_process(bg):
+    h = await bg()
+    alice = await h.user("alice")
+    marker = "44.875"
+    task_id, confirming = await _running_unconfined_sleep(h, alice, marker)
+
+    stop = await h.client.post(f"{CONTROL}/global-stop", headers=SU, json={"reason": "incident"})
+    assert stop.status_code == 200, stop.text
+    finished = await asyncio.wait_for(confirming, timeout=15)
+    assert failure_of(finished) == "emergency_stop"
+    assert await _gone(marker), "an unconfined process outlived the global stop"
+    assert h.break_glass.active() == []
+    # While latched, nothing new starts — and a record cannot be activated.
+    assert (await h.submit(alice)).status_code == 503
+
+
+async def test_a_record_never_changes_what_the_task_mode_allows(bg):
+    """Break-glass removes a kernel layer from a run the mode already allows.
+    A draft task allows no shell run, record or not: the ceiling refuses it
+    before authorization, so it never even becomes a confirmation."""
+
+    h = await bg()
+    alice = await h.user("alice")
+    await h.grant(alice, "system.restricted")
+    holding, release = asyncio.Event(), asyncio.Event()
+
+    async def wait_for_record(messages):
+        holding.set()
+        await release.wait()
+        return call("system.shell", "run_shell_command", args={"argv": ["cat", h.outside]})
+
+    h.model.push(wait_for_record, final("no"))
+    running = asyncio.create_task(h.submit(alice, extra_body={"mode": "draft"}))
+    await holding.wait()
+    [state] = list(h.runtime.states.live())
+    record = h.break_glass.prepare(make_superuser_principal(), task_id=state.task_id,
+                                   task_owner=alice.user_id, user_id=alice.user_id, executables=["cat"],
+                                   max_invocations=1, window_seconds=60, task_seconds_left=60, reason="t")
+    h.break_glass.install(make_superuser_principal(), record)
+    release.set()
+    resp = await running
+
+    assert resp.status_code == 200 and resp.json()["pending"] is None
+    assert resp.json()["mode"] == "draft"
+    # Refused before it is even authorized: system.restricted cannot be active
+    # in a draft task (none of its operations fits the ceiling), record or not.
+    assert "Capability 'system.restricted' is not active for this task" in h.model.all_text()
+    assert await tool_outcomes(h) == [] and OUTSIDE not in h.model.all_text()
+    assert await audit(h, AuditAction.BREAK_GLASS_INVOKED) == []
+
+
+async def test_an_activation_whose_audit_cannot_be_written_never_goes_live(bg, monkeypatch):
+    """Audit first, then live: if the activation cannot be recorded (e.g. the
+    store is held by a running task past its busy timeout), no record exists."""
+
+    h = await bg()
+    alice = await h.user("alice")
+    await h.grant(alice, "system.restricted")
+    paused = await paused_shell(h, alice, ["cat", h.outside], then=[final("done")])
+    from server.security.audit import AuditLogger
+
+    real = AuditLogger.record
+
+    async def failing(self, **kwargs):
+        if kwargs.get("action") is AuditAction.BREAK_GLASS_ACTIVATED:
+            raise OperationalError("INSERT", {}, sqlite3.OperationalError("database is locked"))
+        return await real(self, **kwargs)
+
+    monkeypatch.setattr(AuditLogger, "record", failing)
+    resp = await activate(h, paused["task_id"], alice.user_id)
+
+    assert resp.status_code == 503, resp.text
+    assert h.break_glass.active() == []
+    monkeypatch.setattr(AuditLogger, "record", real)
+    assert (await h.confirm(alice, paused["task_id"], paused["confirmation_token"])).status_code == 200
+    assert await tool_outcomes(h) == ["failed tool:system.shell.run_shell_command:unauthorized_executable"]

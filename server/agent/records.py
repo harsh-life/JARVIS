@@ -9,12 +9,14 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.storage.models import AgentTask
 from shared.schemas.agent import AgentTaskStatus, TERMINAL_STATUSES
 
 MAX_RESPONSE_CHARS = 20_000
+_NON_TERMINAL = [s.value for s in AgentTaskStatus if s not in TERMINAL_STATUSES]
 
 
 def _utcnow() -> datetime:
@@ -87,3 +89,45 @@ async def update_task_row(
         row.finished_at = now
     await session.flush()
     return row
+
+
+async def close_if_live(
+    session: AsyncSession,
+    task_id: uuid.UUID,
+    *,
+    status: AgentTaskStatus,
+    failure_code: str | None = None,
+) -> tuple[AgentTask | None, bool]:
+    """Move a task to a terminal status **only if it is not terminal yet**.
+
+    For the paths that close a task from its row, with no live state to go by
+    (a restart, a pruned pause, a stateless cancel or stop). The row they read
+    can be stale: another request may be finishing the same task right now,
+    holding the store's write lock. This single conditional UPDATE runs after
+    that request commits, sees its outcome, and changes nothing if it already
+    ended — so a completed task is never rewritten as failed or cancelled.
+
+    Returns the row as it now is, and whether this call closed it.
+    """
+
+    assert status in TERMINAL_STATUSES
+    now = _utcnow()
+    values: dict = {"status": status.value, "updated_at": now, "finished_at": now}
+    if failure_code is not None:
+        values["failure_code"] = failure_code
+    result = await session.execute(
+        update(AgentTask)
+        .where(AgentTask.task_id == task_id, AgentTask.status.in_(_NON_TERMINAL))
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    row = (await session.execute(
+        select(AgentTask).where(AgentTask.task_id == task_id).execution_options(populate_existing=True)
+    )).scalar_one_or_none()
+    return row, result.rowcount == 1
+
+
+async def non_terminal_task_ids(session: AsyncSession) -> list[uuid.UUID]:
+    return list((await session.execute(
+        select(AgentTask.task_id).where(AgentTask.status.in_(_NON_TERMINAL))
+    )).scalars().all())

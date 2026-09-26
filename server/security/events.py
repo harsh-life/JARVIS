@@ -82,6 +82,7 @@ class AuditAction(str, Enum):
     AGENT_TASK_COMPLETED = "agent.task.completed"
     AGENT_TASK_FAILED = "agent.task.failed"
     AGENT_TASK_CANCELLED = "agent.task.cancelled"
+    AGENT_TASK_ABANDONED = "agent.task.abandoned"
     AGENT_PROPOSAL_REJECTED = "agent.proposal.rejected"
     AGENT_TOOL_EXECUTED = "agent.tool.executed"
     AGENT_TOOL_FAILED = "agent.tool.failed"

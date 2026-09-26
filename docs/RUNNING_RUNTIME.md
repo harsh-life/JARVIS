@@ -103,12 +103,38 @@ approval and becomes a task-scoped grant that is revoked when the task ends.
 - **`PUT /config/agent`.** Per-user/per-graph `AgentConfiguration` rows are read
   (OD-RT-3 precedence), but there is no endpoint to write them yet.
 
+## 4a. Deployment limits of the current foundation (known, documented)
+
+These are properties of the pilot architecture, measured during the
+integration-hardening pass through U6, not bugs to work around:
+
+- **One server process owns the store.** The task registry, the circuit
+  breaker, the in-memory side of the global latch, and break-glass records all
+  live in the process. Run one uvicorn worker. (The persisted latch still fails
+  closed across processes; nothing else is shared.)
+- **SQLite is single-writer, and a task holds the write lock for its whole
+  request.** A request that needs to write while another task's request is
+  running (a model call, a tool run) waits the driver's busy timeout (5 s) and
+  then fails with a clean, retryable `503 dependency_unavailable`
+  (`details.dependency = "storage"`); its transaction is rolled back, so
+  nothing it did persisted, and an approval that hit this is kept pending for a
+  retry. Operator stop and global stop are unaffected: they act in memory
+  first and write only after the stopped task has released the lock. Serving
+  concurrent users smoothly needs a multi-writer store (`database_url` is a
+  config change; see `server/storage`), which is out of scope for this build.
+- **A restart fails what it interrupted, closed.** The transcript and any
+  paused action are volatile (MEM-001). At startup, before the first request,
+  every task left non-terminal is closed — `confirmation_state_lost` if it was
+  paused, `internal_error` if it was running — with its task grants revoked,
+  its tokens spent, its temp root removed, and an `agent.task.abandoned` audit
+  row. Break-glass records do not survive a restart at all.
+
 ## 5. Tests and checks
 
 ```bash
 python3 -m pytest tests/ -q                       # the whole suite
 python3 -m pytest tests/runtime/ -q               # the runtime suite
-lint-imports --config pyproject.toml              # 10 boundary contracts
+lint-imports --config pyproject.toml              # 14 boundary contracts
 python3 -m pytest tests/security_core/test_od_a1_br_t2.py -q -s   # BR-T2 measurement
 ```
 
