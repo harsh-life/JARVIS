@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Protocol
 
@@ -49,6 +50,34 @@ class LatchReport:
     tasks: StopReport = field(default_factory=StopReport)
 
 
+@dataclass(frozen=True)
+class BreakGlassView:
+    """A break-glass record as the operator sees it (20 §2.2)."""
+
+    record_id: str
+    task_id: uuid.UUID
+    user_id: uuid.UUID
+    executables: list[str]
+    max_invocations: int
+    remaining: int
+    reason: str
+    activated_at: datetime
+    expires_at: datetime
+
+
+class BreakGlassRefusalKind(str, Enum):
+    CONFLICT = "conflict"        # the server or the task is not in a state that allows it
+    VALIDATION = "validation"    # the request asks for something it may not
+    NOT_FOUND = "not_found"
+
+
+class BreakGlassRequestRefused(Exception):
+    def __init__(self, kind: BreakGlassRefusalKind, code: str, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.code = code
+
+
 class SupervisorControlPort(Protocol):
     async def stop(
         self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
@@ -62,3 +91,18 @@ class SupervisorControlPort(Protocol):
     async def global_clear(
         self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
     ) -> LatchReport: ...
+
+    async def activate_break_glass(
+        self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
+        task_id: uuid.UUID, user_id: uuid.UUID, executables: list[str], max_invocations: int,
+        expires_in_seconds: int | None, reason: str,
+    ) -> BreakGlassView: ...
+
+    async def revoke_break_glass(
+        self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
+        task_id: uuid.UUID, reason: str,
+    ) -> BreakGlassView: ...
+
+    async def list_break_glass(
+        self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
+    ) -> list[BreakGlassView]: ...

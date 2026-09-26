@@ -210,6 +210,9 @@ class AgentResult(BaseModel):
     active_capabilities: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     counters: TaskCounters = Field(default_factory=TaskCounters)
+    # 20 §2.4 "observable": a live break-glass record exists for this task —
+    # its next matching `system.restricted` run would be unconfined.
+    break_glass_active: bool = False
 
 
 class ToolOperationSummary(BaseModel):

@@ -43,7 +43,7 @@ from server.storage.models import (
 )
 from shared.schemas.enums import SecretClass, SecretOwnerScopeType, UsageKind
 from tests.runtime.conftest import ask, call, failure_of, final, pending_of, say
-from tests.support import TEST_PROCESS_CONFINEMENT
+from tests.support import requires_landlock
 
 pytestmark = pytest.mark.asyncio
 
@@ -57,7 +57,7 @@ def real_tools(tmp_path: Path, *, process: dict | None = None, network: dict | N
     return {
         "execution": {
             "filesystem": {"base_root": str(tmp_path / "sandboxes")},
-            "process": {"confinement_mode": TEST_PROCESS_CONFINEMENT, **(process or {})},
+            "process": {**(process or {})},
             "network": network or {},
         }
     }
@@ -477,6 +477,7 @@ def _processes_with(marker: str) -> list[int]:
 
 
 @pytest.mark.skipif(not Path("/proc").exists(), reason="needs /proc to observe the child process")
+@requires_landlock
 async def test_case_i_cancelling_a_task_kills_its_running_process(make_harness, tmp_path):
     marker = "47.125"  # a sleep duration no other process uses
     h = await make_harness(

@@ -24,6 +24,7 @@ import pytest
 from server.execution import confinement
 from server.execution.process import ConstrainedProcessExecutor
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode
+from tests.support import DisposableHostExecutor
 
 pytestmark = pytest.mark.asyncio
 
@@ -37,7 +38,6 @@ def confined(**overrides) -> ConstrainedProcessExecutor:
         allowed_executables=["sh", "cat", "python3", "kill"],
         default_timeout_seconds=10.0,
         max_timeout_seconds=15.0,
-        confinement_mode=confinement.LANDLOCK,
     )
     defaults.update(overrides)
     return ConstrainedProcessExecutor(**defaults)
@@ -202,15 +202,21 @@ async def test_landlock_mode_fails_closed_where_unavailable(monkeypatch, tmp_pat
     assert not marker.exists()
 
 
-async def test_an_unknown_confinement_mode_is_refused_at_construction():
-    with pytest.raises(ExecutionError):
-        ConstrainedProcessExecutor(allowed_executables=["sh"], confinement_mode="container")
+async def test_there_is_no_confinement_mode_to_choose():
+    """20 §2.5: the global `unconfined` switch is gone — not refused, absent.
+    The only way a child runs without the kernel layer is a break-glass
+    record (`tests/execution/test_break_glass_executor.py`)."""
+
+    assert not hasattr(confinement, "UNCONFINED") and not hasattr(confinement, "MODES")
+    for mode in ("unconfined", "landlock"):
+        with pytest.raises(TypeError):
+            ConstrainedProcessExecutor(allowed_executables=["sh"], confinement_mode=mode)
 
 
-# ── allow-list integrity (both modes) ─────────────────────────────────────
+# ── allow-list integrity (both paths) ─────────────────────────────────────
 
 
-@pytest.mark.parametrize("mode", [confinement.UNCONFINED, confinement.LANDLOCK])
+@pytest.mark.parametrize("mode", ["break_glass", confinement.LANDLOCK])
 async def test_a_path_override_cannot_swap_the_allow_listed_binary(mode, tmp_path):
     """A bare allow-list name is exec'd by its resolved absolute path. Before,
     `exec` searched the child's PATH — which includes model-supplied overrides —
@@ -225,7 +231,8 @@ async def test_a_path_override_cannot_swap_the_allow_listed_binary(mode, tmp_pat
     decoy.chmod(0o755)
     (tmp_path / "f.txt").write_text("genuine")
 
-    ex = ConstrainedProcessExecutor(allowed_executables=["cat"], confinement_mode=mode)
+    ex = (DisposableHostExecutor(allowed_executables=["cat"]) if mode == "break_glass"
+          else ConstrainedProcessExecutor(allowed_executables=["cat"]))
     result = await ex.run(
         ["cat", "f.txt"], cwd=str(tmp_path), env_overrides={"PATH": str(decoy_dir)}
     )
@@ -235,7 +242,10 @@ async def test_a_path_override_cannot_swap_the_allow_listed_binary(mode, tmp_pat
 
 @pytest.mark.parametrize("key", ["LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES", "GCONV_PATH"])
 async def test_loader_controlling_env_overrides_are_refused(key, tmp_path):
-    ex = ConstrainedProcessExecutor(allowed_executables=["cat"], confinement_mode=confinement.UNCONFINED)
+    # On the break-glass path: the loader protections are among what a record
+    # does *not* remove (20 §2.1, OD-EXEC-3).
+    ex = DisposableHostExecutor(allowed_executables=["cat"])
     with pytest.raises(ExecutionError) as excinfo:
         await ex.run(["cat", "/dev/null"], cwd=str(tmp_path), env_overrides={key: "./evil.so"})
     assert excinfo.value.code == ExecutionErrorCode.INVALID_ARGUMENTS
+    assert ex.break_glass.claims == []  # refused before a record was consulted: nothing spent

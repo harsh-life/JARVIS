@@ -88,11 +88,20 @@ execution:
     default_private_net: false
   process:
     allowed_executables: []              # system.restricted runs nothing until you list one
-    confinement_mode: "landlock"         # kernel-confined: no reads outside system dirs + task
-                                          # temp, no sockets. Where the kernel lacks Landlock
-                                          # (e.g. macOS) nothing runs. "unconfined" removes that
-                                          # boundary — never on a server holding other users' data.
+    confinement_mode: "landlock"         # the only value: kernel-confined, no reads outside system
+                                          # dirs + task temp, no sockets. Where the kernel lacks
+                                          # Landlock (e.g. macOS) nothing runs. There is no global
+                                          # "unconfined" setting; see break_glass below.
     read_only_paths: []                  # extra read-only paths an allowed program needs
+    # Break-glass (docs/20_CONFINEMENT_BREAK_GLASS.md): lets a SUPERUSER remove the kernel
+    # layer from one task's system.restricted runs, for recovery, via
+    # POST /api/v1/admin/control/break-glass. Such a child can read anything the server's OS
+    # user can. Enabling this alone runs nothing unconfined. See docs/RUNNING_EXECUTION.md §5.1.
+    break_glass:
+      enabled: false
+      allowed_executables: []            # its own list — never added to allowed_executables
+      max_window_minutes: 15             # ceiling per activation (1–15)
+      max_invocations: 1                 # ceiling per activation
 
 security:
   oidc:

@@ -416,6 +416,8 @@ class AgentRuntime:
                 user_id=row.user_id, device_id=row.device_id, session_id=row.session_id,
                 active_graph_id=row.graph_id,
             )
+            await env.security.settle_break_glass(principal=principal, graph_id=row.graph_id, task_id=task_id,
+                                                  ended=AgentTaskStatus.CANCELLED)
             await env.security.deactivate_task(principal=principal, task_id=task_id)
             await env.security.invalidate_confirmations(principal=principal, task_id=task_id)
             self._tools.release_task(task_id)
@@ -477,6 +479,9 @@ class AgentRuntime:
             return StopOutcome.ALREADY_TERMINAL
         principal = Principal(user_id=row.user_id, device_id=row.device_id,
                               session_id=row.session_id, active_graph_id=row.graph_id)
+        await env.security.settle_break_glass(principal=principal, graph_id=row.graph_id, task_id=task_id,
+                                              ended=AgentTaskStatus.FAILED,
+                                              failure=AgentFailureCode.EMERGENCY_STOP)
         await env.security.deactivate_task(principal=principal, task_id=task_id)
         await env.security.invalidate_confirmations(principal=principal, task_id=task_id)
         self._tools.release_task(task_id)
@@ -1087,6 +1092,10 @@ class AgentRuntime:
             ),
             timeout=max(0.001, min(handle.timeout_seconds, remaining())),
         )
+        # 20 §2.4: if that ran under a break-glass record, its invocation (and,
+        # once spent, the record's end) is audited now, with the task.
+        await env.security.settle_break_glass(principal=state.principal, graph_id=state.graph_id,
+                                              task_id=state.task_id)
         state.cost += output.estimated_cost
         # USAGE-001: exactly one UsageEvent per execution, success or failure.
         await env.usage.record(
@@ -1212,6 +1221,10 @@ class AgentRuntime:
                       *, response: str | None = None,
                       failure: AgentFailureCode | None = None, unresolved: bool = False) -> AgentResult:
         state.pending = None
+        # 20 §2.4: a break-glass record dies with its task — first, before
+        # anything else here can yield to another request.
+        await env.security.settle_break_glass(principal=state.principal, graph_id=state.graph_id,
+                                              task_id=state.task_id, ended=status, failure=failure)
         revoked = await env.security.deactivate_task(principal=state.principal, task_id=state.task_id)
         # No confirmation token outlives its task (18 §5.3 step 3) — a stop, a
         # cancel, and an ordinary end alike.
@@ -1274,6 +1287,8 @@ class AgentRuntime:
                         caller: Principal) -> AgentResult:
         principal = Principal(user_id=row.user_id, device_id=row.device_id,
                               session_id=row.session_id, active_graph_id=row.graph_id)
+        await env.security.settle_break_glass(principal=principal, graph_id=row.graph_id, task_id=row.task_id,
+                                              ended=AgentTaskStatus.FAILED, failure=code)
         await env.security.deactivate_task(principal=principal, task_id=row.task_id)
         await env.security.invalidate_confirmations(principal=principal, task_id=row.task_id)
         self._tools.release_task(row.task_id)

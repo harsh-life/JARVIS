@@ -32,8 +32,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.agent import AgentRuntime, StopOutcome
 from server.agent.breaker import TripSource
+from server.composition.break_glass import (
+    BreakGlassRecord,
+    BreakGlassRefused,
+    BreakGlassRegistry,
+    EndReason,
+    RefusalCode,
+    activation_resource,
+)
 from server.composition.facade import AgentTaskFacade
-from server.gateway.control_port import ControlScope, ControlTargetNotFound, LatchReport, StopReport
+from server.composition.security_port import record_break_glass_events
+from server.gateway.control_port import (
+    BreakGlassRefusalKind,
+    BreakGlassRequestRefused,
+    BreakGlassView,
+    ControlScope,
+    ControlTargetNotFound,
+    LatchReport,
+    StopReport,
+)
 from server.gateway.superuser_auth import SuperuserPrincipal
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
@@ -56,10 +73,14 @@ def _utcnow() -> datetime:
 class SupervisorControl:
     """Implements `server.gateway.control_port.SupervisorControlPort`."""
 
-    def __init__(self, *, runtime: AgentRuntime, facade: AgentTaskFacade, latch: InProcessLatch) -> None:
+    def __init__(
+        self, *, runtime: AgentRuntime, facade: AgentTaskFacade, latch: InProcessLatch,
+        break_glass: BreakGlassRegistry | None = None,
+    ) -> None:
         self._runtime = runtime
         self._facade = facade
         self._latch = latch
+        self._break_glass = break_glass
 
     # ── operator stop ───────────────────────────────────────────────────
 
@@ -168,6 +189,10 @@ class SupervisorControl:
         signalled, to_enforce = [], []
         for state in states:
             self._runtime.signal_stop(state.task_id, reason=reason, source=source)
+            if self._break_glass is not None:
+                # 20 §2.4: a trip ends the task's break-glass record at once,
+                # not when the stop is enforced.
+                self._break_glass.end_task(state.task_id, EndReason.BREAKER_TRIP)
             (to_enforce if state.pending is not None else signalled).append(state.task_id)
         return signalled, to_enforce
 
@@ -185,6 +210,123 @@ class SupervisorControl:
             elif outcome is StopOutcome.ALREADY_TERMINAL:
                 report.already_terminal.append(task_id)
         return report
+
+    # ── break-glass (20 §2.2) ───────────────────────────────────────────
+
+    async def activate_break_glass(
+        self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
+        task_id: uuid.UUID, user_id: uuid.UUID, executables: list[str], max_invocations: int,
+        expires_in_seconds: int | None, reason: str,
+    ) -> BreakGlassView:
+        """Key two of two. The record is bound to a task that is live in this
+        process right now, to that task's owner, to executables from the
+        operator's separate break-glass list, and to a window that never
+        outlasts the task. It authorizes nothing: every run still needs the
+        task's `system.restricted` activation, the owner's confirmation and
+        step-up, and the normal authorization decision."""
+
+        _require(principal)
+        _require_reason(reason)
+        refused = f"control:break_glass:activate:{task_id}:{reason}"
+        try:
+            registry = self._registry_or_refuse()
+            state = self._live_task(task_id)
+            record = registry.prepare(
+                principal, task_id=task_id, task_owner=state.principal.user_id, user_id=user_id,
+                executables=executables, max_invocations=max_invocations, window_seconds=expires_in_seconds,
+                task_seconds_left=self._runtime.bounds.wall_clock_timeout_seconds - state.run_seconds_used,
+                reason=reason,
+            )
+        except BreakGlassRefused as exc:
+            await _control_audit(audit, AuditAction.CONTROL_BREAK_GLASS, f"{refused}:{exc.code.value}",
+                                 AuditResult.BLOCKED)
+            raise _refusal(exc) from None
+
+        # Audit first, then make it live: no record is ever claimable before
+        # its activation is written. The write may wait for a running task's
+        # request to release the store; everything is re-checked after it.
+        await audit.record(actor=AuditActor.SUPERUSER, action=AuditAction.BREAK_GLASS_ACTIVATED,
+                           resource=activation_resource(record), result=AuditResult.SUCCESS,
+                           user_id=record.user_id)
+        try:
+            state = self._live_task(task_id)
+            if state.principal.user_id != record.user_id:
+                raise BreakGlassRefused(RefusalCode.USER_MISMATCH, "the task is not owned by that user")
+            registry.install(principal, record)
+        except BreakGlassRefused as exc:
+            await audit.record(actor=AuditActor.SYSTEM, action=AuditAction.BREAK_GLASS_ENDED,
+                               resource=f"bg:{record.record_id}:{task_id}:not_installed",
+                               result=AuditResult.BLOCKED, user_id=record.user_id)
+            await _control_audit(audit, AuditAction.CONTROL_BREAK_GLASS, f"{refused}:{exc.code.value}",
+                                 AuditResult.BLOCKED)
+            raise _refusal(exc) from None
+        return _view(record)
+
+    async def revoke_break_glass(
+        self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
+        task_id: uuid.UUID, reason: str,
+    ) -> BreakGlassView:
+        _require(principal)
+        _require_reason(reason)
+        try:
+            registry = self._registry_or_refuse()
+            record = registry.revoke(principal, task_id=task_id)  # in memory first
+        except BreakGlassRefused as exc:
+            await _control_audit(audit, AuditAction.CONTROL_BREAK_GLASS,
+                                 f"control:break_glass:revoke:{task_id}:{reason}:{exc.code.value}",
+                                 AuditResult.BLOCKED, flush=False)
+            raise _refusal(exc) from None
+        await _control_audit(audit, AuditAction.CONTROL_BREAK_GLASS,
+                             f"control:break_glass:revoke:{task_id}:{reason}", AuditResult.SUCCESS, flush=False)
+        await record_break_glass_events(audit, registry.drain(task_id), flush=False)
+        return _view(record)
+
+    async def list_break_glass(
+        self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
+    ) -> list[BreakGlassView]:
+        _require(principal)
+        if self._break_glass is None:
+            return []
+        records = self._break_glass.active()
+        # Rows owed for tasks nobody is driving any more are written here.
+        live = [s.task_id for s in self._runtime.states.live()]
+        await record_break_glass_events(audit, self._break_glass.drain_except(live), flush=False)
+        return [_view(r) for r in records]
+
+    def _registry_or_refuse(self) -> BreakGlassRegistry:
+        if self._break_glass is None or not self._break_glass.enabled:
+            raise BreakGlassRefused(RefusalCode.DISABLED, "break-glass is not enabled on this server")
+        return self._break_glass
+
+    def _live_task(self, task_id: uuid.UUID):
+        state = self._runtime.states.get(task_id)
+        if state is None or state.tripped is not None or state.cancelled or state.stop_enforced \
+                or self._latch.latched:
+            raise BreakGlassRefused(RefusalCode.TASK_NOT_LIVE, "no such live task in this server process")
+        return state
+
+
+_REFUSAL_KINDS = {
+    RefusalCode.DISABLED: BreakGlassRefusalKind.CONFLICT,
+    RefusalCode.TASK_NOT_LIVE: BreakGlassRefusalKind.CONFLICT,
+    RefusalCode.ALREADY_ACTIVE: BreakGlassRefusalKind.CONFLICT,
+    RefusalCode.USER_MISMATCH: BreakGlassRefusalKind.CONFLICT,
+    RefusalCode.NOT_FOUND: BreakGlassRefusalKind.NOT_FOUND,
+}
+
+
+def _refusal(exc: BreakGlassRefused) -> BreakGlassRequestRefused:
+    return BreakGlassRequestRefused(_REFUSAL_KINDS.get(exc.code, BreakGlassRefusalKind.VALIDATION),
+                                    exc.code.value, str(exc))
+
+
+def _view(record: BreakGlassRecord) -> BreakGlassView:
+    return BreakGlassView(
+        record_id=record.record_id, task_id=record.task_id, user_id=record.user_id,
+        executables=list(record.executables), max_invocations=record.max_invocations,
+        remaining=max(record.remaining, 0), reason=record.reason, activated_at=record.activated_at,
+        expires_at=record.expires_at,
+    )
 
 
 def _require(principal: SuperuserPrincipal) -> None:
@@ -218,5 +360,6 @@ def _ordered(first: list[uuid.UUID], more: list[uuid.UUID], *, skip: list[uuid.U
     return [t for t in dict.fromkeys([*first, *more]) if t not in skipped]
 
 
-async def _control_audit(audit: AuditLogger, action: AuditAction, resource: str, result: AuditResult) -> None:
-    await audit.record(actor=AuditActor.SUPERUSER, action=action, resource=resource, result=result)
+async def _control_audit(audit: AuditLogger, action: AuditAction, resource: str, result: AuditResult,
+                         *, flush: bool = True) -> None:
+    await audit.record(actor=AuditActor.SUPERUSER, action=action, resource=resource, result=result, flush=flush)

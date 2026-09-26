@@ -110,11 +110,22 @@ covers only the first:
 | 14 | Open a raw socket to an undeclared destination in-process | app-RCE | **REACHABLE** | `mediated_proxy` binds this codebase's adapters, not the process (10 §3, OD-NET-1). Inside OD-A1 (a). |
 | 15 | Read B's sandbox file from an approved `system.restricted` command | authorized | contained (Landlock hosts) | Landlock ruleset: reads only system dirs + the task's own temp root. **Before integration-hardening this row was REACHABLE** — the allow-listed program ran with the server's full filesystem view. |
 | 16 | Read the server's environment (`env:` KEK, superuser token) from an approved command | authorized | contained (Landlock hosts) | `/proc` is outside the ruleset. **Previously REACHABLE.** |
-| 17 | Row 15 under the explicit `confinement_mode: unconfined` opt-out | authorized | **REACHABLE** | The opt-out removes the kernel boundary. It is an operator decision recorded in `DECISION_REGISTER.md` §2B, not a default. |
+| 17a | Row 15 with break-glass **enabled** but no record for the task | authorized | contained | Enablement is key one of two; it runs nothing unconfined (20 §2.2). |
+| 17b | Row 15 from **another** task while a record is live | authorized | contained | A record binds one task, its owner, and named executables. |
+| 17c | Row 15 **inside an active break-glass window** | authorized | **REACHABLE** | The record removes the kernel layer from that one child — OD-A1's residual, reached deliberately and audited (20 §4). |
+| 17d | Row 16 inside an active break-glass window | authorized | **REACHABLE** | Same. Every activation on a multi-user server with real data is a cross-user exposure event. |
+| 17e | Row 15 after the record's invocations are spent | authorized | contained | The record has ended. |
 
-On a host without Landlock, rows 15–16 print `NOT MEASURED`: the default
-`landlock` mode then refuses to run any process at all (fail-closed), so there
-is nothing to measure. The previous 11 rows are unchanged (4 REACHABLE, 7
+Row 17 was, until U6, "row 15 under the global `confinement_mode: unconfined`
+opt-out" (REACHABLE for every task, for as long as the config said so). That
+switch no longer exists (a config naming it fails to load); unconfined
+execution is now reachable only as 17c/17d — one superuser-activated,
+task-bound, count- and time-limited record (BG-T10). It is recorded here as
+reachable, not claimed closed.
+
+On a host without Landlock, rows 15–16 print `NOT MEASURED`: normal
+`system.restricted` then refuses to run any process at all (fail-closed), so
+there is nothing to measure. The previous 11 rows are unchanged (4 REACHABLE, 7
 contained).
 
 What the re-run does **not** change: rows 13 and 14 are the same residual class
@@ -162,7 +173,7 @@ the measured radius.
 | **Stolen device credential** before revocation | "Logged in until revoked" is the deliberate UX choice (SESSION-001, 03 §7) | Short access-token TTL (15 min); step-up on credential rotation; immediate revocation killing live tokens | Accept, or shorten TTL |
 | Stolen access token | Short TTL | Opaque tokens with server lookup → revocation is immediate, not TTL-bounded | Accept |
 | Filesystem / egress reach under **app** RCE | `mediated` fs and `mediated_proxy` egress are application code (§3b rows 13, 14) | Authorized paths contained; `system.restricted` kernel-confined by default (§3b rows 15, 16) | **Accepted for pilot — option (a)**; `mount_isolated`/`netns_filtered` remain future hardening |
-| `system.restricted` under `confinement_mode: unconfined` | Operator opt-out (§3b row 17) | Default is `landlock`, which fails closed where unavailable | Do not enable with real data; owner decision in `DECISION_REGISTER.md` §2B |
+| `system.restricted` under an active break-glass record | Owner-ratified OD-EXEC-2: deliberate, for recovery (§3b rows 17c/17d) | Off by default; superuser-only, per task, per executable, ≤ `max_invocations`, ≤ 15 min and never past the task; every activation/invocation/end audited; still needs confirmation + step-up | Treat each activation with real data as a cross-user exposure event; transcribe OD-EXEC-2 into `DECISION_REGISTER.md` §2B (OD-BG-1) |
 | Mem0 cross-user reach under RCE | Not yet measurable (§4) | — | Re-run BR-T2 after `11` |
 
 Every residual above is documented with an owner action, and none is presented as

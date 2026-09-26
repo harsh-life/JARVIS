@@ -34,6 +34,7 @@ from sqlalchemy import select
 
 from server.auth.device import build_device_proof
 from server.composition import build_application
+from server.composition.break_glass import BreakGlassRegistry
 from server.config.schema import AppConfig
 from server.gateway.app import API_V1_PREFIX
 from server.gateway.security import SecurityCore, build_security_core
@@ -283,6 +284,7 @@ class Harness:
     ui: RecordingAdapter
     memory: InMemoryMemoryStore | None
     app: Any
+    break_glass: Any = None
 
     @property
     def runtime(self):
@@ -433,6 +435,9 @@ async def make_harness(tmp_path, monkeypatch) -> AsyncIterator[Callable]:
             return build_provider(spec, key_provider=key_provider, transport=transport)
 
         reads, writes, ui = RecordingAdapter("reads"), RecordingAdapter("writes"), RecordingAdapter("ui")
+        # One record store shared by the real execution tools and the app, as
+        # `build_application` does in production (20 §2).
+        break_glass = BreakGlassRegistry(app_config.execution.process.break_glass)
         if extra_tools is not None:
             tools = extra_tools
         elif use_real_execution_tools:
@@ -445,20 +450,20 @@ async def make_harness(tmp_path, monkeypatch) -> AsyncIterator[Callable]:
             # a fake that merely records what it was asked to do.
             from server.composition.execution_tools import build_execution_tools
 
-            tools = build_execution_tools(app_config)
+            tools = build_execution_tools(app_config, break_glass=break_glass)
         else:
             tools = [*file_tools(reads, writes), android_ui_tool(ui)]
         memory_store = InMemoryMemoryStore() if memory is True else (memory or None)
 
         app = build_application(
             app_config, storage=storage, security=core, provider_factory=factory,
-            extra_tools=tools, memory_store=memory_store,
+            extra_tools=tools, memory_store=memory_store, break_glass_registry=break_glass,
         )
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
         opened.append((client, storage))
         return Harness(client=client, oidc=oidc, core=core, storage=storage, config=app_config,
                        model=model, models=named, reads=reads, writes=writes, ui=ui,
-                       memory=memory_store, app=app)
+                       memory=memory_store, app=app, break_glass=break_glass)
 
     yield _make
     for client, storage in opened:

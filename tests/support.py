@@ -11,22 +11,89 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jwt
+import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from server.config.schema import AppConfig
 from server.execution import confinement
+from server.execution.break_glass import BreakGlassClaim
+from server.execution.process import ConstrainedProcessExecutor
 from server.secrets.kek import generate_kek_value
 
-# Process tests exercise the executor's lifecycle (timeouts, output caps, env
-# sanitization) on every host. Where the kernel can confine a process — Linux,
-# including CI — they run confined, which also proves confinement does not break
-# legitimate commands. Elsewhere (macOS) `landlock` mode refuses to run anything,
-# so they opt into `unconfined` explicitly; the confinement guarantees are
-# asserted separately (tests/execution/test_process_confinement.py).
-TEST_PROCESS_CONFINEMENT = confinement.LANDLOCK if confinement.available() else confinement.UNCONFINED
+if TYPE_CHECKING:
+    from server.gateway.superuser_auth import SuperuserPrincipal
+
+# ── system.restricted on hosts with and without Landlock (OD-BG-2) ─────────
+#
+# There is no global unconfined mode any more (20 §2.5). Where the kernel can
+# confine a process — Linux, including CI — `system.restricted` runs confined,
+# and every process test runs that way. Where it cannot (macOS, old kernels),
+# normal `system.restricted` is unsupported: it fails closed, and the tests that
+# need a child to run are skipped with `NO_LANDLOCK_REASON` rather than quietly
+# run without confinement. Their fail-closed behaviour is asserted by
+# tests that run everywhere.
+#
+# The one exception is executor *mechanics* — timeouts, output caps, env
+# sanitization, process-group kill — which break-glass must keep (20 §2.1,
+# BG-T8). Those also run on the break-glass path, through an explicit
+# `DisposableHostBreakGlass` record store: a test double for a disposable,
+# data-free test environment, never a production object and never a switch.
+HAS_LANDLOCK = confinement.available()
+NO_LANDLOCK_REASON = (
+    "normal system.restricted needs Landlock (OD-EXEC-1) and fails closed on this host; "
+    "its refusal is asserted by the fail-closed tests (OD-BG-2: no global unconfined mode)"
+)
+requires_landlock = pytest.mark.skipif(not HAS_LANDLOCK, reason=NO_LANDLOCK_REASON)
+
+DISPOSABLE_TASK_ID = uuid.UUID("00000000-0000-4000-8000-00000000d15b")
+DISPOSABLE_USER_ID = uuid.UUID("00000000-0000-4000-8000-00000000d15c")
+
+
+class DisposableHostBreakGlass:
+    """OD-BG-2's disposable/test-environment break-glass record store. It
+    grants every claim — the whole point of a record is that a superuser
+    issued it, and here the test is that superuser — so it exists only in
+    tests, for a host with no data worth protecting. Every claim is kept, so a
+    test can assert the unconfined path was really taken."""
+
+    def __init__(self) -> None:
+        self.claims: list[BreakGlassClaim] = []
+        self.invocations: list[tuple[BreakGlassClaim, dict]] = []
+
+    def claim(self, *, task_id: uuid.UUID, user_id: uuid.UUID, executable: str) -> BreakGlassClaim:
+        claim = BreakGlassClaim(record_id="disposable-test", task_id=task_id, user_id=user_id,
+                                executable=executable, remaining=1)
+        self.claims.append(claim)
+        return claim
+
+    def record_invocation(self, claim: BreakGlassClaim, **details: Any) -> None:
+        self.invocations.append((claim, details))
+
+
+class DisposableHostExecutor(ConstrainedProcessExecutor):
+    """Every allow-listed executable, run through the break-glass path as the
+    disposable test task. Named for what it is: unconfined."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        allowed = tuple(kwargs.pop("allowed_executables", ()))
+        self.break_glass = DisposableHostBreakGlass()
+        super().__init__(allowed_executables=allowed, break_glass_executables=allowed,
+                         break_glass=self.break_glass, **kwargs)
+
+    async def run(self, argv, *, cwd, task_id=None, user_id=None, **kwargs):  # type: ignore[override]
+        return await super().run(argv, cwd=cwd, task_id=task_id or DISPOSABLE_TASK_ID,
+                                 user_id=user_id or DISPOSABLE_USER_ID, **kwargs)
+
+
+def landlock_or_disposable_executor(**kwargs: Any) -> ConstrainedProcessExecutor:
+    """For adapter/lifecycle tests: confined where the host can confine,
+    otherwise explicitly the disposable-host break-glass executor."""
+
+    return ConstrainedProcessExecutor(**kwargs) if HAS_LANDLOCK else DisposableHostExecutor(**kwargs)
+
 
 TEST_CLIENT_ID = "test-oidc-client-id.apps.googleusercontent.example"
 TEST_ISSUER = "https://accounts.google.test"
@@ -143,3 +210,17 @@ class _Omit:
 
 _OMIT = _Omit()
 OMIT = _OMIT
+
+
+TEST_SUPERUSER_TOKEN = "TEST-ONLY-superuser-token-of-sufficient-length"
+
+
+def make_superuser(monkeypatch) -> "SuperuserPrincipal":
+    """A verified superuser principal, minted the only way there is: the
+    out-of-band credential checked by `authenticate_superuser`."""
+
+    from server.gateway.superuser_auth import SuperuserPrincipal
+    from server.security.superuser import SUPERUSER_TOKEN_ENV, authenticate_superuser
+
+    monkeypatch.setenv(SUPERUSER_TOKEN_ENV, TEST_SUPERUSER_TOKEN)
+    return SuperuserPrincipal(grant=authenticate_superuser(TEST_SUPERUSER_TOKEN), request_id=uuid.uuid4())

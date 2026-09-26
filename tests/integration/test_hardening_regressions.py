@@ -26,7 +26,7 @@ from server.security.audit import AuditLogger
 from server.storage.models import AgentConfiguration, IdempotencyKey, User
 from shared.schemas.enums import AgentConfigScopeType, SecretClass, SecretOwnerScopeType, UserStatus
 from tests.runtime.conftest import ask, call, failure_of, final, pending_of
-from tests.support import TEST_KEK_ENV_VAR, TEST_PROCESS_CONFINEMENT
+from tests.support import TEST_KEK_ENV_VAR
 
 pytestmark = pytest.mark.asyncio
 
@@ -164,8 +164,7 @@ async def test_tool_invocations_carry_the_principals_own_device(h):
 async def test_a_finished_task_releases_its_temp_root(make_harness, tmp_path):
     h = await make_harness(
         config={"execution": {"filesystem": {"base_root": str(tmp_path / "sandboxes")},
-                              "process": {"allowed_executables": ["sh"],
-                                          "confinement_mode": TEST_PROCESS_CONFINEMENT}}},
+                              "process": {"allowed_executables": ["sh"]}}},
         use_real_execution_tools=True,
     )
     alice = await h.user("alice")

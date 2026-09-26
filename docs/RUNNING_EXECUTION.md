@@ -64,8 +64,13 @@ execution:
     default_timeout_seconds: 10.0
     max_timeout_seconds: 60.0
     max_output_bytes: 1000000
-    confinement_mode: "landlock"         # see §5 — fails closed where unavailable
+    confinement_mode: "landlock"         # the only value — see §5; fails closed where unavailable
     read_only_paths: []                  # extra read-only paths an allowed program needs
+    break_glass:                         # §5.1 — per-task, superuser-activated, off by default
+      enabled: false
+      allowed_executables: []            # a separate list; never widens allowed_executables
+      max_window_minutes: 15             # ceiling on one activation's window (1–15)
+      max_invocations: 1                 # ceiling on one activation's run count
 ```
 
 ## 3. What "mediated" containment/egress means, honestly
@@ -129,18 +134,84 @@ it does. So every child is confined by the kernel before it `exec`s
 | cannot signal, ptrace, or reach an abstract socket of the server process | Landlock scoping (kernel ABI ≥ 6) |
 | cannot gain privileges through setuid binaries | `no_new_privs` |
 
-Where the kernel cannot do this (macOS, Linux before 5.13), `landlock` mode
-refuses to run anything — `platform_unsupported` — rather than run it
-unconfined. `confinement_mode: unconfined` is an explicit operator opt-out that
-removes the boundary: a child can then read anything the server's OS user can
-and open its own network connections, which on a multi-user server is a
-cross-user data path through an *authorized* call (measured in
-`docs/OD_A1_BR_T2.md` §3b). Whether that opt-out should exist on a multi-user
-deployment at all is an owner decision (`docs/DECISION_REGISTER.md` §2B).
+Where the kernel cannot do this (macOS, Linux before 5.13), nothing runs —
+`platform_unsupported` — rather than run unconfined. `landlock` is the only
+`confinement_mode`: a config still saying `unconfined` fails to load, with a
+message pointing at `break_glass` (20 §2.5). There is no global switch that
+turns confinement off.
 
 What confinement does **not** cover: CPU and memory (the rlimits do), a kernel
 exploit, and — like every in-process boundary here — a compromised server
 process itself (OD-A1).
+
+### 5.1 Break-glass: unconfined execution for one task (20 §2, OD-EXEC-2)
+
+For recovery when confinement itself is in the way. It removes **only** the
+kernel layer (Landlock + seccomp) from `system.restricted` children of **one**
+task — authentication, authorization, capability activation, the
+`high_irreversible` confirmation and step-up, the executable allow-list, argv-
+only exec, the from-scratch environment and loader-variable refusal, rlimits,
+timeout, output caps, process-group kill, `/cancel`, metering, audit, rate
+limits, and every other tool's boundary (`09` for `file.*`, `10` for
+`net.request`, the SecretStore) all still apply.
+
+Two keys, both required:
+
+1. **Operator enablement** — `execution.process.break_glass.enabled: true`, with
+   the executables it may cover in `break_glass.allowed_executables` (its own
+   list: nothing here is added to `allowed_executables`). The server logs a
+   warning at startup. On its own this runs nothing unconfined.
+2. **Per-task activation, by the superuser** —
+
+   ```
+   POST /api/v1/admin/control/break-glass
+   Authorization: Superuser <HYPERMIND_SUPERUSER_TOKEN>
+   {"task_id": "…", "user_id": "<the task's owner>", "executables": ["strace"],
+    "max_invocations": 1, "expires_in_seconds": 600, "reason": "repair_landlock_rule"}
+   ```
+
+   The task must be live in this server process (typically paused on the very
+   `run_shell_command` confirmation it is meant for); `user_id` must be its
+   owner; every executable must be on `break_glass.allowed_executables`;
+   `max_invocations` (default 1) and the window (default and ceiling
+   `max_window_minutes`) may not exceed the config, and the window never
+   outlasts the task's own remaining time. `reason` is an identifier
+   (`^[a-z][a-z0-9_]{0,31}$`) because it is written to the audit trail, which
+   carries no free text. Users, workers, models, prompts, and recovery have no
+   way to activate one; no proposal field or tool argument names confinement.
+
+The owner then confirms the run as usual (with step-up). Only if a live record
+matches that task, its owner, and the executable does the child start without
+the kernel layer; each such run spends one invocation.
+
+A record ends at the first of: its invocations spent, its window passing, the
+task ending (completed, failed, cancelled), a breaker trip or operator stop, or
+`POST /api/v1/admin/control/break-glass/revoke {"task_id", "reason"}`.
+`GET /api/v1/admin/control/break-glass` lists live records, and the task's own
+status carries `break_glass_active: true` while one exists. Records live in
+server memory only: a restart ends them all.
+
+Audit: `break_glass.activated` (superuser; record id, task, reason, limits,
+executables), `break_glass.invoked` (system; record id, task, outcome, exit
+code, duration, a SHA-256 prefix of the argv — never the argv — and the
+executable), `break_glass.ended` (system; the reason), and
+`control.break_glass` for every refused activation or revoke.
+
+**Inside an active window the child can read anything the server's OS user can
+— other users' sandboxes, `/proc/<server>/environ` — and open its own network
+connections** (`docs/OD_A1_BR_T2.md` §3b rows 17a–17e). On a multi-user server
+with real data every activation is a cross-user exposure event. Break-glass
+does not make the server isolated; it is one more audited way to reach the
+accepted OD-A1 residual.
+
+**Hosts without Landlock (macOS, old kernels; OD-BG-2).** Normal
+`system.restricted` is unsupported there — it fails closed. Development on such
+a host uses Linux/WSL2, or a per-task break-glass activation on a disposable,
+data-free deployment. The test suite follows the same rule: tests that need a
+normal run to succeed are skipped with an explicit reason on such hosts, and
+executor-mechanics tests run on the break-glass path through a clearly-named
+test-only record store (`tests/support.py`). `JARVIS_TEST_SIMULATE_NO_LANDLOCK=1`
+runs the suite as such a host would.
 
 ## 6. Tests and checks
 

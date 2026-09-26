@@ -223,11 +223,18 @@ def net_request_tool(client: EgressClient, *, egress_policy: EgressPolicy) -> To
 # ── process execution (system.restricted, 08 §6) ────────────────────────
 
 
+_SHELL_ARGUMENTS = frozenset({"argv", "env_overrides", "timeout"})
+
+
 class ShellCommandAdapter:
     """The one, deliberately isolated `system.restricted` operation.
-    `argv`/`cwd`/`env_overrides`/`timeout` all pass straight to
+    `argv`/`env_overrides`/`timeout` pass straight to
     `ConstrainedProcessExecutor`, which does the actual allow-listing,
-    sanitization, and bounding — this adapter adds no policy of its own."""
+    sanitization, confinement and bounding. The adapter adds only the task's
+    working directory and its identity — `task_id` and `user_id`, taken from
+    the authorized invocation, never from arguments — which is what the
+    executor matches a break-glass record against (20 §2.4). Any other
+    argument key is refused rather than ignored."""
 
     def __init__(self, executor: ConstrainedProcessExecutor, *, sandbox: FilesystemSandbox) -> None:
         self._executor = executor
@@ -242,6 +249,9 @@ class ShellCommandAdapter:
     async def execute(self, invocation: ToolInvocation) -> ToolOutput:
         request = ExecutionRequest.from_invocation(invocation)
         try:
+            unknown = set(request.arguments) - _SHELL_ARGUMENTS
+            if unknown:
+                raise ExecutionError(ExecutionErrorCode.INVALID_ARGUMENTS, "unknown argument")
             argv = request.arguments.get("argv")
             if not isinstance(argv, list) or not all(isinstance(a, str) for a in argv):
                 raise ExecutionError(ExecutionErrorCode.INVALID_ARGUMENTS, "argv must be a list of strings")
@@ -258,6 +268,7 @@ class ShellCommandAdapter:
             result = await self._executor.run(
                 argv, cwd=cwd, env_overrides=env_overrides,
                 timeout=float(timeout) if timeout is not None else None,
+                task_id=request.task_id, user_id=request.user_id,
             )
         except ExecutionError as exc:
             return _failed(exc)

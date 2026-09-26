@@ -25,22 +25,32 @@ that isolation boundary's implementation:
 * **whole-process-tree cleanup** — the child starts its own session
   (`start_new_session=True`); a timeout or cancellation signals the whole
   process group, not just the direct child, so a forked grandchild cannot
-  outlive the call that spawned it.
+  outlive the call that spawned it;
+* **kernel confinement, with no switch** — every child is confined by Landlock
+  and seccomp (`confinement.py`), or does not run. The one exception is a
+  break-glass record (20 §2): superuser-activated for one task, its owner and
+  named executables, it removes that kernel layer — and only that — from a
+  matching child. Every bullet above still applies to such a child.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import resource
 import shutil
 import signal
 import subprocess
+import time
+import uuid
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from server.execution import confinement
+from server.execution.break_glass import BreakGlassClaim, BreakGlassLookup, InvocationOutcome
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode, ExecutionResult
 
 logger = logging.getLogger("hypermind.execution.process")
@@ -92,6 +102,13 @@ _RLIMIT_NPROC = 2048
 _RLIMIT_FSIZE_BYTES = 64 * 1024 * 1024
 
 
+def argv_digest(argv: Sequence[str]) -> str:
+    """What the audit trail records about a break-glass command line: a
+    digest, never the arguments themselves (the audit carries no payload)."""
+
+    return hashlib.sha256(json.dumps(list(argv), separators=(",", ":")).encode()).hexdigest()[:16]
+
+
 @dataclass(frozen=True)
 class ProcessOutcome:
     exit_code: int
@@ -101,8 +118,85 @@ class ProcessOutcome:
     timed_out: bool
 
 
+def _resolve_bare_names(entries: Sequence[str]) -> dict[str, str]:
+    # A bare (no "/") allow-list entry is resolved *once*, at construction,
+    # against the exact fixed PATH the child gets (_BASE_ENV["PATH"]) — never
+    # against the host's ambient $PATH — to the one absolute path it names
+    # today. That resolved path, plus the bare name itself (so a PATH-searched
+    # invocation still works), are the only two spellings accepted for that
+    # entry. Security review finding: matching on `os.path.basename(argv[0])`
+    # alone (a bare-name entry accepting *any* absolute path sharing that
+    # basename) let an operator who allow-listed "python3" unintentionally
+    # authorize an unrelated binary at a different path with the same
+    # basename — an `execve`-semantics bypass ("/"-containing argv[0] never
+    # goes through PATH search, so nothing constrained which such path could
+    # be supplied). Resolving to one concrete path closes that without losing
+    # the ergonomics of writing a bare name in config.
+    return {
+        name: resolved
+        for name in entries
+        if "/" not in name
+        for resolved in (shutil.which(name, path=_BASE_ENV["PATH"]),)
+        if resolved
+    }
+
+
+@dataclass(frozen=True)
+class _AllowList:
+    """One allow-list: the entries as the operator wrote them, plus the one
+    absolute path each bare entry resolved to."""
+
+    entries: frozenset[str]
+    resolved_by_name: Mapping[str, str]
+
+    @classmethod
+    def of(cls, entries: Sequence[str]) -> "_AllowList":
+        return cls(frozenset(entries), _resolve_bare_names(entries))
+
+    def entry_for(self, executable: str) -> str | None:
+        """The configured entry `executable` is an accepted spelling of, or
+        `None`. Exact match only — a bare entry additionally matches the one
+        absolute path it resolved to at construction, never any other path
+        that merely shares its basename. Every accepted spelling is one the
+        operator either wrote down or that PATH resolution deterministically
+        named."""
+
+        if executable in self.entries:
+            return executable
+        for name, resolved in self.resolved_by_name.items():
+            if resolved == executable:
+                return name
+        return None
+
+    def exec_path(self, executable: str) -> str | None:
+        """What to exec for an accepted spelling: always an absolute path,
+        never a bare name. `exec` searches the *child's* PATH for a bare name,
+        and the child environment includes model-supplied overrides —
+        `PATH=/somewhere` would otherwise swap in any binary called "python3"
+        for the allow-listed one."""
+
+        if "/" in executable:
+            return executable
+        return self.resolved_by_name.get(executable)
+
+    def absolute_paths(self) -> tuple[str, ...]:
+        return tuple(
+            path for path in (*self.entries, *self.resolved_by_name.values()) if path.startswith("/")
+        )
+
+
 class ConstrainedProcessExecutor:
-    """One instance per process, configured from `ExecutionConfig.process`."""
+    """One instance per process, configured from `ExecutionConfig.process`.
+
+    Every child is confined by the kernel (`confinement.py`); where the host
+    cannot confine, nothing runs (`PLATFORM_UNSUPPORTED`). There is no mode
+    switch. The one exception is break-glass (20 §2): a child whose
+    executable is on the *separate* break-glass list runs without the kernel
+    layer only when `break_glass.claim` — a server-side record a superuser
+    activated for this exact task, user and executable — says so, spending
+    one of that record's invocations. Nothing in `argv`, the environment, or
+    any other argument can ask for it.
+    """
 
     def __init__(
         self,
@@ -111,71 +205,35 @@ class ConstrainedProcessExecutor:
         default_timeout_seconds: float = 10.0,
         max_timeout_seconds: float = 60.0,
         max_output_bytes: int = 1_000_000,
-        confinement_mode: str = confinement.LANDLOCK,
         read_only_paths: Sequence[str] = (),
+        break_glass_executables: Sequence[str] = (),
+        break_glass: BreakGlassLookup | None = None,
     ) -> None:
-        if confinement_mode not in confinement.MODES:
-            raise ExecutionError(
-                ExecutionErrorCode.INTERNAL,
-                f"process confinement_mode {confinement_mode!r} is not one of {sorted(confinement.MODES)}",
-            )
-        # `landlock` (the default) confines every child with the kernel's
-        # filesystem/network/scope restrictions (`confinement.py`) and refuses
-        # to run anything where that is unavailable. `unconfined` is an explicit
-        # operator choice with no such boundary: a child can read whatever the
-        # server's OS user can, and open its own network connections.
-        self._confinement_mode = confinement_mode
-        if confinement_mode == confinement.UNCONFINED and allowed_executables:
-            logger.warning(
-                "system.restricted runs UNCONFINED: allow-listed executables can read any "
-                "file the server user can and reach the network directly"
-            )
-        self._allowed = frozenset(allowed_executables)
-        # A bare (no "/") allow-list entry is resolved *once*, here, against
-        # the exact fixed PATH the child gets (_BASE_ENV["PATH"]) — never
-        # against the host's ambient $PATH — to the one absolute path it
-        # names today. That resolved path, plus the bare name itself (so a
-        # PATH-searched invocation still works), are the only two spellings
-        # accepted for that entry. Security review finding: matching on
-        # `os.path.basename(argv[0])` alone (a bare-name entry accepting
-        # *any* absolute path sharing that basename) let an operator who
-        # allow-listed "python3" unintentionally authorize an unrelated
-        # binary at a different path with the same basename — an
-        # `execve`-semantics bypass ("/"-containing argv[0] never goes
-        # through PATH search, so nothing constrained which such path could
-        # be supplied). Resolving to one concrete path closes that without
-        # losing the ergonomics of writing a bare name in config.
-        self._resolved_by_name = {
-            name: resolved
-            for name in allowed_executables
-            if "/" not in name
-            for resolved in (shutil.which(name, path=_BASE_ENV["PATH"]),)
-            if resolved
-        }
-        self._resolved_allowed = frozenset(self._resolved_by_name.values())
+        self._normal = _AllowList.of(allowed_executables)
+        # 20 §2.3: its own list. Enabling break-glass never widens the
+        # ordinary allow-list — an entry here runs only under a live record.
+        self._break_glass_list = _AllowList.of(break_glass_executables if break_glass else ())
+        self._break_glass = break_glass
         # Each allowed executable must itself be readable/executable inside the
         # confinement, wherever the operator installed it.
-        self._read_only_paths = tuple(read_only_paths) + tuple(
-            path for path in (*self._allowed, *self._resolved_allowed) if path.startswith("/")
-        )
+        self._read_only_paths = tuple(read_only_paths) + self._normal.absolute_paths()
         self._default_timeout = default_timeout_seconds
         self._max_timeout = max_timeout_seconds
         self._max_output_bytes = max_output_bytes
 
-    def _assert_allowed(self, executable: str) -> None:
-        # Exact match only — a bare allow-list entry additionally matches
-        # the one absolute path it resolved to at construction time
-        # (`self._resolved_allowed`), never any other path that merely
-        # shares its basename. Every accepted spelling is one the operator
-        # either wrote down or that PATH resolution deterministically named.
-        if executable in self._allowed or executable in self._resolved_allowed:
-            return
-        raise ExecutionError(
-            ExecutionErrorCode.UNAUTHORIZED_EXECUTABLE,
-            f"{executable!r} is not in the configured process allow-list",
-        )
+    def _assert_allowed(self, executable: str) -> str:
+        if self._normal.entry_for(executable) is None:
+            raise ExecutionError(
+                ExecutionErrorCode.UNAUTHORIZED_EXECUTABLE,
+                f"{executable!r} is not in the configured process allow-list",
+            )
+        path = self._normal.exec_path(executable)
+        if path is None:
+            raise ExecutionError(ExecutionErrorCode.INVALID_ARGUMENTS, f"executable not found: {executable!r}")
+        return path
 
-    def _build_argv(self, argv: Sequence[str]) -> list[str]:
+    @staticmethod
+    def _validate_argv(argv: Sequence[str]) -> list[str]:
         if not argv:
             raise ExecutionError(ExecutionErrorCode.INVALID_ARGUMENTS, "argv must not be empty")
         if len(argv) > _MAX_ARGV_LENGTH:
@@ -189,19 +247,28 @@ class ConstrainedProcessExecutor:
             if len(arg) > _MAX_ARG_BYTES:
                 raise ExecutionError(ExecutionErrorCode.INVALID_ARGUMENTS, "argv element too long")
             cleaned.append(arg)
-        self._assert_allowed(cleaned[0])
-        # Exec the absolute path the allow-list entry resolved to, never a bare
-        # name: `exec` searches the *child's* PATH for a bare name, and the child
-        # environment includes model-supplied overrides — `PATH=/somewhere` would
-        # otherwise swap in any binary called "python3" for the allow-listed one.
-        if "/" not in cleaned[0]:
-            resolved = self._resolved_by_name.get(cleaned[0])
-            if resolved is None:
-                raise ExecutionError(
-                    ExecutionErrorCode.INVALID_ARGUMENTS, f"executable not found: {cleaned[0]!r}"
-                )
-            cleaned[0] = resolved
         return cleaned
+
+    def _build_argv(self, argv: Sequence[str]) -> list[str]:
+        cleaned = self._validate_argv(argv)
+        cleaned[0] = self._assert_allowed(cleaned[0])
+        return cleaned
+
+    def _claim_break_glass(
+        self, executable: str, task_id: uuid.UUID | None, user_id: uuid.UUID | None
+    ) -> tuple[BreakGlassClaim, str] | None:
+        """A spent invocation and the path to exec, or `None` for the ordinary
+        confined path. Asked last, after every other check on the call has
+        passed, so a call refused for any other reason never spends one."""
+
+        if self._break_glass is None or task_id is None or user_id is None:
+            return None
+        entry = self._break_glass_list.entry_for(executable)
+        path = self._break_glass_list.exec_path(executable) if entry is not None else None
+        if entry is None or path is None:
+            return None
+        claim = self._break_glass.claim(task_id=task_id, user_id=user_id, executable=entry)
+        return None if claim is None else (claim, path)
 
     def _build_env(self, overrides: Mapping[str, str] | None) -> dict[str, str]:
         env = dict(_BASE_ENV)
@@ -228,7 +295,8 @@ class ConstrainedProcessExecutor:
     def _child_setup(cls, cpu_seconds: int, plan: "confinement.ConfinementPlan | None") -> None:
         # Runs in the child after fork, before exec. Confinement goes last so the
         # rlimit calls are not themselves subject to it; a failure applying it
-        # raises, which aborts the exec — an unconfined child never starts.
+        # raises, which aborts the exec — a child meant to be confined never
+        # starts unconfined. `plan` is None only under a claimed break-glass record.
         cls._set_child_rlimits(cpu_seconds)
         if plan is not None:
             plan.apply_in_child()
@@ -265,8 +333,10 @@ class ConstrainedProcessExecutor:
         cwd: str,
         env_overrides: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        task_id: uuid.UUID | None = None,
+        user_id: uuid.UUID | None = None,
     ) -> ExecutionResult:
-        cleaned_argv = self._build_argv(argv)
+        cleaned_argv = self._validate_argv(argv)
         child_env = self._build_env(env_overrides)
         requested = self._default_timeout if timeout is None else timeout
         if requested <= 0:
@@ -279,9 +349,18 @@ class ConstrainedProcessExecutor:
         effective_timeout = min(requested, self._max_timeout)
 
         plan: confinement.ConfinementPlan | None = None
-        if self._confinement_mode == confinement.LANDLOCK:
+        broken = self._claim_break_glass(cleaned_argv[0], task_id, user_id)
+        if broken is not None:
+            # 20 §2.1: a live record removes the kernel layer from this one
+            # child — and nothing else. The environment was built from scratch
+            # and checked above; rlimits, the timeout, the output caps and the
+            # process-group kill below apply exactly as they do when confined.
+            claim, cleaned_argv[0] = broken
+        else:
+            claim = None
+            cleaned_argv[0] = self._assert_allowed(cleaned_argv[0])
             # Fail closed where the kernel cannot confine: nothing runs, rather
-            # than something running unconfined under a config that says it is.
+            # than something running unconfined.
             try:
                 plan = confinement.build_plan(writable=cwd, read_only=self._read_only_paths)
             except confinement.ConfinementUnavailable as exc:
@@ -290,12 +369,61 @@ class ConstrainedProcessExecutor:
                     f"process confinement is unavailable on this host ({exc}); nothing was run",
                 ) from None
 
-        cpu_seconds = int(effective_timeout) + 5
+        if claim is None:
+            outcome = await self._spawn(cleaned_argv, cwd, child_env, effective_timeout, plan)
+        else:
+            outcome = await self._spawn_under_break_glass(
+                claim, argv, cleaned_argv, cwd, child_env, effective_timeout
+            )
+        return ExecutionResult(
+            content=outcome.stdout,
+            units=1,
+            metadata={
+                "exit_code": outcome.exit_code,
+                "stderr": outcome.stderr,
+                "truncated": outcome.truncated,
+                "timed_out": outcome.timed_out,
+            },
+        )
+
+    async def _spawn_under_break_glass(
+        self, claim: BreakGlassClaim, argv: Sequence[str], cleaned_argv: list[str], cwd: str,
+        env: Mapping[str, str], timeout: float,
+    ) -> ProcessOutcome:
+        """The one unconfined path. The invocation is reported to the record
+        store however it ends — exited, timed out, cancelled (the process group
+        is killed first, as for any run), or never started."""
+
+        assert self._break_glass is not None
+        started = time.monotonic()
+        result, exit_code = InvocationOutcome.NOT_STARTED, None
+        try:
+            outcome = await self._spawn(cleaned_argv, cwd, env, timeout, None)
+            result = InvocationOutcome.TIMED_OUT if outcome.timed_out else InvocationOutcome.EXITED
+            exit_code = outcome.exit_code
+            return outcome
+        except asyncio.CancelledError:
+            result = InvocationOutcome.CANCELLED
+            raise
+        finally:
+            try:
+                self._break_glass.record_invocation(
+                    claim, argv_sha256=argv_digest(argv), outcome=result, exit_code=exit_code,
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                )
+            except Exception:  # pragma: no cover - the store's contract is not to raise
+                logger.exception("break-glass invocation could not be recorded")
+
+    async def _spawn(
+        self, cleaned_argv: list[str], cwd: str, env: Mapping[str, str], timeout: float,
+        plan: "confinement.ConfinementPlan | None",
+    ) -> ProcessOutcome:
+        cpu_seconds = int(timeout) + 5
         try:
             process = await asyncio.create_subprocess_exec(
                 *cleaned_argv,
                 cwd=cwd,
-                env=child_env,
+                env=dict(env),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 preexec_fn=lambda: self._child_setup(cpu_seconds, plan),
@@ -318,20 +446,9 @@ class ConstrainedProcessExecutor:
                 plan.close()
 
         try:
-            outcome = await self._communicate_bounded(process, effective_timeout)
+            return await self._communicate_bounded(process, timeout)
         finally:
             await self._ensure_process_group_dead(process)
-
-        return ExecutionResult(
-            content=outcome.stdout,
-            units=1,
-            metadata={
-                "exit_code": outcome.exit_code,
-                "stderr": outcome.stderr,
-                "truncated": outcome.truncated,
-                "timed_out": outcome.timed_out,
-            },
-        )
 
     async def _communicate_bounded(
         self, process: asyncio.subprocess.Process, timeout: float
@@ -410,4 +527,4 @@ class ConstrainedProcessExecutor:
                 continue
 
 
-__all__ = ["ConstrainedProcessExecutor", "ProcessOutcome"]
+__all__ = ["ConstrainedProcessExecutor", "ProcessOutcome", "argv_digest"]
