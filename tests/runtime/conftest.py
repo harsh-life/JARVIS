@@ -397,6 +397,12 @@ def base_config_payload() -> dict:
         "security": {"oidc": {"client_id": TEST_CLIENT_ID, "issuer": TEST_ISSUER}},
         "secrets": {"store": "encrypted_local", "kek_source": f"env:{TEST_KEK_ENV_VAR}"},
         "database_url": f"sqlite+aiosqlite:///./unused_{uuid.uuid4().hex}.db",
+        # The runtime suites use `com.example` as a stand-in app for device UI
+        # operations whose *confirmation* behaviour they test. Unclassified apps
+        # are denied UI control outright (docs/23 §5.5), so the harness
+        # classifies this one fictional package; the gate itself is tested in
+        # tests/security_core/test_sensitive_app_gate.py.
+        "android": {"app_classification": {"non_sensitive": ["com.example"]}},
     }
 
 

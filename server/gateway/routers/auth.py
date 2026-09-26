@@ -207,6 +207,32 @@ async def oidc_callback(
     )
 
 
+class AppPolicyResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    non_sensitive: list[str]
+    sensitive: list[str]
+    payment: list[str]
+
+
+@router.get("/devices/app-policy", response_model=AppPolicyResponse)
+async def app_policy(
+    request: Request,
+    resolved: ResolvedSession = Depends(get_resolved_session),
+) -> AppPolicyResponse:
+    """The sensitive-app classification, for the device to cache (docs/23
+    §5.2). The device uses it only to refuse early and to show which apps can
+    be controlled at all — it never makes anything allowed; the engine
+    enforces the same table regardless."""
+
+    classification = _android(request).app_classification
+    return AppPolicyResponse(
+        non_sensitive=sorted(classification.non_sensitive),
+        sensitive=sorted(classification.sensitive),
+        payment=sorted(classification.payment),
+    )
+
+
 @public_router.get("/.well-known/assetlinks.json", include_in_schema=False)
 async def asset_links(request: Request) -> Response:
     """Digital Asset Links: lets Android verify that the JARVIS app — this

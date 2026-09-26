@@ -434,6 +434,29 @@ class AndroidAppLinksConfig(StrictModel):
         return self.base_url is not None and bool(self.sha256_cert_fingerprints)
 
 
+class AndroidAppClassificationConfig(StrictModel):
+    """docs/CAPABILITY_MATRIX.md §5.1 — the owner's sensitive-app
+    classification, by package name. Every package absent from all three lists
+    is *unclassified*: UI control there is denied and screenshots refused.
+    `sensitive` raises UI operations to at least `consequential`; `payment` to
+    `high_irreversible`. Screenshots are allowed only for `non_sensitive`."""
+
+    non_sensitive: list[str] = Field(default_factory=list)
+    sensitive: list[str] = Field(default_factory=list)
+    payment: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _valid(self) -> "AndroidAppClassificationConfig":
+        seen: set[str] = set()
+        for name in (*self.non_sensitive, *self.sensitive, *self.payment):
+            if not _ANDROID_PACKAGE.match(name):
+                raise ValueError(f"android.app_classification: {name!r} is not a package name")
+            if name in seen:
+                raise ValueError(f"android.app_classification: {name!r} is classified more than once")
+            seen.add(name)
+        return self
+
+
 class AndroidConfig(StrictModel):
     """docs/23 — the Android client's server-side surface.
 
@@ -446,6 +469,9 @@ class AndroidConfig(StrictModel):
     # the contract's 60 s ceiling).
     operation_ttl_seconds: int = Field(default=30, ge=5, le=60)
     app_links: AndroidAppLinksConfig = Field(default_factory=AndroidAppLinksConfig)
+    app_classification: AndroidAppClassificationConfig = Field(
+        default_factory=AndroidAppClassificationConfig
+    )
 
 
 class OIDCConfig(StrictModel):

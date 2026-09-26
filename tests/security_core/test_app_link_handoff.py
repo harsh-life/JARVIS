@@ -135,3 +135,33 @@ async def test_the_fallback_page_cannot_read_the_fragment(linked_api):
 def test_app_link_configuration_is_validated(links):
     with pytest.raises(ValueError):
         AndroidAppLinksConfig(**links)
+
+
+# ── the cached app policy (docs/23 §5.2) ────────────────────────────────
+
+
+async def test_the_app_policy_is_served_to_an_authenticated_device_only(storage, kek_value):
+    from server.config.schema import AndroidAppClassificationConfig
+
+    provider = LocalOIDCProvider()
+    core = build_security_core(make_test_config(), oidc_provider=provider)
+    async with storage.session() as session:
+        await core.secret_store.bootstrap(session, resolve_kek(f"env:{TEST_KEK_ENV_VAR}"))
+        await session.commit()
+    android = AndroidConfig(
+        app_classification=AndroidAppClassificationConfig(
+            non_sensitive=["com.example.notes"], sensitive=["com.bank.app"], payment=["com.wallet.pay"]
+        )
+    )
+    app = create_app(storage=storage, security=core, android_config=android)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        api = Api(client=client, provider=provider, core=core, storage=storage)
+        assert (await client.get(f"{API_V1_PREFIX}/devices/app-policy")).status_code == 401
+        phone = await api.onboard("alice")
+        resp = await client.get(f"{API_V1_PREFIX}/devices/app-policy", headers=phone.auth)
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "non_sensitive": ["com.example.notes"],
+            "sensitive": ["com.bank.app"],
+            "payment": ["com.wallet.pay"],
+        }

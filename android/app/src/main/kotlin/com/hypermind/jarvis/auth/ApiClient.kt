@@ -1,5 +1,6 @@
 package com.hypermind.jarvis.auth
 
+import com.hypermind.jarvis.contract.AppPolicy
 import com.hypermind.jarvis.contract.ContractJson
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -112,6 +113,20 @@ class ApiClient(
                 .build(),
             expectBody = false,
         )
+    }
+
+    /** The server's sensitive-app classification, for the device to cache (docs/23 §5.2). */
+    fun appPolicy(accessToken: String): AppPolicy {
+        val body =
+            execute(
+                Request
+                    .Builder()
+                    .url(api("devices/app-policy"))
+                    .header("Authorization", "Bearer $accessToken")
+                    .get()
+                    .build(),
+            )
+        return lenient.decodeFromJsonElement(AppPolicy.serializer(), body)
     }
 
     fun channelUrl(): String =

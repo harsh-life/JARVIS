@@ -142,6 +142,16 @@ android:
     # SHA-256 of the signing certificate(s) of the APK you install — public
     # values (`keytool -list -v -keystore <your.jks>`), never a key.
     sha256_cert_fingerprints: []
+  # docs/CAPABILITY_MATRIX.md §5.1 — the owner's sensitive-app classification.
+  # An app in none of these lists is UNCLASSIFIED: JARVIS may read it (with the
+  # user's grant) but never tap, type, swipe, launch or stop it, and never
+  # screenshot it. `sensitive` apps need confirmation for every UI action;
+  # `payment` apps need confirmation plus fresh re-authentication. Screenshots
+  # only ever of `non_sensitive` apps.
+  app_classification:
+    non_sensitive: []                  # e.g. [com.android.settings]
+    sensitive: []                      # e.g. [com.whatsapp]
+    payment: []                        # e.g. [com.google.android.apps.nbu.paisa.user]
 
 security:
   oidc:

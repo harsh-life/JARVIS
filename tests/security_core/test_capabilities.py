@@ -483,14 +483,22 @@ async def test_tl_t10_the_risk_policy_takes_no_model_input():
     import inspect
 
     parameters = set(inspect.signature(RiskPolicyAdapter().risk_tier).parameters)
+    # `resource_scope` is the operation's own deterministic narrowing (which
+    # app it acts in) — what the sensitive-app classification is keyed on
+    # (docs/CAPABILITY_MATRIX.md §5.1: "keyed on resource_scope, deterministic,
+    # and never model-judged").
     assert parameters == {
         "resource_type",
         "operation",
         "capability_name",
         "capability_operation",
+        "resource_scope",
     }
+    scope_parameters = set(inspect.signature(RiskPolicyAdapter().scope_denial).parameters)
+    assert scope_parameters == {"capability_name", "capability_operation", "resource_scope"}
     for forbidden in ("confidence", "score", "model", "rationale", "llm", "suggestion"):
         assert forbidden not in parameters
+        assert forbidden not in scope_parameters
 
     floor_parameters = set(
         inspect.signature(FloorPolicyAdapter().floor_category_for_request).parameters

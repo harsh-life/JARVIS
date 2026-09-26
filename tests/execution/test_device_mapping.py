@@ -222,3 +222,18 @@ def test_the_envelope_omits_the_server_side_user_id():
     assert "user_id" not in wire
     assert wire["device_id"] == str(op.device_id)
     assert wire["mapping_version"] == MAPPING_VERSION
+
+
+@pytest.mark.parametrize("package", ["com..notes", "notapackage", "com.x;rm -rf", "1com.x"])
+def test_a_malformed_package_is_a_typed_refusal_not_a_crash(package):
+    """Found by the shared conformance vectors: a malformed package must be a
+    typed `invalid_arguments` refusal at build time, never a raw validation
+    error escaping the adapter when the envelope is serialized."""
+
+    with pytest.raises(ExecutionError) as excinfo:
+        build_operation(
+            capability="app.interact", operation="tap", package_name=package,
+            arguments={"view_id": "send"}, user_id=uuid.uuid4(), task_id=uuid.uuid4(),
+            device_id=uuid.uuid4(),
+        )
+    assert excinfo.value.code is ExecutionErrorCode.INVALID_ARGUMENTS

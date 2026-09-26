@@ -169,20 +169,31 @@ task starts with NO active capabilities
 
 ## 5. Open items this matrix surfaces
 
-### 5.1 Generic UI primitives can complete a consequential action — `[PROPOSED]`, owner decision needed
+### 5.1 Generic UI primitives can complete a consequential action — mechanism implemented; classification `[OPEN — OWNER]`
 
 `app.interact.tap` is `low_write`. In a messaging or banking app, a single tap on
-"Send" or "Pay" can *be* the consequential act. Today the mitigations are:
-`input_text` is `consequential` (so composing a message or an amount pauses), and
-every grant is per-app (`package_name`). That does not cover a one-tap
-consequential flow (a pre-filled "Buy now").
+"Send" or "Pay" can *be* the consequential act. `input_text` being
+`consequential` and every grant being per-app (`package_name`) does not cover a
+one-tap consequential flow (a pre-filled "Buy now").
 
-Proposal for the `08` branch: an owner-maintained **sensitive-app classification**
-under which every `app.interact`/`device.ui_control` operation scoped to a
-classified `package_name` is at least `consequential` (payment apps:
-`high_irreversible`). This is a tier-table change keyed on `resource_scope`,
-deterministic, and never model-judged. It is not implemented here because no
-device adapter exists to exercise it.
+**Implemented** (`server/capabilities/app_classification.py`, consulted by the
+engine through `RiskPolicy.scope_denial`/`risk_tier`): an owner-maintained
+classification, `android.app_classification` in config, keyed on the
+operation's `resource_scope.package_name`, deterministic, never model-judged:
+
+| Package class | UI-acting operations (grid toggle `ui_interaction`) | `capture_screenshot` |
+|---|---|---|
+| **unclassified — every app by default** | **denied**, never confirmable (`app_not_classified`) | **denied** |
+| `non_sensitive` | registry tier | allowed |
+| `sensitive` | ≥ `consequential` | **denied** |
+| `payment` | `high_irreversible` (confirmation + step-up) | **denied** |
+
+Reads are never affected. Which operations are UI-acting is the shared device
+mapping's own grid toggle, not a second list. **The lists themselves are the
+owner's decision and ship empty** — so until the owner classifies an app, the
+Android build does perception and `device.read` only (docs/23 §5.5). The device
+caches the same classification (`GET /devices/app-policy`) purely to refuse
+early; it can never make an operation allowed.
 
 ### 5.2 Other `[PROPOSED]` rows awaiting ratification
 

@@ -150,8 +150,11 @@ device-held Ed25519 keys (Keystore) registered by public key, the App Link
 login return, and the authenticated device channel (`WS
 /api/v1/devices/channel`, `server/execution/device_hub.py`) with exact-device
 delivery, no queue, cancellation and revocation — **off by default**
-(`android.enabled`). Not yet: the device-side guard, perception, execution
-primitives, and the sensitive-app gate.
+(`android.enabled`); the device-side guard (docs/23 §5.2) held to the shared
+conformance vectors on both sides; and the sensitive-app gate
+(`android.app_classification` — every app unclassified by default, so no UI
+control until the owner classifies one). Not yet: perception, execution
+primitives, the per-app grid UI and confirmation screen.
 
 **Still not built:** the scheduler, the dashboard, voice. Their capabilities (where any exist) are absent from the
 registry or, for Android, dispatch to a transport that refuses every call — the

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -39,6 +40,7 @@ from typing import Any, Literal, Mapping, Protocol
 from uuid import UUID
 
 from shared.schemas.device_channel import (
+    PACKAGE_NAME_PATTERN,
     DEFAULT_OPERATION_TTL,
     MAX_OPERATION_TTL,
     MAX_RESULT_FRAME_BYTES,
@@ -49,6 +51,8 @@ from shared.schemas.device_channel import (
     GridToggle,
 )
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode, ExecutionResult
+
+_PACKAGE_NAME = re.compile(PACKAGE_NAME_PATTERN)
 
 # ── the mapping table (08 §2 / AND-006, docs/23 §5.1) ─────────────────────
 
@@ -417,6 +421,10 @@ def build_operation(
                 ExecutionErrorCode.MISSING_CONTEXT,
                 f"{capability}.{operation} acts inside one named app — resource_scope must carry package_name",
             )
+        if not _PACKAGE_NAME.match(package_name):
+            # Refused here, as a typed error, rather than surfacing as a raw
+            # validation failure when the envelope is built.
+            raise ExecutionError(ExecutionErrorCode.INVALID_ARGUMENTS, "package_name is not an Android package name")
     else:
         # A device-level read names no app; a package here would be a
         # narrowing the device could not honour, so it is simply not sent.

@@ -1,6 +1,8 @@
 package com.hypermind.jarvis
 
 import android.content.Context
+import com.hypermind.jarvis.action.GuardedOperations
+import com.hypermind.jarvis.action.Primitive
 import com.hypermind.jarvis.auth.ApiClient
 import com.hypermind.jarvis.auth.DeviceKey
 import com.hypermind.jarvis.auth.DeviceKeyStore
@@ -11,13 +13,16 @@ import com.hypermind.jarvis.auth.Revocation
 import com.hypermind.jarvis.auth.SessionManager
 import com.hypermind.jarvis.channel.ChannelCredentials
 import com.hypermind.jarvis.channel.DeviceChannel
-import com.hypermind.jarvis.channel.OperationHandler
-import com.hypermind.jarvis.channel.UnimplementedOperations
+import com.hypermind.jarvis.contract.DeviceGuard
+import com.hypermind.jarvis.contract.DeviceLocalState
 import com.hypermind.jarvis.contract.MappingState
+import com.hypermind.jarvis.permissions.AppPolicyStore
+import com.hypermind.jarvis.permissions.GridStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import okhttp3.OkHttpClient
+import java.io.IOException
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
@@ -31,7 +36,7 @@ class AppGraph(
     context: Context,
     private val mapping: MappingState,
     keyStore: DeviceKeyStore = KeystoreDeviceKeyStore(context),
-    handler: OperationHandler = UnimplementedOperations,
+    primitives: Map<String, Primitive> = emptyMap(),
 ) {
     val store = EnrollmentStore(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
     val keys: DeviceKeyStore = keyStore
@@ -57,6 +62,45 @@ class AppGraph(
 
     val login = LoginCoordinator(store, keys, ::api, sessions)
 
+    /** The user's per-app grid — local, refusal only (docs/23 §5.2). */
+    val grid = GridStore(context.getSharedPreferences(GRID_PREFS, Context.MODE_PRIVATE))
+
+    /** The cached sensitive-app classification. */
+    val appPolicy = AppPolicyStore(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
+
+    private var guard: Pair<String, DeviceGuard>? = null
+
+    /** The guard for the currently enrolled device (re-created on re-enrollment). */
+    @Synchronized
+    private fun guard(): DeviceGuard? {
+        val device = store.deviceId?.toString() ?: return null
+        val valid = mapping as? MappingState.Valid ?: return null
+        guard?.takeIf { it.first == device }?.let { return it.second }
+        return DeviceGuard(device, valid.mapping).also { guard = device to it }
+    }
+
+    private val handler =
+        GuardedOperations(
+            guard = ::guard,
+            localState = { DeviceLocalState(grid.state(), appPolicy.current()) },
+            primitives = primitives,
+        )
+
+    init {
+        revocation.onWipe(grid::wipe)
+        revocation.onWipe(appPolicy::wipe)
+    }
+
+    private fun refreshAppPolicy() {
+        try {
+            appPolicy.update(api().appPolicy(sessions.accessToken().first))
+        } catch (ignored: IOException) {
+            // Kept as it was; with nothing cached the guard is restrictive.
+        } catch (ignored: com.hypermind.jarvis.auth.EnrollmentLost) {
+            // The channel handles a lost enrollment itself.
+        }
+    }
+
     val channel =
         DeviceChannel(
             http = http,
@@ -76,6 +120,7 @@ class AppGraph(
                 cachedKey = null
                 revocation.wipe()
             },
+            onConnected = ::refreshAppPolicy,
         )
 
     val enrolled: Boolean get() = store.deviceId != null && key() != null
@@ -86,5 +131,6 @@ class AppGraph(
 
     private companion object {
         const val PREFS = "jarvis"
+        const val GRID_PREFS = "jarvis_grid"
     }
 }

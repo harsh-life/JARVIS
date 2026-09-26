@@ -57,6 +57,7 @@ class DeviceChannel(
     private val handler: OperationHandler,
     private val scope: CoroutineScope,
     private val onRevoked: () -> Unit,
+    private val onConnected: () -> Unit = {},
     private val now: () -> Instant = Instant::now,
     private val random: Random = Random.Default,
 ) {
@@ -171,7 +172,9 @@ class DeviceChannel(
     @Synchronized
     private fun connected(expiresAt: Instant) {
         attempt = 0
+        val first = _state.value !is ChannelState.Connected
         _state.value = ChannelState.Connected(expiresAt)
+        if (first) scope.launch { onConnected() }
         reauthJob?.cancel()
         reauthJob =
             scope.launch {

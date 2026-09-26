@@ -1,0 +1,811 @@
+{
+  "cases": [
+    {
+      "envelope": {
+        "arguments": {},
+        "capability": "device.read",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000001",
+        "operation": "read_battery",
+        "package_name": null,
+        "primitive": "android.api.battery_state",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "allowed"
+      },
+      "hooks": [
+        "AND-T1"
+      ],
+      "name": "read_battery_allowed"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000002",
+        "operation": "tap",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "allowed"
+      },
+      "hooks": [
+        "AND-T1"
+      ],
+      "name": "tap_in_non_sensitive_app_allowed"
+    },
+    {
+      "envelope": {
+        "arguments": {},
+        "capability": "device.read",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000003",
+        "operation": "read_screen",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.read_tree",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "allowed"
+      },
+      "hooks": [
+        "AND-T1"
+      ],
+      "name": "read_screen_allowed"
+    },
+    {
+      "envelope": {
+        "arguments": {},
+        "capability": "device.read",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000004",
+        "operation": "capture_screenshot",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.screenshot",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "allowed"
+      },
+      "hooks": [
+        "ANDC-T7"
+      ],
+      "name": "screenshot_of_non_sensitive_app_allowed"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "text": "Send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000005",
+        "operation": "tap",
+        "package_name": "com.bank.app",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "allowed"
+      },
+      "hooks": [
+        "ANDC-T5"
+      ],
+      "name": "tap_in_sensitive_app_passes_the_guard"
+    },
+    {
+      "envelope": {
+        "arguments": {},
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000006",
+        "operation": "force_stop",
+        "package_name": "com.example.notes",
+        "primitive": "shizuku.force_stop_package",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "allowed"
+      },
+      "hooks": [
+        "AND-T7"
+      ],
+      "name": "typed_shizuku_primitive_passes_the_guard"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d002",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000007",
+        "operation": "tap",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "wrong_device"
+      },
+      "hooks": [
+        "ANDC-T1",
+        "ANDC-T3"
+      ],
+      "name": "wrong_device_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:05Z",
+        "issued_at": "2026-09-26T11:59:40Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000008",
+        "operation": "tap",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "operation_expired"
+      },
+      "hooks": [
+        "ANDC-T3"
+      ],
+      "name": "expired_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:01:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000009",
+        "operation": "tap",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "malformed_arguments"
+      },
+      "hooks": [
+        "ANDC-T3"
+      ],
+      "name": "window_longer_than_ceiling_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:05:30Z",
+        "issued_at": "2026-09-26T12:05:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000010",
+        "operation": "tap",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "malformed_arguments"
+      },
+      "hooks": [
+        "ANDC-T3"
+      ],
+      "name": "future_dated_envelope_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-0000000000000000",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000011",
+        "operation": "tap",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "mapping_version_mismatch"
+      },
+      "hooks": [
+        "ANDC-T4"
+      ],
+      "name": "mapping_version_mismatch_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {},
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000012",
+        "operation": "delete_app",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "not_in_mapping"
+      },
+      "hooks": [
+        "AND-T1"
+      ],
+      "name": "unenumerated_operation_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000013",
+        "operation": "tap",
+        "package_name": "com.example.notes",
+        "primitive": "shizuku.force_stop_package",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "not_in_mapping"
+      },
+      "hooks": [
+        "AND-T1"
+      ],
+      "name": "primitive_substitution_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "argv": [
+            "sh",
+            "-c",
+            "id"
+          ]
+        },
+        "capability": "system.restricted",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000014",
+        "operation": "run_shell_command",
+        "package_name": null,
+        "primitive": "shizuku.elevated_shell",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "not_in_mapping"
+      },
+      "hooks": [
+        "AND-T7"
+      ],
+      "name": "system_restricted_shell_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000015",
+        "operation": "tap",
+        "package_name": "com.example.other",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "toggle_off"
+      },
+      "hooks": [
+        "ANDC-T5",
+        "AND-T5"
+      ],
+      "name": "ui_toggle_off_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {},
+        "capability": "device.read",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000016",
+        "operation": "read_battery",
+        "package_name": null,
+        "primitive": "android.api.battery_state",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "toggle_off"
+      },
+      "hooks": [
+        "ANDC-T5",
+        "AND-T5"
+      ],
+      "name": "device_state_toggle_off_refused",
+      "state": {
+        "grid": {
+          "device_state": false,
+          "packages": {}
+        }
+      }
+    },
+    {
+      "envelope": {
+        "arguments": {},
+        "capability": "device.read",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000017",
+        "operation": "capture_screenshot",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.screenshot",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "toggle_off"
+      },
+      "hooks": [
+        "ANDC-T5",
+        "ANDC-T7"
+      ],
+      "name": "screenshot_toggle_off_refused",
+      "state": {
+        "grid": {
+          "device_state": true,
+          "packages": {
+            "com.example.notes": [
+              "screen_read",
+              "ui_interaction"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000018",
+        "operation": "tap",
+        "package_name": "com.unknown.app",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "sensitive_package"
+      },
+      "hooks": [
+        "ANDC-T5"
+      ],
+      "name": "ui_in_unclassified_app_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {},
+        "capability": "device.read",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000019",
+        "operation": "capture_screenshot",
+        "package_name": "com.bank.app",
+        "primitive": "accessibility.screenshot",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "sensitive_package"
+      },
+      "hooks": [
+        "ANDC-T7"
+      ],
+      "name": "screenshot_of_sensitive_app_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000020",
+        "operation": "tap",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "sensitive_package"
+      },
+      "hooks": [
+        "ANDC-T5"
+      ],
+      "name": "no_cached_policy_means_restrictive",
+      "state": {
+        "app_policy": null
+      }
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000021",
+        "operation": "tap",
+        "package_name": null,
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "malformed_arguments"
+      },
+      "hooks": [
+        "AND-T6"
+      ],
+      "name": "missing_required_package_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {},
+        "capability": "device.read",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000022",
+        "operation": "read_battery",
+        "package_name": "com.example.notes",
+        "primitive": "android.api.battery_state",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "malformed_arguments"
+      },
+      "hooks": [
+        "AND-T6"
+      ],
+      "name": "package_on_device_level_read_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000023",
+        "operation": "tap",
+        "package_name": "com..notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "malformed_arguments"
+      },
+      "hooks": [
+        "AND-T6"
+      ],
+      "name": "malformed_package_name_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send",
+          "x": 10
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000024",
+        "operation": "tap",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "malformed_arguments"
+      },
+      "hooks": [
+        "AND-T6"
+      ],
+      "name": "unknown_argument_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "text": "Send",
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000025",
+        "operation": "tap",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "malformed_arguments"
+      },
+      "hooks": [
+        "AND-T6"
+      ],
+      "name": "two_targets_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "index": "1",
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000026",
+        "operation": "tap",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "malformed_arguments"
+      },
+      "hooks": [
+        "AND-T6"
+      ],
+      "name": "wrongly_typed_argument_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "action": "power_off"
+        },
+        "capability": "device.ui_control",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000027",
+        "operation": "global_action",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.global_action",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "malformed_arguments"
+      },
+      "hooks": [
+        "AND-T6"
+      ],
+      "name": "closed_enum_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "argv": [
+            "am"
+          ]
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000028",
+        "operation": "force_stop",
+        "package_name": "com.example.notes",
+        "primitive": "shizuku.force_stop_package",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "malformed_arguments"
+      },
+      "hooks": [
+        "AND-T6",
+        "AND-T7"
+      ],
+      "name": "argument_on_argumentless_shizuku_primitive_refused"
+    },
+    {
+      "envelope": {
+        "arguments": {
+          "view_id": "send"
+        },
+        "capability": "app.interact",
+        "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "expires_at": "2026-09-26T12:00:30Z",
+        "issued_at": "2026-09-26T12:00:00Z",
+        "mapping_version": "1-e612ce2607c0586e",
+        "op_id": "6f1c2d3e-4a5b-4c6d-8e7f-000000000029",
+        "operation": "tap",
+        "package_name": "com.example.notes",
+        "primitive": "accessibility.tap",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "type": "operation"
+      },
+      "expected": {
+        "outcome": "refused",
+        "reason": "duplicate_operation"
+      },
+      "hooks": [
+        "ANDC-T8"
+      ],
+      "name": "replayed_operation_refused",
+      "state": {
+        "previously_seen": [
+          "6f1c2d3e-4a5b-4c6d-8e7f-000000000029"
+        ]
+      }
+    }
+  ],
+  "default_state": {
+    "app_policy": {
+      "non_sensitive": [
+        "com.example.notes",
+        "com.example.other"
+      ],
+      "payment": [
+        "com.wallet.pay"
+      ],
+      "sensitive": [
+        "com.bank.app"
+      ]
+    },
+    "grid": {
+      "device_state": true,
+      "packages": {
+        "com.bank.app": [
+          "screen_read",
+          "ui_interaction",
+          "screenshot"
+        ],
+        "com.example.notes": [
+          "screen_read",
+          "ui_interaction",
+          "screenshot"
+        ],
+        "com.unknown.app": [
+          "screen_read",
+          "ui_interaction",
+          "screenshot"
+        ]
+      }
+    },
+    "previously_seen": []
+  },
+  "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+  "mapping_version": "1-e612ce2607c0586e",
+  "now": "2026-09-26T12:00:10Z"
+}

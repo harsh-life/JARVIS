@@ -30,6 +30,7 @@ from server.auth.repository import AuthRepository
 from server.auth.sessions import SessionService
 from server.capabilities.confirmation import ConfirmationService
 from server.capabilities.grants import CapabilityGrantService
+from server.capabilities.app_classification import AppClassification
 from server.capabilities.policy import FloorPolicyAdapter, RiskPolicyAdapter
 from server.config import AppConfig
 from server.graph.authorization import AuthorizationEngine
@@ -96,7 +97,15 @@ def build_security_core(
         memberships=graph_repository,
         resources=resource_loader,
         capabilities=capability_grants,
-        risk=RiskPolicyAdapter(),
+        # docs/23 §5.5: the sensitive-app classification is part of the one
+        # tier table the engine consults — never a second decision path.
+        risk=RiskPolicyAdapter(
+            AppClassification(
+                non_sensitive=frozenset(config.android.app_classification.non_sensitive),
+                sensitive=frozenset(config.android.app_classification.sensitive),
+                payment=frozenset(config.android.app_classification.payment),
+            )
+        ),
         floor=FloorPolicyAdapter(),
         confirmations=confirmations,
     )
