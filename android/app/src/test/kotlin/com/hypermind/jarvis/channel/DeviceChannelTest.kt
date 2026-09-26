@@ -2,6 +2,7 @@ package com.hypermind.jarvis.channel
 
 import com.hypermind.jarvis.auth.EnrollmentLost
 import com.hypermind.jarvis.contract.OperationEnvelope
+import com.hypermind.jarvis.contract.PlatformDependency
 import com.hypermind.jarvis.contract.ResultEnvelope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -173,6 +174,31 @@ class DeviceChannelTest {
                 .toString()
                 .let { "token" !in it && "proof" !in it },
         )
+        channel.stop()
+    }
+
+    @Test
+    fun `platform status is reported only on an authenticated connection`() {
+        acceptConnections(1)
+        val channel = channel(UnimplementedOperations)
+        // Not connected: nothing to send it on, and nothing is queued for later.
+        channel.reportPlatforms(mapOf(PlatformDependency.SHIZUKU to false))
+        channel.start()
+        val side = connections.take()
+        connected(channel, side)
+        channel.reportPlatforms(
+            mapOf(
+                PlatformDependency.ACCESSIBILITY_SERVICE to true,
+                PlatformDependency.SHIZUKU to false,
+            ),
+        )
+        val status = side.next()
+        assertEquals("platform_status", status.getValue("type").jsonPrimitive.content)
+        assertEquals(
+            mapOf("accessibility_service" to "true", "shizuku" to "false"),
+            status.getValue("platforms").jsonObject.mapValues { it.value.jsonPrimitive.content },
+        )
+        assertNull(side.received.poll(200, TimeUnit.MILLISECONDS))
         channel.stop()
     }
 

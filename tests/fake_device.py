@@ -32,6 +32,7 @@ from shared.schemas.device_channel import (
     PACKAGE_NAME_PATTERN,
     DeviceRefusalReason,
     GridToggle,
+    ResultKind,
 )
 
 # A device clock may run a little ahead of the server's; an envelope issued
@@ -130,11 +131,30 @@ def reference_guard(
     return GuardVerdict(True, primitive=spec.primitive)
 
 
+def default_result(envelope: dict[str, Any]) -> tuple[dict, str | None]:
+    """A well-formed `ok` result (and perception level) for an allowed
+    operation — the shape its primitive declares in the shared mapping."""
+
+    spec = DEVICE_MAPPING[envelope["capability"]][envelope["operation"]]
+    app = {"package_name": envelope.get("package_name") or "com.example.notes"}
+    if spec.result is ResultKind.SCREEN_READ:
+        return {"app": app, "nodes": [{"id": 0, "role": "android.widget.TextView", "text": "hello",
+                                       "bounds": [0, 0, 10, 10]}]}, "accessibility"
+    if spec.result is ResultKind.BATTERY:
+        return {"level_percent": 50, "charging": False, "plugged": "none"}, None
+    if spec.result is ResultKind.NOTIFICATIONS:
+        return {"notifications": []}, None
+    if spec.result is ResultKind.SCREENSHOT:
+        return {"app": app, "image_webp_base64": "UklGRg==", "width": 1, "height": 1}, None
+    return {"performed": True}, None
+
+
 class FakeDevice:
     """A device that runs the reference guard behind the real hub.
 
-    Allowed operations "execute" by answering with a small structured result
-    (or with `results[primitive]` when a test supplies one). `hold` makes the
+    Allowed operations "execute" by answering with a well-formed result of
+    the primitive's declared kind (or `results[primitive] = (result, level)`
+    when a test supplies one). `hold` makes the
     device take an operation and never answer, for cancellation tests."""
 
     def __init__(
@@ -143,7 +163,7 @@ class FakeDevice:
         device_id: uuid.UUID,
         state: DeviceLocalState | None = None,
         clock=lambda: datetime.now(timezone.utc),
-        results: dict[str, dict] | None = None,
+        results: dict[str, tuple[dict, str | None]] | None = None,
         hold: bool = False,
     ) -> None:
         self.device_id = device_id
@@ -178,12 +198,16 @@ class FakeDevice:
             return
         else:
             self.executed.append(verdict.primitive)
-            reply = {"type": "result", "op_id": frame["op_id"], "status": "ok",
-                     "result": self.results.get(verdict.primitive, {"primitive": verdict.primitive})}
+            result, level = default_result(frame)
+            if verdict.primitive in self.results:
+                result, level = self.results[verdict.primitive]
+            reply = {"type": "result", "op_id": frame["op_id"], "status": "ok", "result": result}
+            if level is not None:
+                reply["perception_level"] = level
         asyncio.get_running_loop().call_soon(self.hub.deliver, self.session, json.dumps(reply))
 
     async def close(self, code: int, reason: str) -> None:
         self.closed = (code, reason)
 
 
-__all__ = ["DeviceLocalState", "FakeDevice", "GuardVerdict", "reference_guard"]
+__all__ = ["DeviceLocalState", "FakeDevice", "GuardVerdict", "default_result", "reference_guard"]

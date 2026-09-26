@@ -153,8 +153,17 @@ delivery, no queue, cancellation and revocation — **off by default**
 (`android.enabled`); the device-side guard (docs/23 §5.2) held to the shared
 conformance vectors on both sides; and the sensitive-app gate
 (`android.app_classification` — every app unclassified by default, so no UI
-control until the owner classifies one). Not yet: perception, execution
-primitives, the per-app grid UI and confirmation screen.
+control until the owner classifies one); and screen perception (docs/23 §6):
+the Accessibility tree, bounded and with password fields redacted on the
+device, then app metadata, then on-device ML Kit OCR only when the tree has no
+readable text — plus battery and notification reads. Every device result is
+validated server-side against its primitive's declared shape
+(`server/execution/device_observations.py`, held to
+`shared/android/perception_samples.json` on both sides) and rendered to the
+worker as quoted, labelled untrusted data; none of it is stored or reaches
+memory extraction. Not yet: screenshots and the vision rung, execution
+primitives (tap, swipe, typing, the typed Shizuku call), the per-app grid UI
+and confirmation screen.
 
 **Still not built:** the scheduler, the dashboard, voice. Their capabilities (where any exist) are absent from the
 registry or, for Android, dispatch to a transport that refuses every call — the
@@ -180,8 +189,9 @@ android/   the Android client (docs/23): :contract (pure-Kotlin wire contract an
            device-side guard) and :app; shares only shared/ with the server
 shared/    schemas/  — canonical Pydantic data contracts, importable by both
                         server/ and the android/ client
-           android/  — the versioned device mapping table (and, later, the
-                        conformance vectors) both sides read
+           android/  — the versioned device mapping table, the conformance
+                        vectors, the proof vectors and the perception samples
+                        both sides read
 tests/     pytest suite (tests/foundation/, tests/security_core/, tests/runtime/,
                           tests/execution/, tests/integration/, tests/memory/)
 docs/      RUNNING_*.md, OD_A1_BR_T2.md, CAPABILITY_MATRIX.md, DECISION_REGISTER.md

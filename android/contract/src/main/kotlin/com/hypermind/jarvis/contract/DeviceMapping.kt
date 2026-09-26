@@ -100,4 +100,6 @@ data class PrimitiveSpec(
     val arguments: Map<String, ArgumentSpec>,
     @SerialName("one_of") val oneOf: List<List<String>>,
     @SerialName("max_result_bytes") val maxResultBytes: Int,
+    /** The shape of this primitive's `ok` result ([PerceptionCheck]). */
+    val result: ResultKind,
 )

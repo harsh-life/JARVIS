@@ -16,6 +16,13 @@ import com.hypermind.jarvis.channel.DeviceChannel
 import com.hypermind.jarvis.contract.DeviceGuard
 import com.hypermind.jarvis.contract.DeviceLocalState
 import com.hypermind.jarvis.contract.MappingState
+import com.hypermind.jarvis.perception.BatteryPrimitive
+import com.hypermind.jarvis.perception.JarvisAccessibilityService
+import com.hypermind.jarvis.perception.JarvisNotificationListener
+import com.hypermind.jarvis.perception.MlKitScreenOcr
+import com.hypermind.jarvis.perception.NotificationPrimitive
+import com.hypermind.jarvis.perception.Platforms
+import com.hypermind.jarvis.perception.ScreenPerception
 import com.hypermind.jarvis.permissions.AppPolicyStore
 import com.hypermind.jarvis.permissions.GridStore
 import kotlinx.coroutines.CoroutineScope
@@ -36,7 +43,7 @@ class AppGraph(
     context: Context,
     private val mapping: MappingState,
     keyStore: DeviceKeyStore = KeystoreDeviceKeyStore(context),
-    primitives: Map<String, Primitive> = emptyMap(),
+    primitives: Map<String, Primitive> = defaultPrimitives(context),
 ) {
     val store = EnrollmentStore(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
     val keys: DeviceKeyStore = keyStore
@@ -84,6 +91,7 @@ class AppGraph(
             guard = ::guard,
             localState = { DeviceLocalState(grid.state(), appPolicy.current()) },
             primitives = primitives,
+            available = Platforms::available,
         )
 
     init {
@@ -101,7 +109,7 @@ class AppGraph(
         }
     }
 
-    val channel =
+    val channel: DeviceChannel =
         DeviceChannel(
             http = http,
             url = { store.serverUrl?.let { ApiClient(http, it).channelUrl() } },
@@ -120,8 +128,21 @@ class AppGraph(
                 cachedKey = null
                 revocation.wipe()
             },
-            onConnected = ::refreshAppPolicy,
+            onConnected = {
+                refreshAppPolicy()
+                reportPlatforms()
+            },
         )
+
+    private fun reportPlatforms() {
+        channel.reportPlatforms(Platforms.snapshot())
+    }
+
+    init {
+        // The server hears when the Accessibility service comes or goes, so a
+        // task waiting on it can be told why (informational, never authority).
+        JarvisAccessibilityService.onAvailabilityChanged(::reportPlatforms)
+    }
 
     val enrolled: Boolean get() = store.deviceId != null && key() != null
 
@@ -132,5 +153,24 @@ class AppGraph(
     private companion object {
         const val PREFS = "jarvis"
         const val GRID_PREFS = "jarvis_grid"
+
+        /**
+         * The primitives this client implements, keyed by the mapping's
+         * primitive name. A mapped primitive missing here fails explicitly
+         * (`action_failed`) — it is never approximated by another one.
+         */
+        fun defaultPrimitives(context: Context): Map<String, Primitive> {
+            val screen =
+                ScreenPerception(
+                    screen = JarvisAccessibilityService.screen,
+                    ocr = MlKitScreenOcr { JarvisAccessibilityService.instance },
+                )
+            return mapOf(
+                "accessibility.read_tree" to screen.readTree,
+                "accessibility.read_element" to screen.readElement,
+                "android.api.battery_state" to BatteryPrimitive(BatteryPrimitive.reader(context.applicationContext)),
+                "android.api.notification_query" to NotificationPrimitive(JarvisNotificationListener::active),
+            )
+        }
     }
 }

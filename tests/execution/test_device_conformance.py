@@ -114,6 +114,14 @@ async def test_the_fake_transport_enforces_every_server_producible_vector(case):
         state.seen_op_ids.add(str(operation.op_id))
     device = await FakeDevice(device_id=device_id, state=state).attach(hub, user_id=USER)
     if case["expected"]["outcome"] == "allowed":
+        if operation.primitive == "accessibility.screenshot":
+            # The device took it; with no vision rung configured the server
+            # drops the image rather than rendering it (device_observations).
+            with pytest.raises(ExecutionError) as exc:
+                await asyncio.wait_for(hub.send(operation), 5)
+            assert exc.value.code is ExecutionErrorCode.PLATFORM_UNSUPPORTED
+            assert device.executed == [operation.primitive]
+            return
         result = await asyncio.wait_for(hub.send(operation), 5)
         assert device.executed == [operation.primitive]
         assert result.metadata["primitive"] == operation.primitive

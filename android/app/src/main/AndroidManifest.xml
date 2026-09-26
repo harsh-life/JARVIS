@@ -57,6 +57,34 @@
             </intent-filter>
         </activity>
 
+        <!-- docs/23 §6: screen reading on demand. The config subscribes only to
+             window-state changes (app switches), never the content-changed
+             firehose; it reads the tree when an operation asks. -->
+        <service
+            android:name=".perception.JarvisAccessibilityService"
+            android:exported="false"
+            android:label="@string/accessibility_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_config" />
+        </service>
+
+        <!-- device.read.read_notification: queried on demand for the one app an
+             operation names; nothing is kept when a notification is posted. -->
+        <service
+            android:name=".perception.JarvisNotificationListener"
+            android:exported="false"
+            android:label="@string/notification_access_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <service
             android:name=".channel.ChannelService"
             android:exported="false"

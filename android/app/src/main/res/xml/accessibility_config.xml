@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  docs/23 §6. Reads on demand; subscribes only to window-state changes (app
+  switches) so an idle service costs nothing — kept from the donor, whose
+  content-changed subscription bogged devices down.
+
+  canRetrieveWindowContent: the tree (ladder rung 1).
+  canTakeScreenshot: the on-device OCR rung (the frame never leaves the
+  device) and, as its own operation, capture_screenshot.
+  Gestures are not requested in this build: UI actions arrive with their own
+  primitives (docs/23 §5.3).
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault"
+    android:canRetrieveWindowContent="true"
+    android:canTakeScreenshot="true"
+    android:description="@string/accessibility_description"
+    android:notificationTimeout="500"
+    android:settingsActivity="com.hypermind.jarvis.MainActivity" />

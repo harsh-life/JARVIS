@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">JARVIS</string>
+    <string name="accessibility_label">JARVIS screen reading</string>
+    <string name="accessibility_description">Lets JARVIS read the app in front when a task you started asks it to, for apps you have allowed in the per-app grid. Password fields are never read. Nothing read from the screen is stored.</string>
+    <string name="notification_access_label">JARVIS notifications</string>
 </resources>
