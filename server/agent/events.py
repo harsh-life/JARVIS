@@ -18,6 +18,8 @@ class AgentEvent(str, Enum):
     TASK_COMPLETED = "agent.task.completed"
     TASK_FAILED = "agent.task.failed"
     TASK_CANCELLED = "agent.task.cancelled"
+    # Closed from its row: its live state was lost (a restart, a pruned pause).
+    TASK_ABANDONED = "agent.task.abandoned"
     PROPOSAL_REJECTED = "agent.proposal.rejected"
     TOOL_EXECUTED = "agent.tool.executed"
     TOOL_FAILED = "agent.tool.failed"

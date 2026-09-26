@@ -222,5 +222,8 @@ class AgentTaskFacade:
         except TaskNotFound:
             raise AppError(ErrorCode.NOT_FOUND, "not found") from None
 
+    async def reconcile_after_restart(self, session: AsyncSession, *, audit: AuditLogger) -> list[uuid.UUID]:
+        return await self._runtime.reconcile_after_restart(self.environment(session, audit))
+
     def tool_summaries(self) -> list[ToolSummary]:
         return self._tools.summaries()

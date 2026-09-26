@@ -146,7 +146,10 @@ def parse_proposal(text: str) -> FinalAnswer | ToolCall | RequestCapabilities:
         raise ProposalError("empty output")
     try:
         payload = json.loads(_extract_json(text))
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
+        # ValueError covers malformed JSON and an integer too long to convert;
+        # RecursionError, nesting deeper than the decoder allows. Both are just
+        # unusable output, never a crash of the task (05 §2).
         raise ProposalError("output is not valid JSON") from None
     if not isinstance(payload, dict):
         raise ProposalError("output must be a single JSON object")
@@ -155,3 +158,5 @@ def parse_proposal(text: str) -> FinalAnswer | ToolCall | RequestCapabilities:
     except ValidationError as exc:
         fields = sorted({".".join(str(p) for p in err["loc"]) or "type" for err in exc.errors()})
         raise ProposalError(f"invalid proposal fields: {', '.join(fields)[:200]}") from None
+    except RecursionError:
+        raise ProposalError("output is nested too deeply") from None

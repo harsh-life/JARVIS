@@ -219,7 +219,7 @@ runs the suite as such a host would.
 python3 -m pytest tests/ -q                             # the whole suite
 python3 -m pytest tests/execution/ -q                    # fs/net/process/android/platforms
 python3 -m pytest tests/runtime/test_execution_integration.py -q   # real runtime x real adapters
-lint-imports --config pyproject.toml                     # 12 boundary contracts
+lint-imports --config pyproject.toml                     # 14 boundary contracts
 ```
 
 All of these run in CI on every pull request, with no secrets and no

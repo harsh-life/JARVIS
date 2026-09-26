@@ -70,6 +70,7 @@ EVENT_ACTIONS: dict[AgentEvent, AuditAction] = {
     AgentEvent.TASK_COMPLETED: AuditAction.AGENT_TASK_COMPLETED,
     AgentEvent.TASK_FAILED: AuditAction.AGENT_TASK_FAILED,
     AgentEvent.TASK_CANCELLED: AuditAction.AGENT_TASK_CANCELLED,
+    AgentEvent.TASK_ABANDONED: AuditAction.AGENT_TASK_ABANDONED,
     AgentEvent.PROPOSAL_REJECTED: AuditAction.AGENT_PROPOSAL_REJECTED,
     AgentEvent.TOOL_EXECUTED: AuditAction.AGENT_TOOL_EXECUTED,
     AgentEvent.TOOL_FAILED: AuditAction.AGENT_TOOL_FAILED,
@@ -91,6 +92,7 @@ EVENT_ACTIONS: dict[AgentEvent, AuditAction] = {
 _USER_EVENTS = frozenset({AgentEvent.CONFIRMATION_ACCEPTED, AgentEvent.CONFIRMATION_REJECTED})
 # Acts of the deterministic supervisor, not the agent (18 §5).
 _SYSTEM_EVENTS = frozenset({
+    AgentEvent.TASK_ABANDONED,
     AgentEvent.BREAKER_TRIPPED,
     AgentEvent.WORKER_FAILED,
     AgentEvent.WORKER_SWITCHED,

@@ -148,6 +148,7 @@ def build_application(
     storage: StorageBackend | None = None,
     security: SecurityCore | None = None,
     unlock_secrets_on_startup: bool = False,
+    reconcile_tasks_on_startup: bool = False,
     provider_factory: ProviderFactory | None = None,
     extra_tools: Iterable[ToolDefinition] | None = None,
     memory_store: MemoryStore | None = None,
@@ -215,6 +216,7 @@ def build_application(
         storage=storage,
         security=core,
         unlock_secrets_on_startup=unlock_secrets_on_startup,
+        reconcile_tasks_on_startup=reconcile_tasks_on_startup,
         agent_tasks=facade,
         # 18 §5.4: the operator control path. Reached only through
         # `/api/v1/admin/control/*`, behind `get_superuser`.

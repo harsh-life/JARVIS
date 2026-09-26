@@ -17,6 +17,7 @@ import logging
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from sqlalchemy.exc import OperationalError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 
@@ -135,8 +136,30 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 
+async def storage_error_handler(request: Request, exc: OperationalError) -> JSONResponse:
+    """A store too busy to take this request's write — SQLite is single-writer,
+    and a running task holds the write lock for its request. The request's
+    transaction was rolled back, so nothing it did persisted: a retryable
+    `503 dependency_unavailable`, not a 500. Any other operational error is
+    still an internal error."""
+
+    if "database is locked" not in str(getattr(exc, "orig", exc)):
+        return await unhandled_exception_handler(request, exc)
+    logger.warning("storage busy: request rolled back")
+    http_status, _ = ERROR_CODE_TABLE[ErrorCode.DEPENDENCY_UNAVAILABLE]
+    return _envelope_response(
+        request=request,
+        code=ErrorCode.DEPENDENCY_UNAVAILABLE,
+        message="the server is busy; nothing was changed — retry shortly",
+        http_status=http_status,
+        retryable=True,
+        details={"dependency": "storage"},
+    )
+
+
 def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, app_error_handler)
+    app.add_exception_handler(OperationalError, storage_error_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
