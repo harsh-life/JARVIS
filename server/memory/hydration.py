@@ -38,46 +38,18 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Protocol, Sequence
+from typing import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.graph.ports import ResourceDescriptor
 from server.graph.predicate import readable
+from server.memory.provider import MemoryCandidate, MemoryStore
 from shared.schemas.authorization import Principal, ResourceType
-from shared.schemas.enums import Visibility
 
 logger = logging.getLogger("hypermind.memory.hydration")
 
 FAIL_008_NOTE = "long-term memory temporarily unavailable; proceeding on session context (FAIL-008)"
-
-
-@dataclass(frozen=True)
-class MemoryCandidate:
-    fact_id: str
-    content: str
-    owner_user_id: uuid.UUID
-    visibility: Visibility
-    graph_id: uuid.UUID | None
-    score: float = 0.0
-
-
-class MemoryStore(Protocol):
-    """What `11`'s Mem0-backed store implements.
-
-    `[LOCKED]` (11 §2) the visibility filter is applied **inside** the query:
-    return only facts with `owner_user_id == owner_user_id`, or with
-    `visibility == graph` and `graph_id in readable_graph_ids`.
-    """
-
-    async def search(
-        self,
-        *,
-        query: str,
-        owner_user_id: uuid.UUID,
-        readable_graph_ids: frozenset[uuid.UUID],
-        limit: int,
-    ) -> Sequence[MemoryCandidate]: ...
 
 
 # Returns the graphs in which the user is an *active* member, read live.

@@ -15,7 +15,9 @@ loader.py for the rationale.
 
 from __future__ import annotations
 
+import os
 import re
+from pathlib import PurePath
 from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
@@ -201,20 +203,66 @@ class ToolEntryConfig(StrictModel):
     overrides: dict = Field(default_factory=dict)
 
 
+_EMBEDDER_CACHE_DEFAULT = "./data/models"
+
+
 class Mem0SectionConfig(StrictModel):
+    """docs/21 §2/§6. `path` holds the Chroma store and Mem0's own directory;
+    `embedder_cache` holds the locally provisioned embedding model, which the
+    server only ever loads offline (MP-T8)."""
+
     collection: str = "hypermind_memories"
     path: str = "./data/mem0_storage"
     embedder: str = "bge-small-en-v1.5"
+    embedder_cache: str = _EMBEDDER_CACHE_DEFAULT
+    # docs/21 §2.2: option (a) is the only mechanism implemented. Mem0 stores and
+    # retrieves; every model call memory needs is made by JARVIS, metered.
+    mode: str = Field(default="jarvis_extraction", pattern="^jarvis_extraction$")
 
 
 class MemoryConfig(StrictModel):
+    """11 / docs/21. Disabled by default: persistent memory needs a provisioned
+    embedding model (`python -m server.memory provision`), and a fresh clone
+    must start without one (HOST-001). Disabled, hydration degrades with the
+    explicit FAIL-008 note and the memory endpoints answer `503`."""
+
+    enabled: bool = False
+    provider: str = Field(default="mem0", pattern="^mem0$")
+    # Server-wide switch for memory *formation* (explicit adds and extraction).
+    # Listing, correcting and deleting stay available when it is off (docs/21 §3).
+    writes_enabled: bool = True
+    # docs/21 §3: runtime-owned extraction at task completion, through the task's
+    # own metered model call. Off by default — it costs a model call per task.
+    auto_extract: bool = False
+    max_fact_chars: int = Field(default=500, ge=20, le=2000)
+    max_facts_per_task: int = Field(default=3, ge=1, le=10)
     mem0: Mem0SectionConfig = Field(default_factory=Mem0SectionConfig)
 
 
+def _git_backed_only(value: bool) -> bool:
+    if value is not True:
+        raise ValueError(
+            "vault.git_backed must be true: in the pilot, vault content changes only "
+            "through Git review and a reindex (docs/21 §5, OD-VLT-1, MP-T10)"
+        )
+    return value
+
+
 class VaultConfig(StrictModel):
+    """11 §7 / docs/21 §5. `path` is the Git repository of curated markdown (the
+    source of truth); `index_path` is the vault's own Chroma store, which is never
+    the memory store's (VAULT-003)."""
+
+    enabled: bool = False
     collection: str = "hypermind_vault"
-    git_backed: bool = True
+    git_backed: Annotated[bool, AfterValidator(_git_backed_only)] = True
     path: str = "./data/vault"
+    index_path: str = "./data/vault_index"
+    embedder: str = "bge-small-en-v1.5"
+    embedder_cache: str = _EMBEDDER_CACHE_DEFAULT
+    chunk_chars: int = Field(default=1200, ge=200, le=8000)
+    hydration_top_k: int = Field(default=3, ge=0, le=10)
+    hydration_max_chars: int = Field(default=3000, ge=0, le=12000)
 
 
 class IntelligenceConfig(StrictModel):
@@ -426,4 +474,23 @@ class AppConfig(StrictModel):
                 f"distinct (VAULT-003) — both are "
                 f"'{self.vault.collection}'"
             )
+        # VAULT-003 again, one level down: two Chroma clients opened on one
+        # directory share one underlying store, so distinct collection names
+        # alone would not keep the stores apart. The three locations must be
+        # pairwise disjoint — neither equal nor nested.
+        locations = {
+            "memory.mem0.path": self.memory.mem0.path,
+            "vault.index_path": self.vault.index_path,
+            "vault.path": self.vault.path,
+        }
+        resolved = {name: PurePath(os.path.abspath(p)) for name, p in locations.items()}
+        names = list(resolved)
+        for i, first in enumerate(names):
+            for second in names[i + 1 :]:
+                a, b = resolved[first], resolved[second]
+                if a == b or a in b.parents or b in a.parents:
+                    raise ValueError(
+                        f"{first} and {second} must be separate, non-nested directories "
+                        "(VAULT-003: memory and vault never share a store)"
+                    )
         return self

@@ -134,6 +134,36 @@ already reach. Confinement narrows what an *authorized* shell command can reach;
 it does nothing for code already inside the server. Logical isolation is not
 process isolation.
 
+### 3c. Persistent memory (memory build re-run, docs/21 MP-T12)
+
+§4 required a re-run once `11` existed. The self-hosted Mem0 store now exists
+(`server/memory/mem0_provider.py`), with the Knowledge Vault beside it. The re-run
+lives in `tests/integration/test_br_t2_memory_rows.py`, runs on the **real** Mem0
++ Chroma store in CI with `-s`, and asserts every row in both directions.
+
+It adds a third attacker model the earlier tables did not need: **at-rest** —
+someone holding the store's files without the process (a stolen disk or
+backup). OD-A1 covers the app-RCE class only; the at-rest rows are reported to
+the owner below, not accepted by this document.
+
+| # | Attempt | Model | Result | Why |
+|---|---|---|---|---|
+| 18 | B lists / searches A's private fact via `GET /memory` | authorized | contained | Visibility in the store query **and** the engine's `readable()` re-check with live membership |
+| 19 | B's agent hydrates A's private fact | authorized | contained | Hydrator re-check (MEM-T1 / MP-T1) |
+| 20 | B corrects / shares / deletes A's facts (private → 404, shared → 403) | authorized | contained | Engine D3/D4 on the `mem0fact` projection; share and delete also need a bound confirmation |
+| 21 | B reaches memory through the vault API | authorized | contained | Distinct client, directory and collection (VAULT-003) |
+| 22 | B reads A's graph-shared fact after removal from the graph | authorized | contained | Membership read live on every call |
+| 23 | In-process code queries the Mem0 store for A's scope directly | app-RCE | **REACHABLE** | The visibility filter is application code — the same class as row 2. Inside OD-A1 (a). |
+| 24 | Resolve a SecretStore secret through the memory/vault packages | app-RCE | contained | No import chain to `server.secrets` (contract); the provider holds no secret handle |
+| 25 | Find a secret value inside the memory store | app-RCE | contained | The write gate rejects secret-shaped text before storage (MP-T5) |
+| 26 | Recover a **deleted** fact's text from the store files | app-RCE | contained | Mem0's history DB disabled; Chroma's write-ahead log flushed and the SQLite file vacuumed on every destructive call |
+| 27 | Read **live** facts from the store files without the process | at-rest | **REACHABLE** | Plaintext at rest; filesystem permissions (0700) only — docs/21 §7 already states this |
+| 28 | Recover a **deleted** fact's embedding vector from the store files | at-rest | **REACHABLE** | Chroma's HNSW index marks deleted vectors and keeps their bytes until the index is rebuilt. A vector, not text — but embedding-inversion can approximate text |
+
+No *authorized* row is reachable. Row 23 is inside the accepted class. Rows 27
+and 28 are **outside OD-A1's class** (they need no running process) and are listed
+in §5 as owner actions; they are one reason the real-data gate stays closed.
+
 ---
 
 ## 4. Dimensions still PENDING — not measured, not claimed
@@ -144,7 +174,7 @@ three still cannot be measured, because the subsystem does not exist:
 | Dimension | Status | Why |
 |---|---|---|
 | Relational store (users, devices, graphs, files-as-rows, capability grants, secrets) | **MEASURED** — §3 above | `security-core` owns these tables |
-| **Mem0 / memory store** (`11`) | **PENDING** | No Mem0 integration exists in any branch yet. MEM-T1's cross-user query filter cannot be attacked before it is written. |
+| **Mem0 / memory store** (`11`) | **MEASURED** — §3c rows 18–28 | Authorized reach contained; in-process reach REACHABLE (accepted class); at-rest reach REACHABLE (owner action, §5) |
 | Filesystem sandbox (`09`) | **MEASURED** — §3b rows 12, 13, 15, 17 | In-process reach is REACHABLE (accepted class); authorized reach is contained |
 | Network egress exfiltration (`10`) | **MEASURED** — §3b row 14 (in-process); `system.restricted` sockets denied by Landlock TCP rules + seccomp `socket()` filter | In-process reach is REACHABLE (accepted class) |
 | Android device (`08`) | **PENDING** | No device client exists; `UnavailableDeviceTransport` refuses every call |
@@ -174,7 +204,8 @@ the measured radius.
 | Stolen access token | Short TTL | Opaque tokens with server lookup → revocation is immediate, not TTL-bounded | Accept |
 | Filesystem / egress reach under **app** RCE | `mediated` fs and `mediated_proxy` egress are application code (§3b rows 13, 14) | Authorized paths contained; `system.restricted` kernel-confined by default (§3b rows 15, 16) | **Accepted for pilot — option (a)**; `mount_isolated`/`netns_filtered` remain future hardening |
 | `system.restricted` under an active break-glass record | Owner-ratified OD-EXEC-2: deliberate, for recovery (§3b rows 17c/17d) | Off by default; superuser-only, per task, per executable, ≤ `max_invocations`, ≤ 15 min and never past the task; every activation/invocation/end audited; still needs confirmation + step-up | Treat each activation with real data as a cross-user exposure event; transcribe OD-EXEC-2 into `DECISION_REGISTER.md` §2B (OD-BG-1) |
-| Mem0 cross-user reach under RCE | Not yet measurable (§4) | — | Re-run BR-T2 after `11` |
+| Mem0 cross-user reach under **app** RCE | The visibility filter is application code (§3c row 23) | Authorized paths contained (rows 18–22); secrets never stored (row 25); deleted text physically removed (row 26) | Inside **option (a)** |
+| Memory store **at rest**: live facts in plaintext, deleted facts' vectors retained (§3c rows 27, 28) | No at-rest encryption for memory yet (docs/21 §7, DECISION_REGISTER §4 "future hardening"); hnswlib marks rather than erases | Owner-only (0700) store directories; disk/backup protection is the operator's | **Owner decision needed before real data**: accept for the pilot, or require encrypted storage / a periodic index rebuild first |
 
 Every residual above is documented with an owner action, and none is presented as
 solved.
@@ -227,14 +258,18 @@ recorded as future hardening in `docs/DECISION_REGISTER.md` §4.
 - ~~Re-run BR-T2 once `09` exists~~ — done in integration-hardening (§3b). Rows 13
   and 14 fall inside the accepted class; no *authorized* path was found reachable
   with the default `landlock` confinement.
-- Re-run BR-T2 once `11` (Mem0) and `08`'s device client exist, and add their rows.
+- ~~Re-run BR-T2 once `11` (Mem0) exists~~ — done in the memory build (§3c). No
+  authorized path reachable; row 23 inside the accepted class; rows 27–28 are
+  at-rest and go to the owner (§5).
+- Re-run BR-T2 once `08`'s device client exists, and add its rows.
 
 ---
 
 ## 7. How to re-run
 
 ```bash
-python3 -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py -q -s
+python3 -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py \
+    tests/integration/test_br_t2_memory_rows.py -q -s
 ```
 
 `-s` prints the measured table. The experiment asserts the measurement in **both**

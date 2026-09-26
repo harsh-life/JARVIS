@@ -25,7 +25,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.graph.ports import ResourceDescriptor
+from server.graph.ports import ResourceDescriptor, ResourceLoader
 from server.storage.models import (
     AgentConfiguration,
     CapabilityGrant,
@@ -48,12 +48,32 @@ class SecurityCoreResourceLoader:
     ask deterministic Security Core, not implement its own authorization").
     """
 
+    def __init__(self) -> None:
+        self._external: dict[ResourceType, ResourceLoader] = {}
+
+    def register(self, resource_type: ResourceType, loader: ResourceLoader) -> None:
+        """Add the loader for a resource type whose store lives outside this
+        layer (`mem0fact` — `11`'s Mem0 store). Additive only: a type this
+        module already loads, or one already registered, is refused, so no later
+        branch can substitute the projection another type's decisions rest on."""
+
+        if resource_type in _LOADERS or resource_type in self._external:
+            raise ValueError(f"a loader for {resource_type.value!r} already exists")
+        self._external[resource_type] = loader
+
     async def load(
         self,
         session: AsyncSession,
         resource_type: ResourceType,
         resource_ref: str,
     ) -> ResourceDescriptor | None:
+        external = self._external.get(resource_type)
+        if external is not None:
+            descriptor = await external.load(session, resource_type, resource_ref)
+            # A loader answers only for its own type (fail-closed otherwise).
+            if descriptor is not None and descriptor.resource_type is not resource_type:
+                return None
+            return descriptor
         loader = _LOADERS.get(resource_type)
         if loader is None:
             return None
@@ -227,6 +247,7 @@ _LOADERS = {
     ResourceType.AGENTCONFIG: _load_agent_config,
     ResourceType.SECRET_REFERENCE: _load_secret_reference,
     # ResourceType.MEM0FACT is absent on purpose: Mem0 is `11`'s store, not a
-    # relational table this branch may reach into. Until that branch exists,
-    # a mem0fact request is unloadable and therefore denied (04 §9).
+    # relational table this layer may reach into. The composition root registers
+    # its loader (`server/composition/memory.py`) when a memory provider is
+    # configured; without one, a mem0fact request is unloadable and denied (04 §9).
 }

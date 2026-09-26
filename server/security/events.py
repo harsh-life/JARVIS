@@ -115,6 +115,15 @@ class AuditAction(str, Enum):
     BREAK_GLASS_INVOKED = "break_glass.invoked"
     BREAK_GLASS_ENDED = "break_glass.ended"
 
+    # ── persistent memory (11 §4–§6, docs/21 §4). The `resource` field names
+    # the fact id or, for a refusal, the gate's reason — never fact content.
+    MEMORY_WRITTEN = "memory.write"
+    MEMORY_WRITE_BLOCKED = "memory.write.blocked"
+    MEMORY_CORRECTED = "memory.corrected"
+    MEMORY_DELETED = "memory.deleted"
+    MEMORY_USER_PURGED = "memory.user.purged"
+    MEMORY_GRAPH_PURGED = "memory.graph.purged"
+
 
 # 12 §5 emits through a port that speaks plain strings (server/secrets is
 # below server/security and cannot import this enum). This is the one

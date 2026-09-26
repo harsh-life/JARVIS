@@ -32,7 +32,7 @@ from typing import Any, Mapping, Protocol, Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.agent.events import AgentEvent
-from server.models.provider import ModelProvider
+from server.models.provider import ChatMessage, ModelProvider
 from shared.schemas.agent import (
     AgentFailureCode,
     AgentTaskStatus,
@@ -300,12 +300,40 @@ class ModelResolverPort(Protocol):
 class Hydration:
     items: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    # Relevant Knowledge Vault chunks (11 §3, docs/21 §5) — shared, curated,
+    # and still untrusted data when they reach the model (PRD §24).
+    knowledge: list[str] = field(default_factory=list)
 
 
 class HydratorPort(Protocol):
     async def hydrate(
         self, *, principal: Principal, graph_id: uuid.UUID | None, query: str
     ) -> Hydration: ...
+
+
+class MemoryFormationPort(Protocol):
+    """docs/21 §2.2 option (a) / §3 — runtime-owned memory formation.
+
+    The runtime makes the one model call (bounded, budget-checked and metered
+    like every other, MP-T4); the port only builds the prompt from the two
+    permitted inputs and gates and stores what comes back. The runtime cannot
+    reach the memory store, the write gate, or any other memory operation through
+    this port — only these two steps for its own finished task.
+    """
+
+    def plan(
+        self, *, principal: Principal, graph_id: uuid.UUID | None, user_request: str, final_answer: str
+    ) -> Sequence[ChatMessage] | None:
+        """The extraction prompt, or `None` when formation is off for this task
+        (disabled, no memory store, no graph context)."""
+        ...
+
+    async def commit(
+        self, *, principal: Principal, graph_id: uuid.UUID | None, task_id: uuid.UUID, model_output: str
+    ) -> list[str]:
+        """Gate and store the proposed facts; returns user-facing notes. Never
+        raises for a refused fact."""
+        ...
 
 
 # ── the per-request bundle ─────────────────────────────────────────────────
@@ -343,6 +371,7 @@ class TaskEnvironment:
     models: ModelResolverPort
     hydrator: HydratorPort
     supervisor: SupervisorGatePort
+    memory: MemoryFormationPort | None = None
 
 
 __all__: Sequence[str] = [
@@ -353,6 +382,7 @@ __all__: Sequence[str] = [
     "Hydration",
     "HydratorPort",
     "IssuedConfirmation",
+    "MemoryFormationPort",
     "ModelResolverPort",
     "ResolvedModels",
     "SecurityPort",

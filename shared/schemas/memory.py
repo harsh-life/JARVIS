@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from shared.schemas.common import ORMBase, utcnow
 from shared.schemas.enums import FactType, Visibility
@@ -81,3 +81,34 @@ class VaultQueryResultItem(ORMBase):
 
 class VaultQueryResponse(ORMBase):
     results: list[VaultQueryResultItem] = Field(default_factory=list)
+
+
+# ── 02 §7 memory endpoint bodies ─────────────────────────────────────────────
+
+
+class MemoryCreateRequest(ORMBase):
+    """`POST /api/v1/memory`. No `visibility`, owner or source field: a new fact
+    is the caller's and `private` (RAUTH-005, PHONE-003). `graph_id` is a claim
+    the engine checks (D1); omitted, the session's active graph is used."""
+
+    fact_type: FactType
+    content: str = Field(min_length=1, max_length=4000)
+    graph_id: UUID | None = None
+
+
+class MemoryPatchRequest(ORMBase):
+    """`PATCH /api/v1/memory/{fact_id}` — owner-only correction and/or share."""
+
+    content: str | None = Field(default=None, min_length=1, max_length=4000)
+    visibility: Visibility | None = None
+
+    @model_validator(mode="after")
+    def _not_both_empty(self) -> "MemoryPatchRequest":
+        if self.content is None and self.visibility is None:
+            raise ValueError("at least one of content or visibility is required")
+        return self
+
+
+class MemoryListResponse(ORMBase):
+    items: list[Mem0Fact] = Field(default_factory=list)
+    next_cursor: str | None = None

@@ -28,6 +28,23 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The persistent-memory and Knowledge Vault stack (docs/21), exact pins:
+#  mem0ai — Mem0 OSS, used as a library behind one adapter
+#    (server/memory/mem0_provider.py), not forked. The adapter is validated
+#    against this exact version and refuses to start on any other.
+#  chromadb — the local vector store, one client per store (VAULT-003).
+#  fastembed — runs BAAI/bge-small-en-v1.5 on ONNX Runtime, offline after
+#    `python -m server.memory provision` (no torch, no model server).
+#  dulwich — reads the Knowledge Vault's Git object store in-process, so vault
+#    ingestion spawns no `git` process and opens no socket.
+# Optional so a fresh clone without memory still installs and runs
+# (`memory.enabled: false` is the default); CI installs it.
+memory = [
+    "mem0ai==2.2.1",
+    "chromadb==1.5.9",
+    "fastembed==0.8.1",
+    "dulwich==1.2.15",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -45,6 +62,12 @@ include = ["server*", "shared*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    # Chroma warns when a collection is created with `embedding_function=None`.
+    # That is deliberate: without it Chroma attaches its default ONNX embedding
+    # function, which downloads a model on first use (hidden egress, docs/21 §2.1).
+    "ignore:legacy embedding function config:DeprecationWarning",
+]
 
 [tool.importlinter]
 root_packages = ["server", "shared"]
@@ -309,3 +332,47 @@ forbidden_modules = ["subprocess", "socket"]
 # check can distinguish from "uses a module that, three layers down, uses
 # one of these".
 allow_indirect_imports = true
+
+# docs/21 / 11 §1 (VAULT-003, VAULT-004): persistent memory and the Knowledge
+# Vault are separate stores. Neither package may import the other, directly or
+# through a chain — so no code path in either can read the other's store.
+# (The layers contract already keeps application-band siblings apart; this
+# names the rule so a layering edit cannot silently drop it.)
+[[tool.importlinter.contracts]]
+name = "Memory and vault are separate stores (VAULT-003, MEM-T6/T7)"
+type = "independence"
+modules = ["server.memory", "server.vault"]
+
+# docs/21 memory build: memory and the vault store and retrieve. They reach no
+# control surface, no device, no scheduling, voice, judging or intelligence
+# code, no runtime, tool, gateway or composition code, and no execution
+# primitive — directly or indirectly. Superuser minting and raw secrets are
+# closed by the contracts above.
+[[tool.importlinter.contracts]]
+name = "Memory/vault reach no control, device, scheduler, voice or judge code (docs/21)"
+type = "forbidden"
+source_modules = ["server.memory", "server.vault"]
+forbidden_modules = [
+    "server.dashboard",
+    "server.scheduler",
+    "server.voice",
+    "server.evaluation",
+    "server.intelligence",
+    "server.execution",
+    "server.agent",
+    "server.tools",
+    "server.modeltools",
+    "server.gateway",
+    "server.composition",
+]
+
+# docs/21 §2.1: Mem0 is a pinned dependency wrapped by one adapter. No other
+# module may import it, so JARVIS depends on `MemoryProvider`, never on Mem0
+# internals, and every hardening step in the adapter (telemetry off, no Mem0
+# LLM, no history file, offline embedder) cannot be bypassed by a second import.
+[[tool.importlinter.contracts]]
+name = "Only the Mem0 adapter imports mem0 (docs/21 §2)"
+type = "forbidden"
+source_modules = ["server", "shared"]
+forbidden_modules = ["mem0"]
+ignore_imports = ["server.memory.mem0_provider -> mem0"]

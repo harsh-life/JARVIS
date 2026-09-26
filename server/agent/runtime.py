@@ -88,6 +88,8 @@ from shared.schemas.enums import AuditResult, PermissionDecisionValue, RiskCateg
 
 logger = logging.getLogger("hypermind.agent.runtime")
 
+_MEMORY_SKIPPED_NOTE = "long-term memory was not updated for this task"
+
 _FAILURE_MESSAGES: dict[AgentFailureCode, str] = {
     AgentFailureCode.MAX_ITERATIONS: "The task stopped: it reached its maximum number of steps.",
     AgentFailureCode.MAX_MODEL_CALLS: "The task stopped: it reached its maximum number of model calls.",
@@ -286,7 +288,8 @@ class AgentRuntime:
                 graph_id=graph_id,
                 mode=mode.value,
             )
-            state = TaskState(task_id=task_id, principal=principal, graph_id=graph_id, mode=mode)
+            state = TaskState(task_id=task_id, principal=principal, graph_id=graph_id, mode=mode,
+                              user_input=user_input)
             self._states.put(state)
             # Re-checked synchronously, with no `await` since `put`: a global
             # stop sets the in-process latch and then sweeps the registry
@@ -306,7 +309,7 @@ class AgentRuntime:
                 state.notes.extend(hydration.notes)
                 state.messages = [
                     ctx.ChatMessage("system", ""),  # regenerated every step
-                    ctx.context_message(hydration.items, hydration.notes, user_input),
+                    ctx.context_message(hydration.items, hydration.notes, user_input, hydration.knowledge),
                 ]
                 return await self._drive(env, state)
             except Exception as exc:  # noqa: BLE001 — see _internal_failure
@@ -1251,6 +1254,8 @@ class AgentRuntime:
         self._tools.release_task(state.task_id)
         if revoked:
             await self._event(env, state, AgentEvent.CAPABILITY_DEACTIVATED, AuditResult.SUCCESS)
+        if status is AgentTaskStatus.COMPLETED and response and not unresolved:
+            await self._form_memory(env, state, response)
         await update_task_row(
             env.session, state.task_id, status=status, iterations=state.iterations,
             model_calls=state.model_calls, tool_calls=state.tool_calls, response=response,
@@ -1271,6 +1276,57 @@ class AgentRuntime:
         if failure is not None:
             result.failure = AgentFailure(code=failure, message=_FAILURE_MESSAGES[failure])
         return result
+
+    async def _form_memory(self, env: TaskEnvironment, state: TaskState, answer: str) -> None:
+        """docs/21 §2.2 (a) / §3: after a completed task, one extraction call to
+        the task's own worker, under the task's own bounds, budget and metering.
+        Its inputs are the user's request and the final answer only (MP-T6).
+
+        Formation is a write, so a draft/suggest/observe task never forms memory
+        (18 §3). It never changes the task's outcome: any failure here is a note."""
+
+        formation = env.memory
+        if formation is None or state.mode is not TaskMode.EXECUTE:
+            return
+        try:
+            messages = formation.plan(principal=state.principal, graph_id=state.graph_id,
+                                      user_request=state.user_input, final_answer=answer)
+            if not messages:
+                return
+            if state.model_calls >= self._bounds.max_model_calls:
+                state.notes.append(_MEMORY_SKIPPED_NOTE)
+                return
+            models = await env.models.resolve(principal=state.principal, graph_id=state.graph_id)
+            provider = models.chain[min(state.worker_index, len(models.chain) - 1)]
+            spec = provider.spec
+            projected = spec.projected_cost(prompt_chars=sum(len(m.content) for m in messages))
+            if projected > 0 and state.cost + projected > self._bounds.per_task_budget:
+                state.notes.append(_MEMORY_SKIPPED_NOTE)
+                return
+            try:
+                await env.usage.precheck(principal=state.principal, projected_cost=projected)
+            except UsageLimitReached:
+                state.notes.append(_MEMORY_SKIPPED_NOTE)
+                return
+            state.model_calls += 1
+            try:
+                result = await asyncio.wait_for(
+                    provider.invoke(messages, timeout=spec.timeout_seconds), timeout=spec.timeout_seconds
+                )
+            except (ModelUnavailable, asyncio.TimeoutError):
+                await self._meter_model(env, state, provider, units=0, cost=0.0)
+                state.notes.append(_MEMORY_SKIPPED_NOTE)
+                return
+            cost = spec.pricing.cost(prompt_tokens=result.prompt_tokens,
+                                     completion_tokens=result.completion_tokens)
+            await self._meter_model(env, state, provider, units=result.total_tokens, cost=cost)
+            state.notes.extend(await formation.commit(
+                principal=state.principal, graph_id=state.graph_id, task_id=state.task_id,
+                model_output=result.content,
+            ))
+        except Exception:  # noqa: BLE001 — memory formation never fails a finished task
+            logger.warning("memory formation failed for task %s", state.task_id, exc_info=False)
+            state.notes.append(_MEMORY_SKIPPED_NOTE)
 
     async def _fail(self, env: TaskEnvironment, state: TaskState, code: AgentFailureCode) -> AgentResult:
         return await self._finish(env, state, AgentTaskStatus.FAILED, failure=code)

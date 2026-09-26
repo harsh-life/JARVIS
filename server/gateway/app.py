@@ -19,7 +19,8 @@ from server.gateway.errors import install_error_handlers
 from server.gateway.request_context import RequestIdMiddleware
 from server.gateway.agent_port import AgentTaskPort
 from server.gateway.control_port import SupervisorControlPort
-from server.gateway.routers import agent, auth, capabilities, control, graphs, health, sessions
+from server.gateway.memory_port import MemoryPort, VaultPort
+from server.gateway.routers import agent, auth, capabilities, control, graphs, health, memory, sessions, vault
 from server.gateway.security import SecurityCore, build_security_core
 from server.gateway.security_errors import install_security_error_handlers
 from server.storage import StorageBackend
@@ -38,6 +39,8 @@ def create_app(
     reconcile_tasks_on_startup: bool = False,
     agent_tasks: AgentTaskPort | None = None,
     supervisor_control: SupervisorControlPort | None = None,
+    memory_port: MemoryPort | None = None,
+    vault_port: VaultPort | None = None,
 ) -> FastAPI:
     """Build the FastAPI app.
 
@@ -94,6 +97,8 @@ def create_app(
     v1.include_router(capabilities.router)
     v1.include_router(agent.router)
     v1.include_router(control.router)
+    v1.include_router(memory.router)
+    v1.include_router(vault.router)
     app.include_router(v1)
 
     # The agent runtime is assembled above this layer (server/composition/) and
@@ -104,6 +109,10 @@ def create_app(
     # 18 §5.4 — likewise assembled above this layer. Without one, the control
     # endpoints answer `503` (after superuser authentication).
     app.state.supervisor_control = supervisor_control
+    # 11 / docs/21 — assembled above this layer too. Without one, the memory and
+    # vault endpoints answer `503` with `mem0` / `vault` (02 §13).
+    app.state.memory = memory_port
+    app.state.vault = vault_port
     app.state.intelligence_enabled = bool(config.intelligence.enabled) if config else False
 
     # Storage is attached synchronously at construction time, not deferred
