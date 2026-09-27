@@ -195,8 +195,13 @@ when an operation was sent is sent a content-free data message — exactly
 `{"type": "wake"}` — and reconnects its authenticated channel; the operation
 itself had already failed (`device_unavailable`, never queued), and only the
 *task* waits, re-authorized when the channel is back. The phone binds its own
-token, opts in explicitly, and never initializes Firebase otherwise. Not yet:
-the overlay.
+token, opts in explicitly, and never initializes Firebase otherwise. The
+presentation layer (docs/23 §7) derives one content-free `PresentationState`
+from the server's task answers and the device's state; the task panel, the
+status header and an optional floating overlay (off by default; state only,
+never focusable, never approves) all show it, and a waiting task is shown as
+paused with what to turn on. The final on-screen character is deferred; it
+will replace only the plain status indicator.
 
 **Scheduler build** — task-linked reminders (`docs/22_SCHEDULER.md`, operator
 guide `docs/RUNNING_SCHEDULER.md`). *A firing reminder delivers a message; it

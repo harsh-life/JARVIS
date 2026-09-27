@@ -138,6 +138,8 @@ Rules:
 
 `[PROPOSED]` the client exposes one internal interface the future character will consume: a stream of `PresentationState {task_status, risk_tier_pending, device_context, break_glass_active, error}` derived from server task status. The next build renders it as a plain status indicator. Replacing the indicator with the character later touches only the presentation module.
 
+*Implemented (Phase G):* `android/app/.../presentation/` — `PresentationState` (signals only: no task content, prose, token or id), one deterministic `Presenter` mapping from canonical server task state and device state, one wording table and one tone/motion/glyph table, and `AppGraph.presentation` as the single stream. The task panel, the status header and the optional floating overlay all read it; the plain `StatusIndicator` (`presentation/ui/`) is the one composable the character replaces. The overlay is opt-in, never focusable, shows state only and never approves — approval happens only on the in-app canonical confirmation card, which drops touches while obscured (DECISION_REGISTER).
+
 ---
 
 ## 8. Build and CI
