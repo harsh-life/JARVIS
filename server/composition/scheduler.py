@@ -23,24 +23,28 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Iterator
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.capabilities.registry import CREATE_REMINDER_OPERATION, SCHEDULER_CREATE_CAPABILITY
+from server.execution.device_hub import DeviceHub
 from server.gateway.errors import AppError
 from server.gateway.security import SecurityCore
 from server.graph.authorization import AccessRequest, AuthorizationOutcome
 from server.graph.ports import ResourceDescriptor
 from server.graph.predicate import readable
+from server.scheduler.firing import ReminderFirer
 from server.scheduler.service import NewReminder, ReminderRefused, SchedulerService
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
 from server.security.usage import LimitExceeded
-from server.storage.models import ScheduledJob
+from server.storage.models import Device, ScheduledJob, User
 from server.tools.registry import ToolDefinition
 from shared.schemas.agent import ExecutionPlatform, OperationSpec, ToolInvocation, ToolOutput
 from shared.schemas.agent_config import ToolContract
 from shared.schemas.authorization import DenialSurface, Operation, Principal, ResourceType
-from shared.schemas.enums import AuditActor, AuditResult, RiskCategory
+from shared.schemas.device_channel import DeviceReminder
+from shared.schemas.enums import AuditActor, AuditResult, RiskCategory, UserStatus
 from shared.schemas.errors import ErrorCode
 from shared.schemas.scheduler import JobCreateRequest, JobListResponse, ReasonSource, ScheduledJobView
 
@@ -351,11 +355,72 @@ def reminder_tool_definition(service: SchedulerService) -> ToolDefinition:
     )
 
 
+
+
+# ── firing and delivery (docs/22 §2/§3) ────────────────────────────────
+
+
+class SecurityCoreFireChecks:
+    """`FireTimeChecks` from live state: the user row, the engine's own
+    membership reader (the one D1 predicate), and the device registry."""
+
+    def __init__(self, core: SecurityCore) -> None:
+        self._core = core
+
+    async def user_active(self, session: AsyncSession, user_id: uuid.UUID) -> bool:
+        user = await session.get(User, user_id)
+        return user is not None and user.status is UserStatus.ACTIVE
+
+    async def active_member(self, session: AsyncSession, *, graph_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        return await self._core.graph_repository.active_role(session, graph_id=graph_id, user_id=user_id) is not None
+
+    async def active_devices(self, session: AsyncSession, user_id: uuid.UUID) -> list[uuid.UUID]:
+        rows = await session.execute(
+            select(Device.device_id).where(Device.user_id == user_id, Device.revoked.is_(False))
+        )
+        return list(rows.scalars())
+
+    async def device_belongs_to(self, session: AsyncSession, *, device_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        device = await session.get(Device, device_id)
+        return device is not None and device.user_id == user_id and not device.revoked
+
+
+class HubReminderChannel:
+    """`ReminderChannel` over the device hub's typed `send_reminder` — the
+    scheduler never holds the hub itself, so it has no way to call `send()`."""
+
+    def __init__(self, hub: DeviceHub) -> None:
+        self._hub = hub
+
+    async def push(self, reminder: DeviceReminder, *, user_id: uuid.UUID) -> bool:
+        return await self._hub.send_reminder(reminder, user_id=user_id)
+
+
+class ReminderInboxAdapter:
+    """`ReminderInbox` for the device channel."""
+
+    def __init__(self, firer: ReminderFirer) -> None:
+        self._firer = firer
+
+    @property
+    def firer(self) -> ReminderFirer:
+        return self._firer
+
+    async def device_connected(self, *, user_id: uuid.UUID, device_id: uuid.UUID) -> None:
+        await self._firer.device_connected(user_id=user_id, device_id=device_id)
+
+    async def acknowledge(self, *, user_id: uuid.UUID, device_id: uuid.UUID, delivery_id: uuid.UUID) -> bool:
+        return await self._firer.acknowledge(user_id=user_id, device_id=device_id, delivery_id=delivery_id)
+
+
 __all__ = [
     "CURRENT_REMINDER_SCOPE",
     "REMINDER_TOOL_ID",
+    "HubReminderChannel",
+    "ReminderInboxAdapter",
     "ReminderToolAdapter",
     "SchedulerFacade",
+    "SecurityCoreFireChecks",
     "reminder_scope",
     "reminder_tool_definition",
 ]

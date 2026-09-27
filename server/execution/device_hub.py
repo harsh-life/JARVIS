@@ -17,6 +17,13 @@ What it guarantees, each a direct docs/23 requirement:
   bound. A result for an unknown, finished or cancelled operation is dropped
   (ANDC-T8). An accepted result is returned as data for the worker, never
   interpreted (PRD §24).
+* **Reminders are not operations.** `send_reminder` carries only a typed
+  `DeviceReminder` (docs/22 §2) — a message, with no field a device could
+  execute — to the socket of exactly its device, bound to exactly its owner,
+  and only if that socket declared the `reminders` feature. It never waits for
+  a result and resolves nothing pending. Queueing reminders for an offline
+  device is the scheduler's (they carry no authority); this hub still queues
+  nothing.
 * **Cancellation.** A cancelled `send` (the runtime's `_run_cancellable`,
   a user cancel, an operator stop) tells the device `cancel: op_id`; ending a
   task tells it `cancel: task_id`. Either way the pending result is
@@ -46,10 +53,12 @@ from server.execution.device_observations import (
 )
 from shared.schemas.device_channel import (
     MAX_SCREENSHOT_FRAME_BYTES,
+    ChannelFeature,
     DeviceCancel,
     DeviceCloseCode,
     DevicePlatformDependency,
     DeviceRefusalReason,
+    DeviceReminder,
     DeviceResultEnvelope,
     DeviceResultStatus,
     ResultKind,
@@ -82,6 +91,7 @@ class DeviceSession:
     connection: DeviceConnection
     connected_at: datetime
     platforms: dict[DevicePlatformDependency, bool] = field(default_factory=dict)
+    features: frozenset[ChannelFeature] = frozenset()
     closed: bool = False
 
 
@@ -107,10 +117,16 @@ class DeviceHub:
     # ── connection lifecycle (called by the gateway) ────────────────────
 
     async def attach(
-        self, *, user_id: uuid.UUID, device_id: uuid.UUID, connection: DeviceConnection
+        self,
+        *,
+        user_id: uuid.UUID,
+        device_id: uuid.UUID,
+        connection: DeviceConnection,
+        features: frozenset[ChannelFeature] = frozenset(),
     ) -> DeviceSession:
         session = DeviceSession(
-            user_id=user_id, device_id=device_id, connection=connection, connected_at=self._clock()
+            user_id=user_id, device_id=device_id, connection=connection, connected_at=self._clock(),
+            features=frozenset(features),
         )
         previous = self._sessions.get(device_id)
         self._sessions[device_id] = session
@@ -191,6 +207,29 @@ class DeviceHub:
         finally:
             self._pending.pop(operation.op_id, None)
         return _interpret(operation, envelope)
+
+    async def send_reminder(self, reminder: DeviceReminder, *, user_id: uuid.UUID) -> bool:
+        """Deliver one reminder to its device's live socket, if that socket is
+        bound to `user_id` (the job's owner) and understands reminders. Returns
+        whether it was written to the socket; the device acknowledges it
+        separately. Never raises for an absent or dead socket."""
+
+        if not isinstance(reminder, DeviceReminder):
+            raise TypeError("send_reminder carries only a DeviceReminder")
+        session = self._sessions.get(reminder.device_id)
+        if (
+            session is None
+            or session.closed
+            or session.user_id != user_id
+            or ChannelFeature.REMINDERS not in session.features
+        ):
+            return False
+        try:
+            await session.connection.send_text(reminder.model_dump_json())
+        except Exception:  # noqa: BLE001 — a dead socket just means "not delivered yet"
+            logger.debug("reminder not written to device socket", exc_info=True)
+            return False
+        return True
 
     def cancel_task(self, task_id: uuid.UUID) -> None:
         """The task ended (completed, failed, cancelled, stopped): tell every

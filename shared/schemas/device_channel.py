@@ -205,6 +205,40 @@ class DeviceReauthAck(_Strict):
     session_expires_at: datetime
 
 
+# docs/22 §2: a reminder's words are the owner's own `task_reason`, bounded by
+# the scheduler's own limit (`scheduler.max_task_reason_chars` ≤ 8000).
+MAX_REMINDER_TEXT = 8000
+
+
+class ChannelFeature(str, Enum):
+    """Optional frame families a client declares in `hello`. The server sends a
+    family only to a socket that declared it, so an older client never receives
+    a frame it would reject as a protocol error."""
+
+    REMINDERS = "reminders"
+
+
+class DeviceReminder(_Strict):
+    """A reminder notification (docs/22 §2) — a message for the owner, never an
+    instruction to the device. It has no capability, operation, primitive,
+    argument or expiry of authority, so there is nothing in it a device could
+    execute; unlike an operation it may wait for an offline device (docs/23 §4).
+    The client shows it and acknowledges it; "start task" on the notification
+    only opens the app with `task_reason` in the input box for the user to send.
+    """
+
+    type: Literal["reminder"] = "reminder"
+    delivery_id: UUID
+    job_id: UUID
+    device_id: UUID
+    task_reason: str = Field(min_length=1, max_length=MAX_REMINDER_TEXT)
+    scheduled_for: datetime
+    # Delivered after its due time: a misfire within grace, or a reminder that
+    # waited for this device to reconnect ("missed at …", docs/22 §3).
+    late: bool = False
+    recurring: bool = False
+
+
 class DeviceWakePush(_Strict):
     """The entire push payload (docs/23 §4, ANDC-T9): "reconnect", nothing
     else. No operation, no user or screen content, no identifiers beyond what
@@ -225,11 +259,20 @@ class DeviceHello(_Strict):
     device_proof: str = Field(min_length=1, max_length=512)
     mapping_version: str = Field(min_length=1, max_length=64)
     client_version: str = Field(min_length=1, max_length=64)
+    features: list[ChannelFeature] = Field(default_factory=list, max_length=8)
 
 
 class DeviceReauth(_Strict):
     type: Literal["reauth"] = "reauth"
     access_token: str = Field(min_length=1, max_length=512)
+
+
+class DeviceReminderAck(_Strict):
+    """The device displayed a reminder. Acknowledges exactly one delivery
+    addressed to this socket's own device; anything else is ignored."""
+
+    type: Literal["reminder_ack"] = "reminder_ack"
+    delivery_id: UUID
 
 
 class DevicePlatformStatus(_Strict):
@@ -397,9 +440,11 @@ __all__ = [
     "MAX_SCREENSHOT_FRAME_BYTES",
     "MAX_SCREEN_NODES",
     "PACKAGE_NAME_PATTERN",
+    "MAX_REMINDER_TEXT",
     "ActionResult",
     "AppMetadata",
     "BatteryState",
+    "ChannelFeature",
     "DeviceCancel",
     "DeviceCloseCode",
     "DeviceFailureReason",
@@ -411,6 +456,8 @@ __all__ = [
     "DevicePlatformStatus",
     "DeviceReauth",
     "DeviceReauthAck",
+    "DeviceReminder",
+    "DeviceReminderAck",
     "DeviceRefusalReason",
     "DeviceResultEnvelope",
     "DeviceResultStatus",

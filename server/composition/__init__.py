@@ -36,7 +36,14 @@ from server.config.schema import AppConfig
 from server.gateway.app import create_app
 from server.gateway.security import SecurityCore, build_security_core
 from server.composition.memory import MemoryFacade, MemoryFactLoader, VaultFacade
-from server.composition.scheduler import SchedulerFacade, reminder_tool_definition
+from server.composition.scheduler import (
+    HubReminderChannel,
+    ReminderInboxAdapter,
+    SchedulerFacade,
+    SecurityCoreFireChecks,
+    reminder_tool_definition,
+)
+from server.scheduler.firing import ReminderFirer, SchedulerRunner
 from server.scheduler.backend import build_backend
 from server.scheduler.service import SchedulerService
 from server.security.usage import SchedulerLimits, SchedulerQuota
@@ -265,6 +272,22 @@ def build_application(
         graphs = await core.graph_repository.graphs_for_user(session, user_id=user_id, limit=1000)
         return {g.graph_id for g in graphs}
 
+    # docs/22 §2/§3: firing and delivery. The runner is a lifespan service; it
+    # needs the same storage the app serves from, so that is fixed here.
+    if storage is None:
+        from server.storage import SQLAlchemyStorageBackend
+
+        storage = SQLAlchemyStorageBackend(config.database_url)
+    reminder_firer: ReminderFirer | None = None
+    background = []
+    if scheduler_service is not None:
+        reminder_firer = ReminderFirer(
+            storage=storage, backend=scheduler_service.backend, config=config.scheduler,
+            checks=SecurityCoreFireChecks(core),
+            channel=HubReminderChannel(device_hub) if device_hub is not None else None,
+        )
+        background.append(SchedulerRunner(reminder_firer, poll_seconds=config.scheduler.poll_seconds))
+
     latch = InProcessLatch()
     runtime = AgentRuntime(
         bounds=bounds_from_config(config),
@@ -307,6 +330,8 @@ def build_application(
         scheduler_port=(
             SchedulerFacade(service=scheduler_service, core=core) if scheduler_service is not None else None
         ),
+        reminder_inbox=ReminderInboxAdapter(reminder_firer) if reminder_firer is not None else None,
+        background=background,
     )
 
 
