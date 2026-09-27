@@ -50,12 +50,14 @@ import java.io.IOException
 // biometric prompt can attach to it for step-up (docs/23 §3).
 class MainActivity : FragmentActivity() {
     private val notice = mutableStateOf<String?>(null)
+    private val draft = mutableStateOf<String?>(null)
     private val requestNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         notice.value = intent?.getStringExtra(EXTRA_NOTICE)
+        takeDraft(intent)
         val app = application as JarvisApplication
         setContent {
             JarvisTheme {
@@ -83,6 +85,15 @@ class MainActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         notice.value = intent.getStringExtra(EXTRA_NOTICE)
+        takeDraft(intent)
+    }
+
+    /** docs/22 §2: "start task" on a reminder pre-fills the task box — nothing is sent. */
+    private fun takeDraft(intent: Intent?) {
+        val text = intent?.getStringExtra(EXTRA_TASK_DRAFT)?.take(MAX_DRAFT_CHARS) ?: return
+        if (text.isBlank()) return
+        draft.value = text
+        notice.value = getString(R.string.reminder_draft_notice)
     }
 
     @Composable
@@ -160,6 +171,7 @@ class MainActivity : FragmentActivity() {
                 onDecline = { taskId, pending ->
                     scope.launch { panel = TaskPanelState.of(graph.tasks.decline(taskId, pending)) }
                 },
+                draft = draft.value,
             )
         }
         var showGrid by remember { mutableStateOf(false) }
@@ -233,5 +245,7 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         const val EXTRA_NOTICE = "notice"
+        const val EXTRA_TASK_DRAFT = "task_draft"
+        private const val MAX_DRAFT_CHARS = 8000
     }
 }

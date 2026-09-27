@@ -37,6 +37,9 @@ import com.hypermind.jarvis.permissions.GridSync
 import com.hypermind.jarvis.privileged.ForceStopPrimitive
 import com.hypermind.jarvis.privileged.RikkaShizukuGateway
 import com.hypermind.jarvis.privileged.ShizukuGateway
+import com.hypermind.jarvis.reminders.AndroidReminderNotifier
+import com.hypermind.jarvis.reminders.ReminderInbox
+import com.hypermind.jarvis.reminders.ReminderNotifier
 import com.hypermind.jarvis.tasks.TaskController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +61,7 @@ class AppGraph(
     keyStore: DeviceKeyStore = KeystoreDeviceKeyStore(context),
     private val shizuku: RikkaShizukuGateway = RikkaShizukuGateway(context.applicationContext),
     primitives: Map<String, Primitive> = defaultPrimitives(context, shizuku),
+    reminderNotifier: ReminderNotifier = AndroidReminderNotifier(context.applicationContext),
 ) {
     val platforms = Platforms(shizuku::available)
     private val prompt = PlatformPrompt(context.applicationContext)
@@ -147,6 +151,9 @@ class AppGraph(
         }
     }
 
+    /** docs/22: reminders shown as notifications — messages, never operations. */
+    val reminders = ReminderInbox(deviceId = { store.deviceId?.toString() }, notifier = reminderNotifier)
+
     val channel: DeviceChannel =
         DeviceChannel(
             http = http,
@@ -174,6 +181,10 @@ class AppGraph(
                 reportPlatforms()
             },
         )
+
+    init {
+        channel.onReminder = reminders::receive
+    }
 
     private fun reportPlatforms() {
         channel.reportPlatforms(platforms.snapshot())

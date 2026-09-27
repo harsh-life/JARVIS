@@ -1,11 +1,14 @@
 package com.hypermind.jarvis.channel
 
 import com.hypermind.jarvis.auth.EnrollmentLost
+import com.hypermind.jarvis.contract.ChannelFeature
 import com.hypermind.jarvis.contract.CloseCode
 import com.hypermind.jarvis.contract.Hello
 import com.hypermind.jarvis.contract.PlatformDependency
 import com.hypermind.jarvis.contract.PlatformStatus
 import com.hypermind.jarvis.contract.Reauth
+import com.hypermind.jarvis.contract.Reminder
+import com.hypermind.jarvis.contract.ReminderAck
 import com.hypermind.jarvis.contract.ServerFrame
 import com.hypermind.jarvis.contract.encode
 import kotlinx.coroutines.CoroutineScope
@@ -49,6 +52,9 @@ interface ChannelCredentials {
  *   returns.
  * * `revoked` wipes the enrollment ([onRevoked]) and stops for good; a mapping
  *   mismatch stops until the app is updated. Neither retries.
+ * * Reminders (docs/22 §2) are messages, not operations: each goes to
+ *   [onReminder], which shows it, and the acknowledgement it returns is sent
+ *   back. They never reach the [OperationHandler].
  */
 class DeviceChannel(
     private val http: OkHttpClient,
@@ -63,6 +69,14 @@ class DeviceChannel(
     private val now: () -> Instant = Instant::now,
     private val random: Random = Random.Default,
 ) {
+    /**
+     * docs/22 §2: where reminders go — shown, and the returned acknowledgement
+     * sent back. Kept apart from [handler] so a reminder can never reach the
+     * operation path. No sink: reminders are ignored (and stay unacknowledged).
+     */
+    @Volatile
+    var onReminder: (Reminder) -> ReminderAck? = { null }
+
     private val _state = MutableStateFlow<ChannelState>(ChannelState.Stopped)
     val state: StateFlow<ChannelState> = _state.asStateFlow()
 
@@ -122,6 +136,7 @@ class DeviceChannel(
                             deviceProof = credentials.freshProof(),
                             mappingVersion = mappingVersion,
                             clientVersion = clientVersion,
+                            features = listOf(ChannelFeature.REMINDERS),
                         )
                     } catch (ignored: EnrollmentLost) {
                         webSocket.close(NORMAL_CLOSURE, "enrollment lost")
@@ -145,6 +160,7 @@ class DeviceChannel(
                 is ServerFrame.ReauthOk -> connected(OffsetDateTime.parse(frame.ack.sessionExpiresAt).toInstant())
                 is ServerFrame.Operation -> run(webSocket, frame)
                 is ServerFrame.Cancel -> cancel(frame.cancel.opId, frame.cancel.taskId)
+                is ServerFrame.ReminderNotice -> onReminder(frame.reminder)?.let { webSocket.send(it.encode()) }
                 is ServerFrame.Invalid -> webSocket.close(CloseCode.PROTOCOL_ERROR.code, "invalid frame")
             }
         }

@@ -86,8 +86,11 @@ fun TaskPanel(
     onSubmit: (String) -> Unit,
     onApprove: (String, PendingAction) -> Unit,
     onDecline: (String, PendingAction) -> Unit,
+    draft: String? = null,
 ) {
-    var input by remember { mutableStateOf("") }
+    // A draft (a reminder's words, or a transcript) only fills the box; the
+    // user still presses Send, and it goes out as an ordinary task.
+    var input by remember(draft) { mutableStateOf(draft.orEmpty()) }
     OutlinedTextField(
         value = input,
         onValueChange = { input = it },

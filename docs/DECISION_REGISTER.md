@@ -200,6 +200,33 @@ Mem0 store, but the Android suite does not exist yet and OD-MB-4 is open.
 
 ---
 
+## 2D. Scheduler-build proposals (`[PROPOSED]`, pending ratification)
+
+The scheduler build (`docs/22_SCHEDULER.md`, operator guide
+`docs/RUNNING_SCHEDULER.md`) implements task-linked reminders under docs/22 §0:
+**a firing reminder delivers a message; it never executes.** Every row below is
+the value implemented where docs/22 leaves a choice; none is ratified by being
+implemented.
+
+| ID | Decision | Value implemented | Where |
+|---|---|---|---|
+| OD-SCH-1 | `scheduler.create` name and tier | `scheduler.create{create_reminder: low_write}` in the closed registry — one entry to change. The agent tool is one switch (`scheduler.agent_tool_enabled`), independent of the API and of firing. | `server/capabilities/registry.py`, `server/composition/scheduler.py` |
+| OD-SCH-2 | Fire-time `suggest` task | **Not implemented.** No principal at fire time, no automatic task. The notification's "Start task" only pre-fills the task box; the user sends it. | `android/…/reminders/` |
+| OD-SCH-3 | Scheduled execution | `[FUTURE]`; nothing in the build can express it (no standing delegation, the scheduler cannot import the runtime). | `pyproject.toml` contracts |
+| SCH-B1 | Backend | APScheduler's cron/one-shot **trigger semantics** over the application database as the one job store (`scheduled_jobs.next_fire_at`). APScheduler's own pickling `SQLAlchemyJobStore` is not used (a deserialization surface and a second source of truth). | `server/scheduler/backend.py` |
+| SCH-B2 | `job.status` | Kept to the locked `active\|cancelled\|fired` (01 §1.2). Outcomes (`delivered`, `queued`, `undeliverable`, `missed`, `cancelled_recheck`) live in `scheduled_job_firings`; a failed fire-time re-check sets `cancelled`. | `server/storage/models.py` |
+| SCH-B3 | Timezones | Carried in the `schedule` string: an ISO datetime must have an offset; a cron may be prefixed `CRON_TZ=<IANA zone> ` (UTC otherwise). The entity keeps its one field. | `server/scheduler/schedule.py` |
+| SCH-B4 | Agent-path `task_reason` | The runtime passes the task's own `user_input` to a tool registered with `binds_task_input`; a worker-supplied `task_reason` is refused. Longer than `max_task_reason_chars` → cut at the bound (still a prefix of the user's words). Stored `reason_source=task_input`, `origin_task_id`, `created_by_device_id`. | `server/agent/runtime.py`, `server/composition/scheduler.py` |
+| SCH-B5 | Agent-created jobs' visibility | `private`, `graph_id` null (the most restrictive): personal reminders. | `server/composition/scheduler.py` |
+| SCH-B6 | Cancelling | `DELETE` is `consequential` in the tier table, so it returns `403 confirmation_required` and runs with the single-use token — the memory-deletion flow. Also withdraws reminders still queued for a device. | `server/composition/scheduler.py` |
+| SCH-B7 | Quota | `max_active_jobs_per_user` 50 and `scheduler_creations_per_hour` 20, counted over the `scheduled_jobs` rows (never deleted, so create+cancel does not reset it); `LimitExceeded` → `429`; fail-closed. | `server/security/usage.py` |
+| SCH-B8 | Bounds | Recurring reminders at most every 5 min; first fire within 730 days; reason ≤ 1000 chars. | `server/config/schema.py` |
+| SCH-B9 | Misfires | Within `misfire_grace_minutes` (60): delivered, flagged `late`. Beyond: one `missed` firing row (folding every missed occurrence of a recurring job, `coalesced`), audited, reported in `GET /jobs` `last_firing`; no late notification hours after the fact. | `server/scheduler/firing.py` |
+| SCH-B10 | Offline devices | Reminders queue per owner device (`reminder_deliveries`), re-checked at send time, re-sent until acknowledged, expired after 72 h. The wake payload is fixed to `{"type":"wake"}`; no push provider is wired (OD-AND-5). | `server/scheduler/firing.py` |
+| SCH-B11 | Channel compatibility | Reminder frames go only to sockets whose `hello` declared `features: ["reminders"]`, so an older client never receives a frame it would reject. | `shared/schemas/device_channel.py` |
+
+---
+
 ## 3. Genuinely unresolved owner decisions
 
 | ID | Question | Why it is the owner's |
@@ -208,6 +235,8 @@ Mem0 store, but the Android suite does not exist yet and OD-MB-4 is open.
 | OD-TOOL-3 | Which MCP servers (if any) are enabled at pilot | Default none; unchanged. |
 | OD-DP-9 | Ratify DecisionProvider at all | Unchanged; nothing in the runtime depends on it. |
 | OD-MT-2 | Any cloud primary by default | Default local (ollama); unchanged. |
+| OD-SCH-1 | Ratify `scheduler.create` / `low_write` | Implemented as proposed (§2D); the owner signs the tier table. |
+| OD-SCH-2 | Fire-time `suggest` task with a sessionless principal | Not implemented (docs/22 recommendation); would introduce a principal with no session. |
 
 ---
 

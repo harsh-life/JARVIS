@@ -14,4 +14,11 @@
     <string name="platform_notifications">This task needs notification access. Allow JARVIS in Settings › Notification access.</string>
     <string name="platform_screen_capture">Screenshots need Android 11 or newer and JARVIS screen reading turned on.</string>
     <string name="platform_ocr">On-device text recognition is not available on this phone.</string>
+    <string name="reminder_channel_name">Reminders</string>
+    <string name="reminder_channel_description">Reminders you set. A reminder only shows your own words; starting a task from it is up to you.</string>
+    <string name="reminder_title">Reminder</string>
+    <string name="reminder_title_late">Reminder (delivered late)</string>
+    <string name="reminder_title_missed_at">Reminder (missed at %1$s)</string>
+    <string name="reminder_start_task">Start task</string>
+    <string name="reminder_draft_notice">From your reminder. Review it, then tap Send to start the task.</string>
 </resources>

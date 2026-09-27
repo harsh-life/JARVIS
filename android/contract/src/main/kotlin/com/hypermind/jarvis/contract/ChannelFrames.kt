@@ -30,6 +30,11 @@ sealed interface ServerFrame {
         val cancel: CancelMessage,
     ) : ServerFrame
 
+    /** docs/22 §2: a message for the user — nothing to execute. */
+    data class ReminderNotice(
+        val reminder: Reminder,
+    ) : ServerFrame
+
     data class Invalid(
         val reason: String,
     ) : ServerFrame
@@ -53,6 +58,7 @@ sealed interface ServerFrame {
                     "reauth_ok" -> ReauthOk(ContractJson.decodeFromString(ReauthAck.serializer(), text))
                     "operation" -> Operation(ContractJson.decodeFromString(OperationEnvelope.serializer(), text))
                     "cancel" -> parseCancel(text)
+                    "reminder" -> ReminderNotice(ContractJson.decodeFromString(Reminder.serializer(), text))
                     else -> Invalid("unknown frame type")
                 }
             } catch (e: SerializationException) {

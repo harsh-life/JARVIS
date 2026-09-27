@@ -190,10 +190,25 @@ prose), and the user's answer goes to `/agent/tasks/{id}/confirm` with the
 server-issued token. Not yet: the per-app grid UI, grid sync to the server,
 and the overlay.
 
-**Still not built:** the scheduler, the dashboard, voice. Their capabilities (where any exist) are absent from the
-registry or, for Android, dispatch to a transport that refuses every call — the
-runtime and execution layer both refuse rather than run unbounded, not silently
-degrade.
+**Scheduler build** — task-linked reminders (`docs/22_SCHEDULER.md`, operator
+guide `docs/RUNNING_SCHEDULER.md`). *A firing reminder delivers a message; it
+never executes.*
+
+- **Creation**: `POST /api/v1/jobs`, or `scheduler.create.create_reminder` inside
+  a user-instructed `execute` task. The reminder's `task_reason` is the user's
+  own words: typed, or the task input as bound by the runtime. The worker never
+  writes it.
+- **Firing**: re-checks the owner, the job and graph membership from live
+  state, then delivers only to the owner's own devices. Offline devices get it
+  on reconnect, and any push carries only `{"type":"wake"}`.
+- **Durability**: the application database is the one job store. Misfires are
+  delivered late within grace, or recorded `missed` and reported.
+- **Boundaries**: two import contracts keep `server/scheduler` away from the
+  runtime, tools, devices, authority, secrets, memory and the Judge.
+
+**Still not built:** the dashboard, voice. Their capabilities (where any exist)
+are absent from the registry — the runtime and execution layer both refuse
+rather than run unbounded, not silently degrade.
 
 ### Before putting real data anywhere near this
 
