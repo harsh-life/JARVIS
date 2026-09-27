@@ -23,6 +23,7 @@ from server.gateway.agent_port import AgentTaskPort
 from server.gateway.control_port import SupervisorControlPort
 from server.gateway.memory_port import MemoryPort, VaultPort
 from server.gateway.scheduler_port import ReminderInbox, SchedulerPort
+from server.gateway.voice_port import VoicePort
 from server.gateway.routers import (
     agent,
     auth,
@@ -35,6 +36,7 @@ from server.gateway.routers import (
     memory,
     sessions,
     vault,
+    voice,
 )
 from server.gateway.security import SecurityCore, build_security_core
 from server.gateway.security_errors import install_security_error_handlers
@@ -70,6 +72,7 @@ def create_app(
     device_hub: DeviceHub | None = None,
     scheduler_port: SchedulerPort | None = None,
     reminder_inbox: ReminderInbox | None = None,
+    voice_port: VoicePort | None = None,
     background: Sequence[BackgroundService] = (),
 ) -> FastAPI:
     """Build the FastAPI app.
@@ -139,6 +142,7 @@ def create_app(
     v1.include_router(memory.router)
     v1.include_router(vault.router)
     v1.include_router(jobs.router)
+    v1.include_router(voice.router)
     v1.include_router(device_channel.router)
     app.include_router(v1)
     app.include_router(auth.public_router)
@@ -160,6 +164,9 @@ def create_app(
     # carries no reminders.
     app.state.scheduler = scheduler_port
     app.state.reminders = reminder_inbox
+    # docs/27 — assembled above this layer too. Without one, the voice endpoints
+    # answer `503` with `voice`; nothing else depends on it (VOI-T1).
+    app.state.voice = voice_port
     app.state.intelligence_enabled = bool(config.intelligence.enabled) if config else False
     # docs/23 — App Links, the device channel. An explicit argument wins over
     # the loaded config; with neither, the defaults (everything off) apply.

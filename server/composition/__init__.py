@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from typing import Iterable
 
+import httpx
+
 from fastapi import FastAPI
 
 from server.agent import AgentRuntime, ConcurrencyGate, ConcurrencyLimits, RuntimeBounds
@@ -37,6 +39,7 @@ from server.config.schema import AppConfig
 from server.gateway.app import create_app
 from server.gateway.security import SecurityCore, build_security_core
 from server.composition.memory import MemoryFacade, MemoryFactLoader, VaultFacade
+from server.composition.voice import build_voice
 from server.composition.scheduler import (
     HubReminderChannel,
     HubWake,
@@ -201,6 +204,7 @@ def build_application(
     memory_provider: MemoryProvider | None = None,
     vault_index: VaultIndex | None = None,
     scheduler_tool: bool | None = None,
+    voice_transport: "httpx.AsyncBaseTransport | None" = None,
 ) -> FastAPI:
     """Assemble the full server: Security Core, runtime, tools, models, memory.
 
@@ -291,6 +295,7 @@ def build_application(
         )
         background.append(SchedulerRunner(reminder_firer, poll_seconds=config.scheduler.poll_seconds))
 
+    usage_policy = UsagePolicy(limits=usage_limits_from_config(config))
     latch = InProcessLatch()
     runtime = AgentRuntime(
         bounds=bounds_from_config(config),
@@ -303,7 +308,7 @@ def build_application(
         runtime=runtime,
         core=core,
         config=config,
-        usage_policy=UsagePolicy(limits=usage_limits_from_config(config)),
+        usage_policy=usage_policy,
         tools=tools,
         hydrator=AuthorizedContextHydrator(
             store=provider if provider is not None else memory_store,
@@ -335,6 +340,9 @@ def build_application(
         ),
         reminder_inbox=ReminderInboxAdapter(reminder_firer) if reminder_firer is not None else None,
         background=background,
+        # docs/27: voice is detachable — the facade exists either way, and a
+        # direction placed on the device or off simply has no server provider.
+        voice_port=build_voice(config, core=core, usage=usage_policy, transport=voice_transport),
     )
     # docs/23 §4: the optional push wake — nothing at all unless configured.
     attach_push_wake(config, app, device_hub)

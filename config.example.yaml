@@ -113,7 +113,26 @@ scheduler:
   max_task_reason_chars: 1000
   pending_delivery_ttl_hours: 72   # queued reminders for an offline device expire after this
 
-voice: {}
+# Voice (docs/27). Voice is an input method, not an identity, and it is
+# detachable: Track B works with every value below null. `device` (the default)
+# means Android speech recognition / system TTS on the phone; raw audio never
+# leaves it and only the transcript is sent, as an ordinary task.
+voice:
+  stt: device                      # device | <provider id> | null
+  tts: device                      # device | <provider id> | null
+  diarization: null                # future slot; only null is accepted
+  speaker_id: null                 # future slot; only null is accepted
+  providers: []                    # optional server providers, e.g.:
+  # - id: cloud_stt
+  #   kind: openai_compatible
+  #   endpoint: "https://api.openai.com/v1"   # the only host it may contact
+  #   secret_ref: "env:VOICE_PROVIDER_KEY"    # never the key itself
+  #   stt_model: "whisper-1"
+  #   pricing: {per_audio_mb: 0.006}
+  max_audio_bytes: 10000000        # server STT upload bound; audio is never stored
+  max_transcript_chars: 8000
+  max_tts_chars: 2000
+  max_tts_audio_bytes: 10000000
 
 # Execution branch (09 filesystem sandbox, 10 network egress, system.restricted
 # process execution, 08's server-side Android dispatch). Every default here is

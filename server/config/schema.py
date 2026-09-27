@@ -305,11 +305,110 @@ class SchedulerConfig(StrictModel):
     pending_delivery_ttl_hours: int = Field(default=72, ge=1, le=24 * 30)
 
 
+_VOICE_PROVIDER_ID = r"^[a-z0-9][a-z0-9_\-]{0,63}$"
+VOICE_ON_DEVICE = "device"
+
+
+def _voice_endpoint(value: str) -> str:
+    """A server voice provider is a declared network destination (docs/27 §1,
+    10): an https origin, or plain http only to this machine's loopback."""
+
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(value)
+    loopback = parts.hostname in ("127.0.0.1", "localhost", "::1")
+    if parts.scheme not in ("https", "http") or not parts.hostname or (parts.scheme == "http" and not loopback):
+        raise ValueError("voice provider endpoint must be https://…, or http:// only on loopback")
+    if parts.username or parts.password or parts.query or parts.fragment:
+        raise ValueError("voice provider endpoint must be a plain URL (no credentials, query or fragment)")
+    return value.rstrip("/")
+
+
+class VoicePricingConfig(StrictModel):
+    """Deterministic, projectable prices (13 §3) in `security.budgets`' currency:
+    STT by the audio's size, TTS by the text's length."""
+
+    per_audio_mb: float = Field(default=0.0, ge=0.0)
+    per_1k_chars: float = Field(default=0.0, ge=0.0)
+
+
+class VoiceProviderConfig(StrictModel):
+    """One server-side voice provider (docs/27 §1) — an explicit network
+    component. `endpoint` is the only host it may contact; its key is a
+    `secret_ref` (class `model_api_key` in the SecretStore), resolved per call."""
+
+    id: str = Field(pattern=_VOICE_PROVIDER_ID)
+    kind: str = Field(default="openai_compatible", pattern="^openai_compatible$")
+    endpoint: Annotated[str, AfterValidator(_voice_endpoint)]
+    secret_ref: SecretRef | None = None
+    stt_model: str | None = Field(default=None, min_length=1, max_length=128)
+    tts_model: str | None = Field(default=None, min_length=1, max_length=128)
+    tts_voice: str = Field(default="alloy", pattern=r"^[A-Za-z0-9_\-]{1,64}$")
+    timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    # Required for anything not on this machine: an unpriced paid call cannot
+    # be checked against a budget (13 §3, fail-closed).
+    pricing: VoicePricingConfig | None = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> "VoiceProviderConfig":
+        if self.id == VOICE_ON_DEVICE:
+            raise ValueError("voice provider id 'device' is reserved for on-device placement")
+        if self.stt_model is None and self.tts_model is None:
+            raise ValueError(f"voice provider {self.id!r} declares neither stt_model nor tts_model")
+        from urllib.parse import urlsplit
+
+        if urlsplit(self.endpoint).hostname not in ("127.0.0.1", "localhost", "::1") and self.pricing is None:
+            raise ValueError(
+                f"voice provider {self.id!r} is not local, so it must declare `pricing` "
+                "(13 §3 — an unpriced call cannot be budget-checked)"
+            )
+        return self
+
+
 class VoiceConfig(StrictModel):
-    stt: str | None = None
+    """docs/27 §4. Placement per direction: `device` (the default — Android
+    speech recognition and system TTS; raw audio never leaves the phone), a
+    configured provider id (server-side, behind `/api/v1/voice/*`), or `null`
+    (off). Track B is fully functional with every one of them `null` (VOI-T1).
+
+    `diarization` and `speaker_id` are `[FUTURE]` provider slots: only `null`
+    loads today, so no speaker signal exists that anything could misuse
+    (VOICE-002, INV-14). There is no audio-retention switch: raw audio is
+    discarded after transcription, and the per-user opt-in (LIFE-002) is not
+    built — so nothing can turn retention on."""
+
+    stt: str | None = VOICE_ON_DEVICE
     diarization: str | None = None
     speaker_id: str | None = None
-    tts: str | None = None
+    tts: str | None = VOICE_ON_DEVICE
+    providers: list[VoiceProviderConfig] = Field(default_factory=list)
+    max_audio_bytes: int = Field(default=10_000_000, gt=0, le=25_000_000)
+    max_transcript_chars: int = Field(default=8000, gt=0, le=32_000)
+    max_tts_chars: int = Field(default=2000, gt=0, le=10_000)
+    max_tts_audio_bytes: int = Field(default=10_000_000, gt=0, le=25_000_000)
+
+    @model_validator(mode="after")
+    def _placements(self) -> "VoiceConfig":
+        ids = [p.id for p in self.providers]
+        if len(ids) != len(set(ids)):
+            raise ValueError("voice.providers ids must be unique")
+        by_id = {p.id: p for p in self.providers}
+        for direction, model_field in (("stt", "stt_model"), ("tts", "tts_model")):
+            value = getattr(self, direction)
+            if value is None or value == VOICE_ON_DEVICE:
+                continue
+            provider = by_id.get(value)
+            if provider is None:
+                raise ValueError(f"voice.{direction}: {value!r} is not a configured provider id")
+            if getattr(provider, model_field) is None:
+                raise ValueError(f"voice.{direction}: provider {value!r} declares no {model_field}")
+        for future in ("diarization", "speaker_id"):
+            if getattr(self, future) is not None:
+                raise ValueError(
+                    f"voice.{future} is a future provider slot (docs/27 §1) and must be null: "
+                    "speaker processing is not built, and is never an authorization signal"
+                )
+        return self
 
 
 class FilesystemSandboxConfig(StrictModel):
