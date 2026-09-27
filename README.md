@@ -19,9 +19,14 @@ HUMAN CONFIRMS WHERE REQUIRED
 
 Model output is never the security boundary.
 
-## Current state: the memory build
+## Current state: Phase H (final hardening and release validation)
 
-Five branches, the runtime foundation (U0–U6), and the memory build are in:
+Everything below is merged: five foundation branches, the runtime foundation
+(U0–U6), the memory build, the Android client (docs/23, Phases B–G), the
+scheduler, and voice. Phase H audited the integrated tree, fixed what it found,
+and recorded the evidence and the release-gate status in
+**`docs/RELEASE_VALIDATION.md`**. It added no feature. The gate for real user
+data is **not** open (see "Before putting real data anywhere near this" below).
 
 **`foundation`** — the technical substrate: shared data contracts,
 configuration, persistence/migrations, and the API skeleton (versioning,
@@ -80,9 +85,10 @@ Execution owns constrained execution."):
   environment, POSIX resource limits, and whole-process-group cleanup on
   timeout (`server/execution/process.py`).
 - **Android/Shizuku** (`08`), server-side half: the capability→operation→
-  primitive mapping and dispatch contract, with `UnavailableDeviceTransport`
-  as the only shipped transport — every call fails deterministically until a
-  real device channel is wired in. The mapping is exported as the versioned
+  primitive mapping and dispatch contract. When this branch landed,
+  `UnavailableDeviceTransport` was the only transport. The authenticated device
+  channel came later (see the Android client below); it is off by default, and
+  the unavailable transport is what runs when it is off. The mapping is exported as the versioned
   shared artifact `shared/android/device_mapping.json` (docs/23 §5.1).
 
 **`integration-hardening`** — a review of the composed system against the
@@ -144,7 +150,7 @@ The owner's decisions (OD-A1, OD-D1, OD-E1, OD-F1, OD-TOOL-1) are recorded in
 Disabled by default (`memory.enabled`, `vault.enabled`); the stack is the
 optional `memory` extra.
 
-**In progress:** the Android client (`android/`, docs/23). Built: the wire
+**The Android client** (`android/`, docs/23, Phases B–G). Built: the wire
 contract (`shared/schemas/device_channel.py`), the shared mapping artifact,
 device-held Ed25519 keys (Keystore) registered by public key, the App Link
 login return, and the authenticated device channel (`WS
@@ -234,20 +240,31 @@ detachable.*
   stored.
 - **Detachable**: every setting `null` → Track B unchanged (VOI-T1).
 
-**Still not built:** the dashboard. Its capabilities (where any exist) are
-absent from the registry — the runtime and execution layer both refuse rather
-than run unbounded, not silently degrade.
+**Still not built** (each is a later, separate subsystem; nothing in the
+runtime depends on it): the operator **dashboard** (`/admin/*` views, docs/28;
+the superuser control endpoints `/admin/control/*` do exist), the **Judge**
+(docs/19; `server/evaluation` is empty), **Darwin**, a real
+**IntelligenceProvider** (only `GET /intelligence/status` → `{enabled: false}`),
+account deletion (`DELETE /account`, 02 §3), and `PUT /config/agent` (02 §6).
+Absent means absent: no capability, route or code path pretends otherwise.
 
 ### Before putting real data anywhere near this
 
 `docs/OD_A1_BR_T2.md` records the **measured** blast radius under simulated
-application-level RCE (BR-T2). The owner decided OD-A1 as **RESOLVED FOR PILOT —
-ACCEPTED RESIDUAL** (option (a)): logical isolation, with the measured in-process
-residual accepted for the pilot. That is not an isolation claim. Real-user
-readiness additionally needs 17 §5's full release-blocking set, which includes
-the `08` suites that do not exist yet. The memory suites (MEM-T1 on a real Mem0
-store, and the BR-T2 memory re-run) now exist and run in CI; BR-T2's at-rest
-memory rows need an owner decision (`docs/OD_A1_BR_T2.md` §3c/§5).
+application-level RCE (BR-T2). It now covers every software dimension:
+relational store, secrets, filesystem, egress, process execution, memory, and,
+since Phase H, the Android device. The owner decided OD-A1 as **RESOLVED FOR
+PILOT — ACCEPTED RESIDUAL** (option (a)): logical isolation, with the measured
+in-process residual accepted for the pilot. That is not an isolation claim.
+
+Real-user readiness needs 17 §5's whole release-blocking set green *and* the
+OD-A1 gate decided. As of Phase H the gate is **still closed**. Some RB criteria
+lack the required evidence: #29 has no dashboard, and #32 fairness under load
+is not met on the single-writer store. At-rest BR-T2 rows (memory 27–28, push
+token 36) wait for owner decisions. The Android client is validated only
+against fakes, the JVM and Robolectric, not on a phone.
+`docs/RELEASE_VALIDATION.md` §11 has the exact status. Until then:
+**disposable or test data only.**
 
 ## Repository layout
 
