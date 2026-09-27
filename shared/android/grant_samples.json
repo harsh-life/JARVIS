@@ -1,0 +1,76 @@
+{
+  "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+  "grant_list": {
+    "items": [
+      {
+        "capability": "device.read",
+        "created_at": "2026-09-27T12:00:30Z",
+        "expires_at": null,
+        "grant_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000c001",
+        "granted_by": "6f1c2d3e-4a5b-4c6d-8e7f-00000000b001",
+        "principal_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "resource_scope": {
+          "package_name": "com.example.notes"
+        },
+        "revoked_at": null,
+        "scope_type": "device"
+      },
+      {
+        "capability": "app.interact",
+        "created_at": "2026-09-27T12:00:30Z",
+        "expires_at": "2026-09-27T12:00:30Z",
+        "grant_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000c002",
+        "granted_by": "6f1c2d3e-4a5b-4c6d-8e7f-00000000b001",
+        "principal_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "resource_scope": {
+          "package_name": "com.example.notes"
+        },
+        "revoked_at": null,
+        "scope_type": "device"
+      },
+      {
+        "capability": "device.read",
+        "created_at": "2026-09-27T12:00:30Z",
+        "expires_at": null,
+        "grant_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000c003",
+        "granted_by": "6f1c2d3e-4a5b-4c6d-8e7f-00000000b001",
+        "principal_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000b001",
+        "resource_scope": {
+          "package_name": "com.example.notes"
+        },
+        "revoked_at": null,
+        "scope_type": "user"
+      },
+      {
+        "capability": "device.read",
+        "created_at": "2026-09-27T12:00:30Z",
+        "expires_at": null,
+        "grant_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000c004",
+        "granted_by": "6f1c2d3e-4a5b-4c6d-8e7f-00000000b001",
+        "principal_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "resource_scope": null,
+        "revoked_at": null,
+        "scope_type": "device"
+      },
+      {
+        "capability": "file.read",
+        "created_at": "2026-09-27T12:00:30Z",
+        "expires_at": null,
+        "grant_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000c005",
+        "granted_by": "6f1c2d3e-4a5b-4c6d-8e7f-00000000b001",
+        "principal_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+        "resource_scope": null,
+        "revoked_at": null,
+        "scope_type": "device"
+      }
+    ]
+  },
+  "grant_request": {
+    "capability": "app.interact",
+    "resource_scope": {
+      "package_name": "com.example.notes"
+    },
+    "scope_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+    "scope_type": "device"
+  }
+}

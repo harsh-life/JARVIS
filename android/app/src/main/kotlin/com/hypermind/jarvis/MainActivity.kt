@@ -34,6 +34,10 @@ import com.hypermind.jarvis.auth.BiometricPresence
 import com.hypermind.jarvis.channel.ChannelService
 import com.hypermind.jarvis.channel.ChannelState
 import com.hypermind.jarvis.contract.MappingState
+import com.hypermind.jarvis.permissions.GridSync
+import com.hypermind.jarvis.ui.AppGrid
+import com.hypermind.jarvis.ui.GridRows
+import com.hypermind.jarvis.ui.InstalledApps
 import com.hypermind.jarvis.ui.TaskPanel
 import com.hypermind.jarvis.ui.TaskPanelState
 import com.hypermind.jarvis.ui.theme.JarvisTheme
@@ -158,6 +162,11 @@ class MainActivity : FragmentActivity() {
                 },
             )
         }
+        var showGrid by remember { mutableStateOf(false) }
+        OutlinedButton(
+            onClick = { showGrid = !showGrid },
+        ) { Text(if (showGrid) "Hide app permissions" else "App permissions") }
+        if (showGrid) Grid(app)
         OutlinedButton(onClick = {
             scope.launch {
                 withContext(Dispatchers.IO) {
@@ -177,6 +186,38 @@ class MainActivity : FragmentActivity() {
                 notice.value = "This phone was removed."
             }
         }) { Text("Remove this phone") }
+    }
+
+    /** The per-app grid (PRD §13): local refusal at once, the server's grants reconciled after. */
+    @Composable
+    private fun Grid(app: JarvisApplication) {
+        val graph = app.graph
+        val scope = rememberCoroutineScope()
+        var version by remember { mutableStateOf(0) }
+        var status by remember { mutableStateOf<String?>(null) }
+        val apps = remember { InstalledApps.launchable(this) }
+        val grid = remember(version) { graph.grid.state() }
+
+        fun after(result: GridSync.Result) {
+            status =
+                when (result) {
+                    GridSync.Result.InSync -> null
+                    is GridSync.Result.Pending -> "Not yet saved on your server; turned-off items are already off here."
+                }
+            version++
+        }
+        AppGrid(
+            rows = GridRows.of(apps, grid, graph.appPolicy.current()),
+            deviceState = grid.deviceState,
+            status = status,
+            onToggle = { pkg, toggle, on ->
+                scope.launch { after(withContext(Dispatchers.IO) { graph.gridSync.set(pkg, toggle, on) }) }
+            },
+            onDeviceState = { on ->
+                graph.grid.setDeviceState(on)
+                version++
+            },
+        )
     }
 
     private fun describe(state: ChannelState): String =

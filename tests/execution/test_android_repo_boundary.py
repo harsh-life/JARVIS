@@ -145,3 +145,12 @@ def test_the_shared_task_samples_are_current():
     from tests.tools.export_task_samples import PATH, render_file
 
     assert PATH.read_text(encoding="ascii") == render_file()
+
+
+def test_the_shared_grant_samples_are_current():
+    """The Android per-app grid's grant models are held to these (GridGrantsTest).
+    Regenerate: `python -m tests.tools.export_grant_samples export`."""
+
+    from tests.tools.export_grant_samples import PATH, render_file
+
+    assert PATH.read_text(encoding="ascii") == render_file()

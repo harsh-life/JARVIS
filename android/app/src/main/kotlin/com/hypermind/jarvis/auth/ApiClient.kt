@@ -2,6 +2,8 @@ package com.hypermind.jarvis.auth
 
 import com.hypermind.jarvis.contract.AppPolicy
 import com.hypermind.jarvis.contract.ContractJson
+import com.hypermind.jarvis.contract.GrantList
+import com.hypermind.jarvis.contract.GrantRequest
 import com.hypermind.jarvis.contract.TaskView
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -184,6 +186,58 @@ class ApiClient(
             .toInstant()
     }
 
+    // ── the per-app grid's grants (PRD §13, 02 §6) — parsed strictly ────
+
+    /** This caller's active grants (its user, device and session). */
+    fun listGrants(accessToken: String): GrantList =
+        ContractJson.decodeFromJsonElement(
+            GrantList.serializer(),
+            execute(
+                Request
+                    .Builder()
+                    .url(api("capabilities"))
+                    .header("Authorization", "Bearer $accessToken")
+                    .get()
+                    .build(),
+            ),
+        )
+
+    /** The user's consent to one grid toggle's capability, for this device and one app. */
+    fun createGrant(
+        accessToken: String,
+        request: GrantRequest,
+    ) {
+        execute(
+            Request
+                .Builder()
+                .url(api("capabilities"))
+                .header("Authorization", "Bearer $accessToken")
+                .post(ContractJson.encodeToString(GrantRequest.serializer(), request).toRequestBody(JSON))
+                .build(),
+            expectBody = false,
+        )
+    }
+
+    /** Revoke a grant; one already gone (`404`) counts as revoked. */
+    fun revokeGrant(
+        accessToken: String,
+        grantId: String,
+    ) {
+        try {
+            execute(
+                Request
+                    .Builder()
+                    .url(api("capabilities/${UUID.fromString(grantId)}"))
+                    .header("Authorization", "Bearer $accessToken")
+                    .delete()
+                    .build(),
+                expectBody = false,
+            )
+        } catch (e: ApiException) {
+            if (e.status != NOT_FOUND) throw e
+        }
+    }
+
     // ── agent tasks (02 §5) — responses parsed strictly by TaskView ──────
 
     /** Submit a task. A fresh Idempotency-Key per submission (02 §1.4). */
@@ -292,6 +346,7 @@ class ApiClient(
 
     companion object {
         private val JSON = "application/json".toMediaType()
+        private const val NOT_FOUND = 404
 
         /** The server URL must be a bare https origin — never cleartext. */
         fun validServerUrl(url: String): String? {

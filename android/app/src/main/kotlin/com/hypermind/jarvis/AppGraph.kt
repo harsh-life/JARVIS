@@ -33,6 +33,7 @@ import com.hypermind.jarvis.perception.ScreenshotPrimitive
 import com.hypermind.jarvis.perception.UiActions
 import com.hypermind.jarvis.permissions.AppPolicyStore
 import com.hypermind.jarvis.permissions.GridStore
+import com.hypermind.jarvis.permissions.GridSync
 import com.hypermind.jarvis.privileged.ForceStopPrimitive
 import com.hypermind.jarvis.privileged.RikkaShizukuGateway
 import com.hypermind.jarvis.privileged.ShizukuGateway
@@ -99,6 +100,17 @@ class AppGraph(
     /** The cached sensitive-app classification. */
     val appPolicy = AppPolicyStore(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
 
+    /** The grid's toggles, backed server-side by the user's own grants (PRD §13). */
+    val gridSync =
+        GridSync(
+            api = ::api,
+            accessToken = { sessions.accessToken().first },
+            deviceId = { store.deviceId?.toString() },
+            mapping = { (mapping as? MappingState.Valid)?.mapping },
+            grid = grid,
+            policy = appPolicy::current,
+        )
+
     private var guard: Pair<String, DeviceGuard>? = null
 
     /** The guard for the currently enrolled device (re-created on re-enrollment). */
@@ -156,6 +168,9 @@ class AppGraph(
             },
             onConnected = {
                 refreshAppPolicy()
+                // A toggle changed while offline is reconciled now; until then
+                // the local grid alone refuses.
+                gridSync.sync()
                 reportPlatforms()
             },
         )
