@@ -133,6 +133,23 @@ class AuditAction(str, Enum):
     MEMORY_USER_PURGED = "memory.user.purged"
     MEMORY_GRAPH_PURGED = "memory.graph.purged"
 
+    # ── scheduler: task-linked reminders (docs/22 §1–§3). `resource` names the
+    # job, firing or delivery id — never the reminder's words.
+    SCHEDULER_JOB_CREATED = "scheduler.job.created"
+    SCHEDULER_JOB_REFUSED = "scheduler.job.refused"
+    SCHEDULER_JOB_CANCELLED = "scheduler.job.cancelled"
+    SCHEDULER_JOB_FIRED = "scheduler.job.fired"
+    # The fire-time re-check refused (user not active, membership revoked, …):
+    # the job is cancelled and nothing is delivered.
+    SCHEDULER_JOB_RECHECK_FAILED = "scheduler.job.recheck_failed"
+    SCHEDULER_JOB_MISSED = "scheduler.job.missed"
+    SCHEDULER_REMINDER_DELIVERED = "scheduler.reminder.delivered"
+    SCHEDULER_REMINDER_QUEUED = "scheduler.reminder.queued"
+    SCHEDULER_REMINDER_UNDELIVERABLE = "scheduler.reminder.undeliverable"
+    SCHEDULER_REMINDER_ACKNOWLEDGED = "scheduler.reminder.acknowledged"
+    SCHEDULER_REMINDER_DROPPED = "scheduler.reminder.dropped"
+    SCHEDULER_REMINDER_EXPIRED = "scheduler.reminder.expired"
+
 
 # 12 §5 emits through a port that speaks plain strings (server/secrets is
 # below server/security and cannot import this enum). This is the one

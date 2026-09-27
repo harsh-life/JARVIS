@@ -33,13 +33,14 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.storage.models import UsageEvent
-from shared.schemas.enums import UsageKind
+from server.storage.models import ScheduledJob, UsageEvent
+from shared.schemas.enums import JobStatus, UsageKind
 
 logger = logging.getLogger("hypermind.security.usage")
 
 RATE_WINDOW = timedelta(minutes=1)
 BUDGET_WINDOW = timedelta(days=1)
+SCHEDULER_CREATION_WINDOW = timedelta(hours=1)
 
 
 def _utcnow() -> datetime:
@@ -202,3 +203,74 @@ class UsagePolicy:
             global_spent = await self._ledger.cost_since(session, since=budget_since)
             if global_spent + projected_cost > limits.global_daily_cost_limit:
                 raise LimitExceeded("global_budget", retry_after_seconds=retry_budget)
+
+
+@dataclass(frozen=True)
+class SchedulerLimits:
+    """docs/22 §4 / FAIL-010: the per-user scheduler quota."""
+
+    max_active_jobs_per_user: int
+    creations_per_hour: int
+
+
+class SchedulerQuota:
+    """The scheduler's quota, held to the same three properties as the usage
+    ledger above: one record, queried not counted separately; explicit
+    `LimitExceeded` (→ `429`) naming which limit; fail-closed.
+
+    Its record is the `scheduled_jobs` table itself — every creation is a row
+    and rows are never deleted (a cancel changes `status`), so "creations in
+    the last hour" is a query over the same rows the scheduler fires from and
+    cannot be reset by creating and cancelling. A reminder is neither a model
+    call nor a tool execution, so it is not a `UsageEvent` (`01` §1.2's
+    `usage.kind` is locked); the agent's `create_reminder` tool call is still
+    metered as the tool call it is, by the runtime.
+    """
+
+    def __init__(self, limits: SchedulerLimits) -> None:
+        self._limits = limits
+
+    @property
+    def limits(self) -> SchedulerLimits:
+        return self._limits
+
+    async def precheck_creation(
+        self, session: AsyncSession, *, user_id: uuid.UUID, now: datetime | None = None
+    ) -> None:
+        try:
+            await self._check(session, user_id=user_id, now=now or _utcnow())
+        except LimitExceeded:
+            raise
+        except Exception:  # noqa: BLE001 — fail closed (13 §4)
+            logger.exception("scheduler quota unreadable; treating as at-limit")
+            raise LimitExceeded("limiter_unavailable", retry_after_seconds=60) from None
+
+    async def _check(self, session: AsyncSession, *, user_id: uuid.UUID, now: datetime) -> None:
+        active = int(
+            (
+                await session.execute(
+                    select(func.count())
+                    .select_from(ScheduledJob)
+                    .where(ScheduledJob.owner_user_id == user_id, ScheduledJob.status == JobStatus.ACTIVE)
+                )
+            ).scalar_one()
+        )
+        if active >= self._limits.max_active_jobs_per_user:
+            # Frees up only when the user cancels one or one fires for good.
+            raise LimitExceeded("scheduler_active_jobs", retry_after_seconds=3600)
+
+        since = now.astimezone(timezone.utc) - SCHEDULER_CREATION_WINDOW
+        window = (
+            await session.execute(
+                select(func.count(), func.min(ScheduledJob.created_at)).where(
+                    ScheduledJob.owner_user_id == user_id, ScheduledJob.created_at >= since
+                )
+            )
+        ).one()
+        created, oldest = int(window[0]), window[1]
+        if created >= self._limits.creations_per_hour:
+            retry = 60
+            if oldest is not None:
+                oldest = oldest if oldest.tzinfo is not None else oldest.replace(tzinfo=timezone.utc)
+                retry = max(1, int((oldest + SCHEDULER_CREATION_WINDOW - now).total_seconds()) + 1)
+            raise LimitExceeded("scheduler_creations_per_hour", retry_after_seconds=retry)

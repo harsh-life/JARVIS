@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import AsyncIterator, Protocol, Sequence
 
 from fastapi import APIRouter, FastAPI
 
@@ -22,6 +22,7 @@ from server.gateway.request_context import RequestIdMiddleware
 from server.gateway.agent_port import AgentTaskPort
 from server.gateway.control_port import SupervisorControlPort
 from server.gateway.memory_port import MemoryPort, VaultPort
+from server.gateway.scheduler_port import ReminderInbox, SchedulerPort
 from server.gateway.routers import (
     agent,
     auth,
@@ -30,6 +31,7 @@ from server.gateway.routers import (
     device_channel,
     graphs,
     health,
+    jobs,
     memory,
     sessions,
     vault,
@@ -41,6 +43,16 @@ from server.storage import StorageBackend
 API_V1_PREFIX = "/api/v1"
 
 logger = logging.getLogger("hypermind.gateway.app")
+
+
+class BackgroundService(Protocol):
+    """Something the composition root runs for the app's lifetime (the
+    scheduler's runner, docs/22 §3). Started after startup checks, stopped at
+    shutdown before storage is disposed."""
+
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
 
 
 def create_app(
@@ -56,6 +68,9 @@ def create_app(
     vault_port: VaultPort | None = None,
     android_config: AndroidConfig | None = None,
     device_hub: DeviceHub | None = None,
+    scheduler_port: SchedulerPort | None = None,
+    reminder_inbox: ReminderInbox | None = None,
+    background: Sequence[BackgroundService] = (),
 ) -> FastAPI:
     """Build the FastAPI app.
 
@@ -83,9 +98,18 @@ def create_app(
             # closed. Done before the first request is served, so nothing can
             # race it; a failure here stops the server from starting.
             await _reconcile_tasks(app.state.storage, agent_tasks)
+        started: list[BackgroundService] = []
+        for service in background:
+            await service.start()
+            started.append(service)
         try:
             yield
         finally:
+            for service in reversed(started):
+                try:
+                    await service.stop()
+                except Exception:  # noqa: BLE001 — shutdown continues regardless
+                    logger.exception("background service failed to stop cleanly")
             core: SecurityCore | None = getattr(app.state, "security", None)
             if core is not None:
                 # Drop the unwrapped DEK rather than leaving it in the memory of
@@ -114,6 +138,7 @@ def create_app(
     v1.include_router(control.router)
     v1.include_router(memory.router)
     v1.include_router(vault.router)
+    v1.include_router(jobs.router)
     v1.include_router(device_channel.router)
     app.include_router(v1)
     app.include_router(auth.public_router)
@@ -130,6 +155,11 @@ def create_app(
     # vault endpoints answer `503` with `mem0` / `vault` (02 §13).
     app.state.memory = memory_port
     app.state.vault = vault_port
+    # docs/22 — assembled above this layer too. Without one, the job endpoints
+    # answer `503` with `scheduler` (02 §13, FAIL-010), and the device channel
+    # carries no reminders.
+    app.state.scheduler = scheduler_port
+    app.state.reminders = reminder_inbox
     app.state.intelligence_enabled = bool(config.intelligence.enabled) if config else False
     # docs/23 — App Links, the device channel. An explicit argument wins over
     # the loaded config; with neither, the defaults (everything off) apply.

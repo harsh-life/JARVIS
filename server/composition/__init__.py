@@ -36,6 +36,10 @@ from server.config.schema import AppConfig
 from server.gateway.app import create_app
 from server.gateway.security import SecurityCore, build_security_core
 from server.composition.memory import MemoryFacade, MemoryFactLoader, VaultFacade
+from server.composition.scheduler import SchedulerFacade, reminder_tool_definition
+from server.scheduler.backend import build_backend
+from server.scheduler.service import SchedulerService
+from server.security.usage import SchedulerLimits, SchedulerQuota
 from server.memory.hydration import AuthorizedContextHydrator
 from server.memory.provider import MemoryProvider, MemoryStore
 from server.vault.index import VaultIndex
@@ -98,6 +102,21 @@ def usage_limits_from_config(config: AppConfig) -> UsageLimits:
         global_calls_per_minute=rates.global_requests_per_minute,
         per_user_daily_cost_limit=budgets.per_user_daily_cost_limit,
         global_daily_cost_limit=budgets.global_daily_cost_limit,
+    )
+
+
+def scheduler_service_from_config(config: AppConfig) -> SchedulerService:
+    """docs/22 §3/§4: the configured backend and the per-user quota."""
+
+    return SchedulerService(
+        config=config.scheduler,
+        backend=build_backend(config.scheduler.backend),
+        quota=SchedulerQuota(
+            SchedulerLimits(
+                max_active_jobs_per_user=config.scheduler.max_active_jobs_per_user,
+                creations_per_hour=config.security.rate_limits.scheduler_creations_per_hour,
+            )
+        ),
     )
 
 
@@ -172,6 +191,7 @@ def build_application(
     break_glass_registry: BreakGlassRegistry | None = None,
     memory_provider: MemoryProvider | None = None,
     vault_index: VaultIndex | None = None,
+    scheduler_tool: bool | None = None,
 ) -> FastAPI:
     """Assemble the full server: Security Core, runtime, tools, models, memory.
 
@@ -182,6 +202,11 @@ def build_application(
     disabled, hydration degrades explicitly (FAIL-008) and the memory endpoints
     answer `503`. `memory_store` supplies hydration alone (a read-only store with
     no API or formation), for tests of the hydration boundary.
+
+    `scheduler_tool` registers the scheduler's agent tool (docs/22 §1) alongside
+    the chosen tool set. `None` (production) means "whatever the config says"
+    when `extra_tools` is `None`, and no — an explicit list fully substitutes
+    the tool set, as below — when a list is passed.
 
     `break_glass_registry` lets a test share one record store with the
     execution tools it passes in `extra_tools`; production passes nothing.
@@ -212,6 +237,13 @@ def build_application(
         if extra_tools is None
         else extra_tools
     )
+    # docs/22: the scheduler. Its agent tool joins whatever tool set was chosen
+    # (the same registry validation), so the capability path is the one every
+    # other tool takes.
+    scheduler_service = scheduler_service_from_config(config) if config.scheduler.enabled else None
+    include_scheduler_tool = (extra_tools is None) if scheduler_tool is None else scheduler_tool
+    if scheduler_service is not None and config.scheduler.agent_tool_enabled and include_scheduler_tool:
+        tool_definitions = [*tool_definitions, reminder_tool_definition(scheduler_service)]
     tools = build_tool_registry(config, provider_factory=factory, extra_tools=tool_definitions)
 
     provider = memory_provider
@@ -272,6 +304,9 @@ def build_application(
         memory_port=memory_facade,
         vault_port=vault_facade,
         device_hub=device_hub,
+        scheduler_port=(
+            SchedulerFacade(service=scheduler_service, core=core) if scheduler_service is not None else None
+        ),
     )
 
 
@@ -303,5 +338,6 @@ __all__ = [
     "build_application",
     "build_tool_registry",
     "concurrency_from_config",
+    "scheduler_service_from_config",
     "usage_limits_from_config",
 ]

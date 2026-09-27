@@ -43,9 +43,9 @@ semantic classes, concrete names, per-platform adapters, and what is
 deliberately absent — is docs/CAPABILITY_MATRIX.md. The runtime branch added
 one entry, `model.invoke`, because it owns model-tools (06). The execution
 branch added `net.request`, because it owns the egress boundary (10) that
-capability needed to exist before it could be granted. `memory`/`vault`/
-`scheduler` remain deliberately absent — their owning branches (`11`/scheduler)
-still do not exist.
+capability needed to exist before it could be granted. The scheduler build
+(docs/22) added `scheduler.create`, now that the scheduler it gates exists.
+`memory`/`vault` agent-proposed writes remain deliberately absent.
 """
 
 from __future__ import annotations
@@ -55,6 +55,10 @@ from types import MappingProxyType
 from typing import Mapping
 
 from shared.schemas.enums import RiskCategory
+
+
+SCHEDULER_CREATE_CAPABILITY = "scheduler.create"
+CREATE_REMINDER_OPERATION = "create_reminder"
 
 
 class UnknownCapability(Exception):
@@ -234,6 +238,24 @@ def _registry() -> Mapping[str, CapabilityDefinition]:
                     "post": RiskCategory.CONSEQUENTIAL,
                 }
             ),
+            scope_keys=frozenset(),
+        ),
+        # `[PROPOSED]` — OD-SCH-1 (docs/22 §1, docs/CAPABILITY_MATRIX.md §3.2):
+        # name and tier awaiting the owner's ratification; changing either is
+        # this one entry. `low_write`: creating a reminder records a message to
+        # be delivered to the user's own devices later; a firing reminder never
+        # executes anything (docs/22 §0). Being above `low_read`, it is refused
+        # outright in draft/suggest/observe tasks by the mode ceiling (18 §3,
+        # SCH-T7) and runs automatically only inside a user-instructed
+        # `execute` task where the capability is active.
+        CapabilityDefinition(
+            name=SCHEDULER_CREATE_CAPABILITY,
+            description=(
+                "Create a task-linked reminder for the user (docs/22). The reminder's "
+                "reason is the user's own task input, bound by the runtime; it is "
+                "delivered to the user's own devices and never executes anything."
+            ),
+            operations=MappingProxyType({CREATE_REMINDER_OPERATION: RiskCategory.LOW_WRITE}),
             scope_keys=frozenset(),
         ),
         CapabilityDefinition(

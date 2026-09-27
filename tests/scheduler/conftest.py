@@ -51,3 +51,22 @@ async def make_user(storage: SQLAlchemyStorageBackend, *, status: UserStatus = U
         )
         await session.commit()
     return user_id
+
+
+# The production composition root with a scripted model (tests/runtime), with
+# the scheduler's agent tool registered alongside the harness's fake tools.
+from tests.runtime.conftest import make_harness as _runtime_harness  # noqa: E402,F401
+
+
+@pytest_asyncio.fixture
+async def make_harness(_runtime_harness):
+    async def _make(**kwargs):
+        kwargs.setdefault("scheduler_tool", True)
+        return await _runtime_harness(**kwargs)
+
+    return _make
+
+
+@pytest_asyncio.fixture
+async def h(make_harness):
+    return await make_harness()

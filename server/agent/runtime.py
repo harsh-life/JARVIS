@@ -1209,6 +1209,9 @@ class AgentRuntime:
                 user_id=state.principal.user_id, task_id=state.task_id, platform=platform,
                 resource_ref=resource_ref, resource_scope=scope,
                 device_id=state.principal.device_id,
+                # docs/22 §1: only a tool registered to bind it receives the
+                # user's own instruction — from the task, never the proposal.
+                task_input=state.user_input if handle.binds_task_input else None,
             ),
             timeout=max(0.001, min(handle.timeout_seconds, remaining())),
         )
