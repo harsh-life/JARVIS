@@ -229,6 +229,29 @@ implemented.
 
 ---
 
+## 2E. Voice-build proposals (`[PROPOSED]`, pending ratification)
+
+The voice build (`docs/27_VOICE.md`, operator guide `docs/RUNNING_VOICE.md`)
+keeps docs/27 §0: voice is an input method, not an identity, and it is
+detachable. Rows are values implemented where docs/27 leaves a choice.
+
+| ID | Decision | Value implemented | Where |
+|---|---|---|---|
+| OD-VOI-1 | Any server STT at pilot | **None by default** (`stt: device`, `tts: device`). A server provider exists only when configured; a cloud STT then receives user audio, a disclosed choice. | `server/config/schema.py` |
+| OD-VOI-2 | Wake word / always listening | `[FUTURE]`, not built. Push-to-talk only; leaving the app cancels listening. | `android/…/voice/SpeechInput.kt` |
+| VOI-B1 | On-device recognition | Only Android's on-device recognizer (API 31+). Without one, voice input is unavailable — no fallback to the network recognizer, so raw audio never leaves the phone. | `android/…/voice/AndroidOnDeviceRecognizer.kt` |
+| VOI-B2 | Transcript routing | A transcript only fills the task box; the user presses Send. It never reaches the confirmation card, and there is no voice task path or field. | `android/…/voice/VoiceRouting.kt`, `server/gateway/routers/agent.py` |
+| VOI-B3 | Audio retention opt-in (LIFE-002) | **Not built.** `audio_retained` is always false and no switch exists. Building opt-in retention needs an owner decision on where retained audio lives and for how long. | `server/voice/service.py` |
+| VOI-B4 | Speaker slots | `diarization` / `speaker_id` load only as null. `SpeakerContext` is frozen and re-validates on copy/construct, so `is_authorization_signal` is false through every door. | `shared/schemas/voice.py` |
+| VOI-B5 | Server provider contract | OpenAI-compatible (`/audio/transcriptions`, `/audio/speech`). Declared-origin egress, no redirects, key by `secret_ref` (SecretStore class `model_api_key` only), pricing required unless loopback, one `model_call` UsageEvent per call. | `server/voice/openai_compatible.py`, `server/composition/voice.py` |
+| VOI-B6 | Default TTS | `tts: device` placement; reading results aloud is a per-phone switch, **off** by default. | `android/…/voice/Speaker.kt` |
+| VOI-B7 | Transcript persistence | None: `voice_events` stays empty (transcribe → process → delete); the transcript is returned to the caller only. | `server/voice/service.py` |
+
+The donor `voice/Speaker` module (docs/23 §2) was not available to this build;
+the TTS wrapper here is new code against Android's `TextToSpeech`.
+
+---
+
 ## 3. Genuinely unresolved owner decisions
 
 | ID | Question | Why it is the owner's |
@@ -239,6 +262,8 @@ implemented.
 | OD-MT-2 | Any cloud primary by default | Default local (ollama); unchanged. |
 | OD-SCH-1 | Ratify `scheduler.create` / `low_write` | Implemented as proposed (§2D); the owner signs the tier table. |
 | OD-SCH-2 | Fire-time `suggest` task with a sessionless principal | Not implemented (docs/22 recommendation); would introduce a principal with no session. |
+| OD-VOI-1 | Whether any server STT provider is enabled at pilot | A cloud STT receives user audio; default is on-device only (§2E). |
+| VOI-B3 | Opt-in raw-audio retention (LIFE-002) | Not built; where retained audio would live and for how long is a privacy call. |
 
 ---
 

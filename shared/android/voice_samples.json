@@ -1,0 +1,23 @@
+{
+  "config_all_off": {
+    "max_audio_bytes": 10000000,
+    "max_transcript_chars": 8000,
+    "max_tts_chars": 2000,
+    "stt": "off",
+    "tts": "off"
+  },
+  "config_default_device": {
+    "max_audio_bytes": 10000000,
+    "max_transcript_chars": 8000,
+    "max_tts_chars": 2000,
+    "stt": "device",
+    "tts": "device"
+  },
+  "config_server_stt_tts_off": {
+    "max_audio_bytes": 10000000,
+    "max_transcript_chars": 8000,
+    "max_tts_chars": 2000,
+    "stt": "server",
+    "tts": "off"
+  }
+}

@@ -157,6 +157,12 @@ class AuditAction(str, Enum):
     SCHEDULER_REMINDER_DROPPED = "scheduler.reminder.dropped"
     SCHEDULER_REMINDER_EXPIRED = "scheduler.reminder.expired"
 
+    # ── voice (docs/27). `resource` names a voice event id or a refusal
+    # reason — never a transcript, never audio, never synthesized text.
+    VOICE_TRANSCRIBED = "voice.transcribed"
+    VOICE_SYNTHESIZED = "voice.synthesized"
+    VOICE_REFUSED = "voice.refused"
+
 
 # 12 §5 emits through a port that speaks plain strings (server/secrets is
 # below server/security and cannot import this enum). This is the one

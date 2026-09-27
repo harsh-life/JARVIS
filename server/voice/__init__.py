@@ -1,12 +1,21 @@
-"""voice — placeholder package (foundation branch).
+"""Voice — STT / TTS / speaker context (docs/27, PRD VOICE-001..004, EMO-005).
 
-Not implemented in the `foundation` branch. This package exists only so that:
-  1. the repository layout matches 00_CANONICAL_PRD.md §45 / 16_REPOSITORY_MODULE_BOUNDARIES.md §1, and
-  2. module-boundary (import-linter) contracts about this package are meaningful
-     for later branches (e.g. "server.agent must never import server.secrets").
+> **1. A voice is an input method, not an identity.** Who is speaking never
+> authorizes anything.
+> **2. Voice is detachable.** Track B works fully with every voice provider
+> disabled.
 
-Do not add implementation logic here from the `foundation` branch. The subsystem
-document that owns this package's real implementation is named below.
+The default placement is on the device (`voice.stt: device`, `voice.tts:
+device`): Android speech recognition and system TTS, so raw audio never leaves
+the phone and only the transcript reaches the server — as ordinary task input,
+through the ordinary task endpoint. There is no voice execution path.
 
-Owning subsystem doc: 00_CANONICAL_PRD.md §27 (glossary) / 02_API_PROTOCOL.md §10
+This package is the optional server half, used only when a direction is placed
+on a configured provider:
+
+* `providers` — the replaceable `SpeechToText` / `TextToSpeech` interfaces.
+* `openai_compatible` — one adapter family; declared-origin egress only.
+* `service` — placement, bounds, metering, audit; audio zeroed after use.
+* `speaker` — the `[FUTURE]` speaker slots; context only, never authority.
+* `audio` — the in-memory audio buffer.
 """

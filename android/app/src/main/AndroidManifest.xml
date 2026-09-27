@@ -16,10 +16,20 @@
          the system's own settings screen; the overlay shows state, never
          content, never takes focus, and never approves anything. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- docs/27: push-to-talk task input, recognized on this phone. Asked for
+         only when the user first taps Speak; never used in the background. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- android.intent.launch_activity: resolve a named app's own launcher
          entry (API 30+ package visibility). Launcher entries only. -->
     <queries>
+        <!-- docs/27: the phone's own speech recognizer and system TTS engine. -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />

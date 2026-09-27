@@ -22,6 +22,7 @@ fun interface ReminderNotifier {
 class ReminderInbox(
     private val deviceId: () -> String?,
     private val notifier: ReminderNotifier,
+    private val drafts: ReminderDrafts? = null,
     private val capacity: Int = 256,
 ) {
     private val seen = LinkedHashSet<String>()
@@ -32,6 +33,8 @@ class ReminderInbox(
         if (reminder.deviceId != me) return null
         if (seen.add(reminder.deliveryId)) {
             if (seen.size > capacity) seen.remove(seen.first())
+            // Recorded before it is shown: "Start task" reads the words from here.
+            drafts?.remember(reminder.deliveryId, reminder.taskReason)
             notifier.show(reminder)
         }
         return ReminderAck(deliveryId = reminder.deliveryId)

@@ -509,6 +509,7 @@ async def make_harness(tmp_path, monkeypatch) -> AsyncIterator[Callable]:
             app_config, storage=storage, security=core, provider_factory=factory,
             extra_tools=tools, memory_store=memory_store, break_glass_registry=break_glass,
             memory_provider=memory_provider, vault_index=vault_index, scheduler_tool=scheduler_tool,
+            voice_transport=transport,
         )
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
         opened.append((client, storage))
