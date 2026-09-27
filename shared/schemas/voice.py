@@ -39,11 +39,21 @@ class SpeakerContext(ORMBase):
     """01 §12.1. `speaker_id` is a provider label, never a Hypermind
     user_id, and MUST NOT be mapped to one for authorization purposes.
 
-    Frozen: `Literal[False]` stops construction with `True`, and freezing stops
-    assignment after it (pydantic does not validate assignments by default), so
-    no instance can ever carry an authorization signal (VOI-T3, INV-14)."""
+    `Literal[False]` stops construction with `True`; freezing stops assignment
+    after it (pydantic does not validate assignments by default); and the two
+    pydantic paths that skip validation — `model_copy(update=…)` and
+    `model_construct(…)` — are re-routed through it here. So no instance can
+    ever carry an authorization signal (VOI-T3, INV-14), whichever door is used.
+    The database column carries the same rule as a CHECK constraint."""
 
     model_config = ConfigDict(from_attributes=True, extra="forbid", frozen=True)
+
+    def model_copy(self, *, update: dict | None = None, deep: bool = False) -> "SpeakerContext":
+        return type(self).model_validate({**self.model_dump(), **(update or {})})
+
+    @classmethod
+    def model_construct(cls, _fields_set: set[str] | None = None, **values) -> "SpeakerContext":
+        return cls.model_validate(values)
 
     speaker_id: str
     confidence: float = Field(ge=0.0, le=1.0)
