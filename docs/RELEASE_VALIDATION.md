@@ -23,20 +23,29 @@ definition asks for and did not have, fixed one defect, and measured the Android
 
 ## 2. Test matrix (final, exact)
 
-Filled from the clean-environment run in §12 and the CI run on the final commit (§13).
+From the clean-environment run (§12) on `45612a6`. The code tree is identical to the PR head
+`0d63065`, a merge commit whose only change is `main`'s merge of H1. CI results are in §13.
 
 | Suite | Result |
 |---|---|
-| Server (`pytest tests/ --ignore=tests/memory`) | see §12 |
-| Memory release-blocking (`pytest tests/memory`, `HYPERMIND_REQUIRE_MEMORY_STACK=1`) | see §12 |
-| BR-T2 (4 modules, printed tables) | see §12 |
-| Import contracts (`lint-imports`) | see §12 |
-| Migrations (up / down / up / `alembic check`) | see §12 |
-| Android `:contract` / `:app` unit tests | see §12 |
-| ktlint / detekt / Android lint | see §12 |
-| APK secret scan | see §12 |
-| Repository secret scan (tracked files + git history) | §7 |
-| Guard mutation check | §6 |
+| Server (`pytest tests/ --ignore=tests/memory`, `HYPERMIND_REQUIRE_MEMORY_STACK=1`) | **1533 passed, 7 skipped**, 0 failed. The 7 skips are the conformance vectors of §1. |
+| Memory release-blocking (`pytest tests/memory`) | **196 passed**, 0 skipped |
+| BR-T2 (4 modules, `-s`) | **8 passed**; 41 rows printed (11 + 10 + 11 + 9), 14 REACHABLE, each as documented in `docs/OD_A1_BR_T2.md` |
+| Import contracts (`lint-imports`) | **21 kept, 0 broken** |
+| Migrations | `upgrade head → downgrade base → upgrade head` clean; `alembic check`: no drift |
+| Android `:contract` | **54 tests**, 0 failures, 0 skipped |
+| Android `:app` (Robolectric) | **206 tests**, 0 failures, 0 skipped |
+| ktlint + detekt | pass |
+| Android lint | **0 errors** (warnings only) |
+| `assembleDebug` + `assembleDebugAndroidTest` | pass |
+| APK secret scan (ANDC-T11) | `app-debug.apk: no server secret found` |
+| Repository secret scan | tracked files: 0 findings (CI test); git history: 1,085 blobs, 0 real credentials (§7) |
+| Guard mutation check | **27/27 killed** (§6) |
+
+Phase H's additions to these counts:
+- server tests: +65 over the H0 baseline of 1468. These are the platform-wait, fs-race, hub-routing,
+  secret-scan, mutation-meta and Android BR-T2 tests, plus the strengthened SS-T2.
+- memory tests: +4 (pilot concurrency).
 
 ## 3. The core invariant, traced
 
@@ -247,7 +256,7 @@ Status from the evidence, not a judgement:
 | Android release-blocking set (AND-T1..T8 on a device, docs/23 §9) | JVM / Robolectric / fakes only | **not met** (no hardware, §9) |
 | PRD #29 dashboard secret-free / PII-redacted | no dashboard exists | **no evidence** (not built) |
 | PRD #32 ~10-device fairness | measured: isolation holds; writers serialize | **not met** on SQLite (H-1) |
-| PRD #28 fresh clone on the cloner's own credentials | §12 clean-environment run | see §12 |
+| PRD #28 fresh clone on the cloner's own credentials | §12: a fresh clone, venv and model provisioning pass every suite with no owner credential | **green** for the test/build path. End-to-end self-host (real OIDC client, tunnel, phone pairing) was not exercised |
 | BR-T2 run and reviewed | every software dimension measured, incl. Android (§3d); OD-A1 (a) decided | measured. New at-rest rows 27–28 and 36 await owner review |
 | OD-A1 | owner decision (a), 2026-09-22 | **decided** for the in-process class |
 
@@ -261,8 +270,35 @@ Disposable or test data only.
 
 ## 12. Clean-environment reproduction
 
-*(filled in H5)*
+Done on this host in a separate directory, with nothing shared from the working tree:
+
+1. `git clone` of the pushed branch (`45612a6`) into an empty directory. The clone has no `data/`, no
+   models and no database.
+2. A new `python3 -m venv`, and `pip install -e ".[dev,memory]"` from `pyproject.toml` only
+   (122 packages).
+3. `python -m server.memory provision --config config.example.yaml`: the embedding model downloaded
+   fresh from the Hugging Face Hub (65 MB). This is the one sanctioned download (15 §3 step 5).
+4. `lint-imports`, the migrations round-trip plus `alembic check`, the server suite, the memory suite
+   and the four BR-T2 modules. Results in §2.
+5. The Android CI sequence in the clone, online (no `--offline`):
+   - ktlint/detekt, `:contract:test`, `:app:testDebugUnitTest`,
+   - `assembleDebug`, `assembleDebugAndroidTest`, `lintDebug`,
+   - the APK scan.
+
+What was **not** clean, stated rather than hidden:
+- The Android build shared this host's Gradle cache (`~/.gradle`). Some tasks were restored from the
+  build cache: 19 of 35 in the test run, 23 of 80 in the build run. CI's fresh runner (§13) is the
+  cold-build evidence.
+- The Android SDK was the host's (`/opt/android-sdk`).
+- No test used any owner credential. The suites generate their own KEK and throwaway config (17 §6).
+  PRD #28 ("a fresh clone runs on the cloner's own credentials") therefore holds for the test and
+  build path.
+- An end-to-end self-host was **not** exercised: a real Google OIDC client, a tunnel, and a real
+  phone pairing. It needs external accounts and hardware that were not available.
 
 ## 13. CI
 
-*(filled in H5)*
+CI (`.github/workflows/ci.yml`: `checks` and `android`) runs on every push to the PR. The result on
+the final commit is reported in the PR and in the Phase H final report. Earlier heads:
+- `main` @ `0eebbaf`: green (run 63).
+- PR harsh-life/JARVIS#24 head `9a0165c` (H1, merged): green (run 65).
