@@ -23,12 +23,16 @@ import com.hypermind.jarvis.perception.JarvisAccessibilityService
 import com.hypermind.jarvis.perception.JarvisNotificationListener
 import com.hypermind.jarvis.perception.MlKitScreenOcr
 import com.hypermind.jarvis.perception.NotificationPrimitive
+import com.hypermind.jarvis.perception.PlatformPrompt
 import com.hypermind.jarvis.perception.Platforms
 import com.hypermind.jarvis.perception.ScreenPerception
 import com.hypermind.jarvis.perception.ScreenshotPrimitive
 import com.hypermind.jarvis.perception.UiActions
 import com.hypermind.jarvis.permissions.AppPolicyStore
 import com.hypermind.jarvis.permissions.GridStore
+import com.hypermind.jarvis.privileged.ForceStopPrimitive
+import com.hypermind.jarvis.privileged.RikkaShizukuGateway
+import com.hypermind.jarvis.privileged.ShizukuGateway
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -47,8 +51,12 @@ class AppGraph(
     context: Context,
     private val mapping: MappingState,
     keyStore: DeviceKeyStore = KeystoreDeviceKeyStore(context),
-    primitives: Map<String, Primitive> = defaultPrimitives(context),
+    private val shizuku: RikkaShizukuGateway = RikkaShizukuGateway(context.applicationContext),
+    primitives: Map<String, Primitive> = defaultPrimitives(context, shizuku),
 ) {
+    val platforms = Platforms(shizuku::available)
+    private val prompt = PlatformPrompt(context.applicationContext)
+
     val store = EnrollmentStore(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
     val keys: DeviceKeyStore = keyStore
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -95,7 +103,8 @@ class AppGraph(
             guard = ::guard,
             localState = { DeviceLocalState(grid.state(), appPolicy.current()) },
             primitives = primitives,
-            available = Platforms::available,
+            available = platforms::available,
+            onPlatformMissing = prompt::show,
         )
 
     init {
@@ -139,14 +148,20 @@ class AppGraph(
         )
 
     private fun reportPlatforms() {
-        channel.reportPlatforms(Platforms.snapshot())
+        channel.reportPlatforms(platforms.snapshot())
     }
 
     init {
         // The server hears when the Accessibility service comes or goes, so a
         // task waiting on it can be told why (informational, never authority).
         JarvisAccessibilityService.onAvailabilityChanged(::reportPlatforms)
+        // Shizuku coming back (after a reboot and re-pairing) is reported at
+        // once, so a task waiting for it can be resumed server-side.
+        shizuku.onAvailabilityChanged(::reportPlatforms)
     }
+
+    /** From the setup screen: ask the user to allow JARVIS in Shizuku. */
+    fun requestShizukuPermission() = shizuku.requestPermission()
 
     val enrolled: Boolean get() = store.deviceId != null && key() != null
 
@@ -163,7 +178,10 @@ class AppGraph(
          * primitive name. A mapped primitive missing here fails explicitly
          * (`action_failed`) — it is never approximated by another one.
          */
-        fun defaultPrimitives(context: Context): Map<String, Primitive> {
+        fun defaultPrimitives(
+            context: Context,
+            shizuku: ShizukuGateway,
+        ): Map<String, Primitive> {
             val screen =
                 ScreenPerception(
                     screen = JarvisAccessibilityService.screen,
@@ -190,6 +208,7 @@ class AppGraph(
                 "accessibility.read_element" to screen.readElement,
                 "android.api.battery_state" to BatteryPrimitive(BatteryPrimitive.reader(context.applicationContext)),
                 "android.api.notification_query" to NotificationPrimitive(JarvisNotificationListener::active),
+                "shizuku.force_stop_package" to ForceStopPrimitive(shizuku, context.packageName),
                 "accessibility.screenshot" to
                     ScreenshotPrimitive(
                         JarvisAccessibilityService.screen,

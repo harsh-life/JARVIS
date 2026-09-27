@@ -4,4 +4,11 @@
     <string name="accessibility_label">JARVIS screen reading</string>
     <string name="accessibility_description">Lets JARVIS read and act in the app in front when a task you started asks it to, only for apps you have allowed in the per-app grid. Password fields are never read or typed into. Nothing read from the screen is stored.</string>
     <string name="notification_access_label">JARVIS notifications</string>
+    <string name="platform_channel">Needs your attention</string>
+    <string name="platform_title">JARVIS needs something turned on</string>
+    <string name="platform_shizuku">This task needs Shizuku. Open Shizuku and start it (after a reboot, pair wireless debugging again), then allow JARVIS. The task will continue once it is back.</string>
+    <string name="platform_accessibility">This task needs JARVIS screen reading. Turn it on in Settings › Accessibility.</string>
+    <string name="platform_notifications">This task needs notification access. Allow JARVIS in Settings › Notification access.</string>
+    <string name="platform_screen_capture">Screenshots need Android 11 or newer and JARVIS screen reading turned on.</string>
+    <string name="platform_ocr">On-device text recognition is not available on this phone.</string>
 </resources>

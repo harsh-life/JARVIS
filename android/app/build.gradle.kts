@@ -68,6 +68,7 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        aidl = true
     }
 
     packaging {
@@ -125,6 +126,10 @@ dependencies {
     // docs/23 §6 level 3: the bundled (on-device) Latin model — no model
     // download, no image upload.
     implementation(libs.mlkit.text.recognition)
+    // docs/23 §5.3: Shizuku, on demand, for typed primitives only (AIDL in
+    // src/main/aidl). Never a shell.
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
 
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 

@@ -381,7 +381,8 @@ def android_app_interact_tool(
     )
     return ToolDefinition(
         contract=contract,
-        operations=_tool_action("tap", "swipe", "input_text", "read_screen_element", "launch_activity"),
+        # force_stop: the one typed Shizuku primitive (docs/23 §5.3), on demand.
+        operations=_tool_action("tap", "swipe", "input_text", "read_screen_element", "launch_activity", "force_stop"),
         adapters={ExecutionPlatform.ANDROID: adapter},
     )
 

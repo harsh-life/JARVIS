@@ -175,8 +175,11 @@ on-device dependency is missing (Shizuku after a reboot, Accessibility turned
 off) puts the *task* into a bounded `waiting_for_platform` state — the
 operation is never queued; when that device reports the dependency back, the
 call is re-authorized from scratch (a consequential one asks for a new
-confirmation) and a fresh operation is sent. Not yet: the typed Shizuku call
-itself, the per-app grid UI and confirmation screen.
+confirmation) and a fresh operation is sent. Shizuku is used on demand for its
+one typed primitive (`force_stop`, a fixed AIDL call — no shell, no argv): bound
+for that call and released after, a lost binding reported as
+`platform_unavailable` with a notification telling the user what to turn on.
+Not yet: the per-app grid UI and confirmation screen.
 
 **Still not built:** the scheduler, the dashboard, voice. Their capabilities (where any exist) are absent from the
 registry or, for Android, dispatch to a transport that refuses every call — the
