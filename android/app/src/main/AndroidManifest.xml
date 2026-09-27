@@ -94,6 +94,17 @@
             </intent-filter>
         </service>
 
+        <!-- docs/23 §5.3: how Shizuku hands this app its binder. Guarded by a
+             system-signature permission, so only the system (on Shizuku's
+             behalf) can reach it. Shizuku itself is used on demand only. -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
         <service
             android:name=".channel.ChannelService"
             android:exported="false"

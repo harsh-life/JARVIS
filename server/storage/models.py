@@ -103,6 +103,13 @@ class Device(Base):
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked: Mapped[bool] = mapped_column(nullable=False, default=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # docs/23 §3 / 03 §5.5: the public half (SPKI, P-256) of a key that needs
+    # the user's biometric or device credential for every use; the one
+    # outstanding step-up challenge (hash only); when it last verified.
+    step_up_public_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    step_up_challenge_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    step_up_challenge_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reattested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (Index("ix_devices_user_id", "user_id"),)
 
@@ -682,7 +689,7 @@ class AgentTask(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('running','awaiting_confirmation','completed','failed','cancelled')",
+            "status IN ('running','awaiting_confirmation','waiting_for_platform','completed','failed','cancelled')",
             name="ck_agent_tasks_status",
         ),
         CheckConstraint(

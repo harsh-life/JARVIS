@@ -18,6 +18,7 @@ Two things are substituted, through the same seams a later branch uses:
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import uuid
@@ -30,9 +31,13 @@ from typing import Any, Callable, Sequence
 import httpx
 import pytest
 import pytest_asyncio
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from sqlalchemy import select
 
 from server.auth.device import build_device_proof
+from server.auth.step_up import attestation_message
 from server.composition import build_application
 from server.composition.break_glass import BreakGlassRegistry
 from server.config.schema import AppConfig
@@ -254,6 +259,9 @@ class Actor:
     device_id: uuid.UUID
     credential: str
     token: str
+    # The device's step-up key (docs/23 §3) — on a phone, a Keystore key that
+    # needs the user's biometric for every use; here, a software P-256 key.
+    step_up_key: Any = None
 
     @property
     def auth(self) -> dict[str, str]:
@@ -311,7 +319,32 @@ class Harness:
         token = await self.fresh_token(device_id, credential)
         async with self.storage.session() as s:
             user_id = (await s.get(Device, device_id)).user_id
-        return Actor(subject, user_id, device_id, credential, token)
+        actor = Actor(subject, user_id, device_id, credential, token)
+        # Enrolment registers the step-up key, as the Android client does right
+        # after its interactive login (the only window in which it may).
+        actor.step_up_key = ec.generate_private_key(ec.SECP256R1())
+        spki = actor.step_up_key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+        resp = await self.client.post(
+            f"{API_V1_PREFIX}/devices/me/step-up-key",
+            json={"public_key": base64.urlsafe_b64encode(spki).rstrip(b"=").decode()}, headers=actor.auth,
+        )
+        assert resp.status_code == 204, resp.text
+        return actor
+
+    async def step_up(self, actor: Actor) -> None:
+        """03 §5.5 re-attestation: sign a fresh server challenge with the
+        device's step-up key (the user's biometric, on a phone)."""
+
+        challenge = (await self.client.post(f"{API_V1_PREFIX}/sessions/step-up/challenge",
+                                            headers=actor.auth)).json()["challenge"]
+        signature = actor.step_up_key.sign(
+            attestation_message(device_id=actor.device_id, challenge=challenge), ec.ECDSA(hashes.SHA256()))
+        resp = await self.client.post(
+            f"{API_V1_PREFIX}/sessions/step-up",
+            json={"challenge": challenge, "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode()},
+            headers=actor.auth,
+        )
+        assert resp.status_code == 200, resp.text
 
     async def fresh_token(self, device_id: uuid.UUID, credential: str) -> str:
         resp = await self.client.post(
@@ -376,7 +409,13 @@ class Harness:
             headers={**actor.auth, "Idempotency-Key": key or uuid.uuid4().hex},
         )
 
-    async def confirm(self, actor: Actor, task_id: str, token: str, approve: bool = True) -> httpx.Response:
+    async def confirm(self, actor: Actor, task_id: str, token: str, approve: bool = True,
+                      *, step_up: bool = True) -> httpx.Response:
+        """Approve (or decline) like the device does: the user's presence is
+        re-attested first, which `high_irreversible` approvals require."""
+
+        if step_up and approve:
+            await self.step_up(actor)
         return await self.client.post(
             f"{API_V1_PREFIX}/agent/tasks/{task_id}/confirm",
             json={"confirmation_token": token, "approve": approve}, headers=actor.auth,

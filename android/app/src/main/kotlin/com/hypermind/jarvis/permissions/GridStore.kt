@@ -4,6 +4,17 @@ import android.content.SharedPreferences
 import com.hypermind.jarvis.contract.GridState
 import com.hypermind.jarvis.contract.GridToggle
 
+/** The grid as the sync and the guard use it. */
+interface LocalGrid {
+    fun state(): GridState
+
+    fun set(
+        packageName: String,
+        toggle: GridToggle,
+        on: Boolean,
+    )
+}
+
 /**
  * The per-app capability grid on this device (PRD §13, docs/23 §5.2) — the
  * user's local refusal control. Every toggle starts OFF; turning one off takes
@@ -13,9 +24,9 @@ import com.hypermind.jarvis.contract.GridToggle
  */
 class GridStore(
     private val prefs: SharedPreferences,
-) {
+) : LocalGrid {
     @Synchronized
-    fun state(): GridState =
+    override fun state(): GridState =
         GridState(
             packages =
                 prefs.all.keys
@@ -32,7 +43,7 @@ class GridStore(
         )
 
     @Synchronized
-    fun set(
+    override fun set(
         packageName: String,
         toggle: GridToggle,
         on: Boolean,

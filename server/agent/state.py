@@ -53,6 +53,31 @@ class PendingStep:
     resource_scope: dict[str, str] | None = None
     resource_type: ResourceType | None = None
     resource_operation: Operation | None = None
+    # The narrowing the proposal itself named (before the tool's natural scope
+    # was merged in) — what a later re-authorization must match again.
+    requested_scope: dict[str, str] | None = None
+
+    def expired(self, now: datetime | None = None) -> bool:
+        return (now or datetime.now(timezone.utc)) >= self.expires_at
+
+
+@dataclass
+class PlatformWaitStep:
+    """docs/23 §5.3: the tool call that was refused `platform_unavailable`,
+    kept only so it can be proposed again once the dependency is back. It
+    carries no authority: resuming re-runs every check and the engine from
+    scratch (a spent confirmation is not reused), and the operation sent then
+    is a new one — new op id, new validity window."""
+
+    tool: str
+    operation: str
+    arguments: dict[str, Any]
+    platform: ExecutionPlatform
+    resource_ref: str | None
+    scope: dict[str, str] | None
+    dependency: str
+    device_id: uuid.UUID
+    expires_at: datetime
 
     def expired(self, now: datetime | None = None) -> bool:
         return (now or datetime.now(timezone.utc)) >= self.expires_at
@@ -88,6 +113,8 @@ class TaskState:
     cost: float = 0.0
     run_seconds_used: float = 0.0
     pending: PendingStep | None = None
+    platform_wait: PlatformWaitStep | None = None
+    platform_waits: int = 0
     cancelled: bool = False
     # Set by `/cancel` and by a breaker trip; an in-flight tool call races
     # against it (05 §9).
@@ -133,7 +160,8 @@ class TaskState:
 
 class TaskStateRegistry:
     """Process-local map of live tasks. Bounded: running tasks are capped by the
-    concurrency gate, and paused ones expire with their confirmation token."""
+    concurrency gate, and paused ones expire with their confirmation token or
+    their platform wait."""
 
     def __init__(self) -> None:
         self._states: dict[uuid.UUID, TaskState] = {}
@@ -155,7 +183,9 @@ class TaskStateRegistry:
     def prune_expired(self) -> None:
         now = datetime.now(timezone.utc)
         for task_id in [
-            tid for tid, s in self._states.items() if s.pending is not None and s.pending.expired(now)
+            tid for tid, s in self._states.items()
+            if (s.pending is not None and s.pending.expired(now))
+            or (s.platform_wait is not None and s.platform_wait.expired(now))
         ]:
             self._states.pop(task_id, None)
 

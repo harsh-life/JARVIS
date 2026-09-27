@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import update
 
 from server.secrets.crypto import hash_token
-from server.storage.models import AccessToken, AgentTask, CapabilityGrant, ConfirmationToken
+from server.storage.models import AccessToken, Device, AgentTask, CapabilityGrant, ConfirmationToken
 from shared.schemas.enums import CapabilityScopeType, Visibility
 from tests.runtime.conftest import ask, call, failure_of, final, pending_of
 
@@ -81,9 +81,11 @@ async def test_declining_means_the_action_never_runs(h):
 
 
 async def test_a_high_irreversible_action_needs_strong_confirmation(h):
-    """OD-F1 tier 4: confirmation **plus** step-up. A stale session's approval is
-    refused with `step_up_required`, the action stays pending and unexecuted, and
-    a freshly re-attested session can then approve it."""
+    """OD-F1 tier 4: confirmation **plus** step-up. Without a recent
+    re-attestation by the device's user-presence key — however fresh the access
+    token, since devices refresh tokens in the background (docs/23 §3) — the
+    approval is refused with `step_up_required`, the action stays pending and
+    unexecuted; after a re-attestation it can be approved."""
 
     alice = await _setup(h, "file.write")
     h.model.push(ask("file.write"), call("files.write", "bulk_delete", args={"pattern": "*"}))
@@ -91,21 +93,23 @@ async def test_a_high_irreversible_action_needs_strong_confirmation(h):
     assert details["pending"]["risk_category"] == "high_irreversible"
     assert details["pending"]["requires_step_up"] is True
 
-    async with h.storage.session() as s:
-        await s.execute(
-            update(AccessToken)
-            .where(AccessToken.token_hash == hash_token(alice.token))
-            .values(issued_at=datetime.now(timezone.utc) - timedelta(minutes=30))
-        )
-        await s.commit()
-
-    stale = await h.confirm(alice, details["task_id"], details["confirmation_token"])
+    # A brand-new token proves nothing about who is holding the phone.
+    alice.token = await h.fresh_token(alice.device_id, alice.credential)
+    stale = await h.confirm(alice, details["task_id"], details["confirmation_token"], step_up=False)
     assert stale.status_code == 401
     assert stale.json()["error"]["details"].get("step_up_required") is True
     assert h.writes.calls == []
     assert (await h.get(alice, details["task_id"])).json()["status"] == "awaiting_confirmation"
 
-    alice.token = await h.fresh_token(alice.device_id, alice.credential)
+    # An old re-attestation does not count either.
+    await h.step_up(alice)
+    async with h.storage.session() as s:
+        await s.execute(update(Device).where(Device.device_id == alice.device_id)
+                        .values(reattested_at=datetime.now(timezone.utc) - timedelta(minutes=30)))
+        await s.commit()
+    old = await h.confirm(alice, details["task_id"], details["confirmation_token"], step_up=False)
+    assert old.status_code == 401 and h.writes.calls == []
+
     h.model.push(final("bulk deleted"))
     fresh = await h.confirm(alice, details["task_id"], details["confirmation_token"])
     assert fresh.status_code == 200, fresh.text

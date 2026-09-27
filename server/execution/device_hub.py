@@ -295,7 +295,10 @@ def _interpret(operation: DeviceOperation, envelope: DeviceResultEnvelope) -> Ex
         detail = reason.value if reason else "refused"
         if envelope.required_platform is not None:
             detail = f"{detail}: {envelope.required_platform.value}"
-        raise ExecutionError(_REFUSAL_CODES.get(reason, ExecutionErrorCode.DEVICE_REFUSED), detail)
+        raise ExecutionError(
+            _REFUSAL_CODES.get(reason, ExecutionErrorCode.DEVICE_REFUSED), detail,
+            required_platform=envelope.required_platform.value if envelope.required_platform else None,
+        )
     reason = envelope.failure_reason.value if envelope.failure_reason else "failed"
     raise ExecutionError(ExecutionErrorCode.DEVICE_ACTION_FAILED, reason)
 

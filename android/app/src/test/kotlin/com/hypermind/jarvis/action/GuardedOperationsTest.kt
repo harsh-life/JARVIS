@@ -142,6 +142,31 @@ class GuardedOperationsTest {
         }
 
     @Test
+    fun `the user is told what to turn on, whether missing before or lost during the call`() =
+        runBlocking {
+            val prompted = mutableListOf<PlatformDependency>()
+            val lost =
+                Primitive {
+                    e,
+                    _,
+                    ->
+                    ResultEnvelope.refused(e.opId, RefusalReason.PLATFORM_UNAVAILABLE, PlatformDependency.SHIZUKU)
+                }
+
+            fun handler(available: Boolean) =
+                GuardedOperations(
+                    guard = { DeviceGuard(device, mapping) { now } },
+                    localState = { DeviceLocalState(on, AppPolicy(nonSensitive = setOf("com.example.notes"))) },
+                    primitives = mapOf("shizuku.force_stop_package" to lost),
+                    available = { available },
+                    onPlatformMissing = { prompted += it },
+                )
+            handler(available = false).handle(forceStop("x"))
+            handler(available = true).handle(forceStop("y"))
+            assertEquals(listOf(PlatformDependency.SHIZUKU, PlatformDependency.SHIZUKU), prompted)
+        }
+
+    @Test
     fun `availability is read at the moment each operation runs`() =
         runBlocking {
             var accessibility = true

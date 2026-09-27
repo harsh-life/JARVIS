@@ -15,6 +15,8 @@ from enum import Enum
 class AgentEvent(str, Enum):
     TASK_SUBMITTED = "agent.task.submitted"
     TASK_PAUSED = "agent.task.paused"
+    # docs/23 §5.3: a task waiting for an on-device dependency was resumed.
+    TASK_RESUMED = "agent.task.resumed"
     TASK_COMPLETED = "agent.task.completed"
     TASK_FAILED = "agent.task.failed"
     TASK_CANCELLED = "agent.task.cancelled"

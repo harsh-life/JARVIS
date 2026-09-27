@@ -83,6 +83,9 @@ class ResolvedSession:
     # When this token stops being valid — a long-lived connection authenticated
     # by it (the device channel, docs/23 §4) closes then unless re-authenticated.
     token_expires_at: datetime | None = None
+    # When this device last proved user presence with its step-up key (docs/23
+    # §3). Read live with the token, like the rest of the chain.
+    device_reattested_at: datetime | None = None
 
 
 class SessionService:
@@ -215,6 +218,7 @@ class SessionService:
             token_issued_at=as_utc(token_row.issued_at),
             token_hash=token_row.token_hash,
             token_expires_at=min(as_utc(token_row.expires_at), as_utc(session_row.expires_at)),
+            device_reattested_at=as_utc(device.reattested_at) if device.reattested_at else None,
         )
 
     # ── 03 §5.5 step-up (SESSION-003) ───────────────────────────────────
@@ -231,6 +235,19 @@ class SessionService:
 
         if utcnow() - resolved.token_issued_at > window:
             raise StepUpRequired("stale_authentication")
+
+    def require_reattestation(
+        self, resolved: ResolvedSession, *, window: timedelta = STEP_UP_WINDOW
+    ) -> None:
+        """03 §5.5's "re-attestation challenge the device signs", for approving
+        a `high_irreversible` action (docs/23 §3, §5.4). Token freshness does
+        not count here: a device refreshes its token in the background, with
+        nobody present. Only a recent step-up attestation — a user-presence-
+        bound key signing a server challenge — does."""
+
+        reattested = resolved.device_reattested_at
+        if reattested is None or utcnow() - reattested > window:
+            raise StepUpRequired("reattestation_required")
 
     # ── 03 §6 logout ────────────────────────────────────────────────────
 

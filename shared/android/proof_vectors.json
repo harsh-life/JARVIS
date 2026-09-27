@@ -7,5 +7,11 @@
   "public_key_b64": "ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ",
   "registration_signature": "2XjDTHrNn07xKZ-tYwqiP4sR9KplZJlOSCU9vr-RYTcQDqnV5rv7OWx-BS4lTToOa6HNseNi8F6JyUZWkZDiAQ",
   "rotation_signature": "LwABTbjPDFHNhAOzG0Je-yelF4NMrydozxLV-VeILDG9tGRRv_0QtGFL6jFSsti3SgQFA8JOqdesU8_aRZk0Cw",
-  "seed_b64": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+  "seed_b64": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA",
+  "step_up": {
+    "challenge": "fixed-step-up-challenge_0123456789",
+    "message": "hypermind-step-up|v1|6f1c2d3e-4a5b-4c6d-8e7f-0123456789ab|fixed-step-up-challenge_0123456789",
+    "public_key_spki_b64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHxQBRr-xslH4T03b4NTNz9d6_ZhKlSDjV5QCH4MSu57smVoIsfp3BN89zAtQqWZSY_t3Eflfn4pEnFCW5HyJKw",
+    "signature_der_b64": "MEUCIDeSc_1dazbkNuM0M1mUFM2aD9iBcS809DPPOFWgxU3kAiEA0urdisBVfAFdd9RLEfdVvjUQAiuHRjD9fX3HNGB-9Bc"
+  }
 }

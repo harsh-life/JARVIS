@@ -2,13 +2,18 @@ package com.hypermind.jarvis.auth
 
 import com.hypermind.jarvis.contract.AppPolicy
 import com.hypermind.jarvis.contract.ContractJson
+import com.hypermind.jarvis.contract.GrantList
+import com.hypermind.jarvis.contract.GrantRequest
+import com.hypermind.jarvis.contract.TaskView
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -16,6 +21,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.time.Instant
 import java.util.UUID
 
 /** An error from the Track B API, in its canonical envelope (02 §1.6/§1.7). */
@@ -129,6 +135,165 @@ class ApiClient(
         return lenient.decodeFromJsonElement(AppPolicy.serializer(), body)
     }
 
+    /** docs/23 §3: register the step-up key's public half (SPKI) — enrollment only. */
+    fun registerStepUpKey(
+        accessToken: String,
+        publicKey: String,
+    ) {
+        execute(
+            Request
+                .Builder()
+                .url(api("devices/me/step-up-key"))
+                .header("Authorization", "Bearer $accessToken")
+                .post(buildJsonObject { put("public_key", publicKey) }.toString().toRequestBody(JSON))
+                .build(),
+            expectBody = false,
+        )
+    }
+
+    /** A single-use step-up challenge. */
+    fun stepUpChallenge(accessToken: String): String =
+        execute(
+            Request
+                .Builder()
+                .url(api("sessions/step-up/challenge"))
+                .header("Authorization", "Bearer $accessToken")
+                .post(ByteArray(0).toRequestBody(JSON))
+                .build(),
+        ).getValue("challenge").jsonPrimitive.content
+
+    /** The signed challenge; returns until when this device counts as re-attested. */
+    fun stepUpAttest(
+        accessToken: String,
+        challenge: String,
+        signature: String,
+    ): Instant {
+        val body =
+            execute(
+                Request
+                    .Builder()
+                    .url(api("sessions/step-up"))
+                    .header("Authorization", "Bearer $accessToken")
+                    .post(
+                        buildJsonObject {
+                            put("challenge", challenge)
+                            put("signature", signature)
+                        }.toString().toRequestBody(JSON),
+                    ).build(),
+            )
+        return java.time.OffsetDateTime
+            .parse(body.getValue("reattested_until").jsonPrimitive.content)
+            .toInstant()
+    }
+
+    // ── the per-app grid's grants (PRD §13, 02 §6) — parsed strictly ────
+
+    /** This caller's active grants (its user, device and session). */
+    fun listGrants(accessToken: String): GrantList =
+        ContractJson.decodeFromJsonElement(
+            GrantList.serializer(),
+            execute(
+                Request
+                    .Builder()
+                    .url(api("capabilities"))
+                    .header("Authorization", "Bearer $accessToken")
+                    .get()
+                    .build(),
+            ),
+        )
+
+    /** The user's consent to one grid toggle's capability, for this device and one app. */
+    fun createGrant(
+        accessToken: String,
+        request: GrantRequest,
+    ) {
+        execute(
+            Request
+                .Builder()
+                .url(api("capabilities"))
+                .header("Authorization", "Bearer $accessToken")
+                .post(ContractJson.encodeToString(GrantRequest.serializer(), request).toRequestBody(JSON))
+                .build(),
+            expectBody = false,
+        )
+    }
+
+    /** Revoke a grant; one already gone (`404`) counts as revoked. */
+    fun revokeGrant(
+        accessToken: String,
+        grantId: String,
+    ) {
+        try {
+            execute(
+                Request
+                    .Builder()
+                    .url(api("capabilities/${UUID.fromString(grantId)}"))
+                    .header("Authorization", "Bearer $accessToken")
+                    .delete()
+                    .build(),
+                expectBody = false,
+            )
+        } catch (e: ApiException) {
+            if (e.status != NOT_FOUND) throw e
+        }
+    }
+
+    // ── agent tasks (02 §5) — responses parsed strictly by TaskView ──────
+
+    /** Submit a task. A fresh Idempotency-Key per submission (02 §1.4). */
+    fun submitTask(
+        accessToken: String,
+        input: String,
+        idempotencyKey: String = UUID.randomUUID().toString(),
+    ): TaskView =
+        raw(
+            Request
+                .Builder()
+                .url(api("agent/tasks"))
+                .header("Authorization", "Bearer $accessToken")
+                .header("Idempotency-Key", idempotencyKey)
+                .post(buildJsonObject { put("input", input) }.toString().toRequestBody(JSON))
+                .build(),
+        )
+
+    fun getTask(
+        accessToken: String,
+        taskId: String,
+    ): TaskView =
+        raw(
+            Request
+                .Builder()
+                .url(api("agent/tasks/$taskId"))
+                .header("Authorization", "Bearer $accessToken")
+                .get()
+                .build(),
+        )
+
+    /** The user's own answer to a pending action (docs/23 §5.4) — never an Android-only token. */
+    fun confirmTask(
+        accessToken: String,
+        taskId: String,
+        confirmationToken: String,
+        approve: Boolean,
+    ): TaskView =
+        raw(
+            Request
+                .Builder()
+                .url(api("agent/tasks/$taskId/confirm"))
+                .header("Authorization", "Bearer $accessToken")
+                .post(
+                    buildJsonObject {
+                        put("confirmation_token", confirmationToken)
+                        put("approve", approve)
+                    }.toString().toRequestBody(JSON),
+                ).build(),
+        )
+
+    private fun raw(request: Request): TaskView =
+        http.newCall(request).execute().use { response ->
+            TaskView.parse(response.code, response.body?.string().orEmpty())
+        }
+
     fun channelUrl(): String =
         api("devices/channel").toString().replaceFirst("https://", "wss://")
 
@@ -181,6 +346,7 @@ class ApiClient(
 
     companion object {
         private val JSON = "application/json".toMediaType()
+        private const val NOT_FOUND = 404
 
         /** The server URL must be a bare https origin — never cleartext. */
         fun validServerUrl(url: String): String? {

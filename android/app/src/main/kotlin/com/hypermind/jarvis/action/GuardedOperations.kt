@@ -44,6 +44,8 @@ class GuardedOperations(
     private val localState: () -> DeviceLocalState,
     private val primitives: Map<String, Primitive>,
     private val available: (PlatformDependency) -> Boolean,
+    /** Tell the user what to turn on (docs/23 §5.3) — never a silent failure. */
+    private val onPlatformMissing: (PlatformDependency) -> Unit = {},
 ) : OperationHandler {
     override suspend fun handle(envelope: OperationEnvelope): ResultEnvelope {
         val guard = guard() ?: return ResultEnvelope.failed(envelope.opId, FailureReason.INTERNAL)
@@ -57,9 +59,13 @@ class GuardedOperations(
                         // explicit failure, never a silent success.
                         ?: return ResultEnvelope.failed(envelope.opId, FailureReason.ACTION_FAILED)
                 spec.dependencies.firstOrNull { !available(it) }?.let {
+                    onPlatformMissing(it)
                     return ResultEnvelope.refused(envelope.opId, RefusalReason.PLATFORM_UNAVAILABLE, it)
                 }
-                checked(envelope, spec, primitive.run(envelope, spec))
+                // A dependency can also go away mid-call (a Shizuku binding dying).
+                checked(envelope, spec, primitive.run(envelope, spec)).also { result ->
+                    result.requiredPlatform?.let(onPlatformMissing)
+                }
             }
         }
     }

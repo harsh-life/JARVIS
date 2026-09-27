@@ -61,6 +61,9 @@ _FAILURE_CODES: dict[AgentFailureCode, ErrorCode] = {
     # 18 §4: the task's workers failed it — a dependency failure, like an outage.
     AgentFailureCode.STALLED: ErrorCode.DEPENDENCY_UNAVAILABLE,
     AgentFailureCode.WORKER_CHAIN_EXHAUSTED: ErrorCode.DEPENDENCY_UNAVAILABLE,
+    # docs/23 §5.3: an on-device dependency (e.g. Shizuku) did not come back
+    # within the task's bounded wait.
+    AgentFailureCode.PLATFORM_UNAVAILABLE: ErrorCode.DEPENDENCY_UNAVAILABLE,
 }
 
 
@@ -110,7 +113,9 @@ def render(result: AgentResult, request_id: uuid.UUID | str) -> tuple[int, dict]
         message = result.failure.message
         details = {"task_id": body["task_id"], "failure_code": result.failure.code.value}
         if code is ErrorCode.DEPENDENCY_UNAVAILABLE:
-            details["dependency"] = "model"
+            details["dependency"] = (
+                "device_platform" if result.failure.code is AgentFailureCode.PLATFORM_UNAVAILABLE else "model"
+            )
         if code is ErrorCode.RATE_LIMITED:
             details["retry_after"] = 60
     else:
@@ -202,11 +207,12 @@ async def confirm_task(
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> JSONResponse:
     """02 §5 / PERM-004. Approving a `high_irreversible` action additionally
-    needs a step-up-fresh session (OD-F1 tier 4, SESSION-003); the freshness
-    fact is computed here from the token and enforced by the runtime."""
+    needs step-up (OD-F1 tier 4, SESSION-003): a re-attestation by the
+    device's user-presence-bound key within the window (docs/23 §3). The fact
+    is computed here and enforced by the runtime."""
 
     try:
-        core.sessions.require_step_up(resolved)
+        core.sessions.require_reattestation(resolved)
         step_up_fresh = True
     except StepUpRequired:
         step_up_fresh = False

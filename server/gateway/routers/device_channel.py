@@ -103,6 +103,41 @@ async def _audit(websocket: WebSocket, action: AuditAction, result: AuditResult,
         await db.commit()
 
 
+# Background resumes keep a reference until done.
+_RESUMES: set[asyncio.Task] = set()
+
+
+def _resume_waiting_tasks(websocket: WebSocket, device_id: uuid.UUID, dependencies: list[str]) -> None:
+    """docs/23 §5.3: this device reports `dependencies` available. Tasks waiting
+    on exactly this device for one of them are resumed — in the background,
+    with their own transaction, because the retried operation's result must
+    come back over this very socket, whose loop must keep reading. The report
+    grants nothing: each resumed call is re-authorized by the engine, and a
+    device that reports falsely just gets its operation refused again (the
+    number of waits per task is bounded)."""
+
+    agent_tasks = getattr(websocket.app.state, "agent_tasks", None)
+    if agent_tasks is None:
+        return
+    storage = websocket.app.state.storage
+
+    async def run() -> None:
+        for dependency in dependencies:
+            try:
+                async with storage.session() as db:
+                    audit = AuditLogger(db, request_id=uuid.uuid4())
+                    await agent_tasks.resume_after_platform(db, device_id=device_id, dependency=dependency,
+                                                            audit=audit)
+                    await db.commit()
+            except Exception:  # noqa: BLE001 — the task stays waiting until it resumes or expires
+                logger.warning("resuming tasks waiting for %s on device %s failed", dependency, device_id,
+                               exc_info=True)
+
+    task = asyncio.ensure_future(run())
+    _RESUMES.add(task)
+    task.add_done_callback(_RESUMES.discard)
+
+
 async def _authenticate(websocket: WebSocket, hello: DeviceHello) -> ResolvedSession | DeviceCloseCode:
     core: SecurityCore = websocket.app.state.security
     storage = websocket.app.state.storage
@@ -247,6 +282,9 @@ async def device_channel(websocket: WebSocket) -> None:
                     close_code = DeviceCloseCode.PROTOCOL_ERROR
                     break
                 hub.record_platform_status(session, status.platforms)
+                available = sorted(dep.value for dep, ok in status.platforms.items() if ok)
+                if available:
+                    _resume_waiting_tasks(websocket, principal.device_id, available)
             else:
                 close_code = DeviceCloseCode.PROTOCOL_ERROR
                 break

@@ -67,6 +67,7 @@ from shared.schemas.enums import (
 EVENT_ACTIONS: dict[AgentEvent, AuditAction] = {
     AgentEvent.TASK_SUBMITTED: AuditAction.AGENT_TASK_SUBMITTED,
     AgentEvent.TASK_PAUSED: AuditAction.AGENT_TASK_PAUSED,
+    AgentEvent.TASK_RESUMED: AuditAction.AGENT_TASK_RESUMED,
     AgentEvent.TASK_COMPLETED: AuditAction.AGENT_TASK_COMPLETED,
     AgentEvent.TASK_FAILED: AuditAction.AGENT_TASK_FAILED,
     AgentEvent.TASK_CANCELLED: AuditAction.AGENT_TASK_CANCELLED,

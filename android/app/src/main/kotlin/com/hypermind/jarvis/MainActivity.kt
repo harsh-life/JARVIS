@@ -5,7 +5,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,17 +28,27 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
 import com.hypermind.jarvis.auth.ApiClient
+import com.hypermind.jarvis.auth.BiometricPresence
 import com.hypermind.jarvis.channel.ChannelService
 import com.hypermind.jarvis.channel.ChannelState
 import com.hypermind.jarvis.contract.MappingState
+import com.hypermind.jarvis.permissions.GridSync
+import com.hypermind.jarvis.ui.AppGrid
+import com.hypermind.jarvis.ui.GridRows
+import com.hypermind.jarvis.ui.InstalledApps
+import com.hypermind.jarvis.ui.TaskPanel
+import com.hypermind.jarvis.ui.TaskPanelState
 import com.hypermind.jarvis.ui.theme.JarvisTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
-class MainActivity : ComponentActivity() {
+// A FragmentActivity (still a ComponentActivity for Compose) so the platform
+// biometric prompt can attach to it for step-up (docs/23 §3).
+class MainActivity : FragmentActivity() {
     private val notice = mutableStateOf<String?>(null)
     private val requestNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
@@ -130,6 +139,34 @@ class MainActivity : ComponentActivity() {
                 }) { Text("Connect") }
             else -> OutlinedButton(onClick = { ChannelService.stop(this) }) { Text("Disconnect") }
         }
+        if (state is ChannelState.Connected) {
+            var panel by remember { mutableStateOf<TaskPanelState>(TaskPanelState.Idle) }
+            val presence =
+                BiometricPresence(
+                    this,
+                    title = getString(R.string.step_up_title),
+                    subtitle = getString(R.string.step_up_subtitle),
+                    cancel = getString(R.string.step_up_cancel),
+                )
+            TaskPanel(
+                state = panel,
+                onSubmit = { text ->
+                    panel = TaskPanelState.Working
+                    scope.launch { panel = TaskPanelState.of(graph.tasks.submit(text)) }
+                },
+                onApprove = { taskId, pending ->
+                    scope.launch { panel = TaskPanelState.of(graph.tasks.approve(taskId, pending, presence)) }
+                },
+                onDecline = { taskId, pending ->
+                    scope.launch { panel = TaskPanelState.of(graph.tasks.decline(taskId, pending)) }
+                },
+            )
+        }
+        var showGrid by remember { mutableStateOf(false) }
+        OutlinedButton(
+            onClick = { showGrid = !showGrid },
+        ) { Text(if (showGrid) "Hide app permissions" else "App permissions") }
+        if (showGrid) Grid(app)
         OutlinedButton(onClick = {
             scope.launch {
                 withContext(Dispatchers.IO) {
@@ -149,6 +186,38 @@ class MainActivity : ComponentActivity() {
                 notice.value = "This phone was removed."
             }
         }) { Text("Remove this phone") }
+    }
+
+    /** The per-app grid (PRD §13): local refusal at once, the server's grants reconciled after. */
+    @Composable
+    private fun Grid(app: JarvisApplication) {
+        val graph = app.graph
+        val scope = rememberCoroutineScope()
+        var version by remember { mutableStateOf(0) }
+        var status by remember { mutableStateOf<String?>(null) }
+        val apps = remember { InstalledApps.launchable(this) }
+        val grid = remember(version) { graph.grid.state() }
+
+        fun after(result: GridSync.Result) {
+            status =
+                when (result) {
+                    GridSync.Result.InSync -> null
+                    is GridSync.Result.Pending -> "Not yet saved on your server; turned-off items are already off here."
+                }
+            version++
+        }
+        AppGrid(
+            rows = GridRows.of(apps, grid, graph.appPolicy.current()),
+            deviceState = grid.deviceState,
+            status = status,
+            onToggle = { pkg, toggle, on ->
+                scope.launch { after(withContext(Dispatchers.IO) { graph.gridSync.set(pkg, toggle, on) }) }
+            },
+            onDeviceState = { on ->
+                graph.grid.setDeviceState(on)
+                version++
+            },
+        )
     }
 
     private fun describe(state: ChannelState): String =

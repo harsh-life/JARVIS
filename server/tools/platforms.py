@@ -59,7 +59,7 @@ def _ok(result: ExecutionResult) -> ToolOutput:
 
 
 def _failed(exc: ExecutionError) -> ToolOutput:
-    return ToolOutput(ok=False, error=exc.code.value)
+    return ToolOutput(ok=False, error=exc.code.value, required_platform=exc.required_platform)
 
 
 def _string_argument(request: ExecutionRequest, key: str, *, default: str | None = None) -> str:
@@ -381,7 +381,8 @@ def android_app_interact_tool(
     )
     return ToolDefinition(
         contract=contract,
-        operations=_tool_action("tap", "swipe", "input_text", "read_screen_element", "launch_activity"),
+        # force_stop: the one typed Shizuku primitive (docs/23 §5.3), on demand.
+        operations=_tool_action("tap", "swipe", "input_text", "read_screen_element", "launch_activity", "force_stop"),
         adapters={ExecutionPlatform.ANDROID: adapter},
     )
 

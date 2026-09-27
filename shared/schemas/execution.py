@@ -89,10 +89,12 @@ class ExecutionError(Exception):
     runtime as a raw exception (FAIL-006: a tool failure is an observation).
     """
 
-    def __init__(self, code: ExecutionErrorCode, message: str) -> None:
+    def __init__(self, code: ExecutionErrorCode, message: str, *, required_platform: str | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        # With PLATFORM_UNAVAILABLE: the on-device dependency that is missing.
+        self.required_platform = required_platform
 
 
 @dataclass(frozen=True)

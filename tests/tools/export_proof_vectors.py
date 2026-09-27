@@ -14,7 +14,10 @@ import json
 import sys
 from pathlib import Path
 
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from server.auth.device import (
     PROOF_VERSION,
@@ -23,6 +26,9 @@ from server.auth.device import (
     registration_message,
     rotation_message,
 )
+from server.auth.step_up import attestation_message
+
+
 
 PATH = Path(__file__).resolve().parents[2] / "shared" / "android" / "proof_vectors.json"
 
@@ -31,6 +37,10 @@ DEVICE_ID = "6f1c2d3e-4a5b-4c6d-8e7f-0123456789ab"
 NONCE = "fixed-test-nonce_0123456789"
 ISSUED_AT = 1790000000
 BOOTSTRAP_TOKEN = "bootstrap-token-for-vectors-only"
+# docs/23 §3 step-up: a fixed P-256 test key (never a real device's) and an
+# RFC 6979 deterministic signature, so the file is reproducible.
+STEP_UP_SCALAR = int.from_bytes(bytes(range(33, 65)), "big")
+STEP_UP_CHALLENGE = "fixed-step-up-challenge_0123456789"
 
 
 def vectors() -> dict:
@@ -49,6 +59,19 @@ def vectors() -> dict:
             key.sign(registration_message(bootstrap_token=BOOTSTRAP_TOKEN, public_key=public))
         ),
         "rotation_signature": _b64e(key.sign(rotation_message(device_id=DEVICE_ID, public_key=public))),
+        "step_up": _step_up(),
+    }
+
+
+def _step_up() -> dict:
+    key = ec.derive_private_key(STEP_UP_SCALAR, ec.SECP256R1())
+    message = attestation_message(device_id=DEVICE_ID, challenge=STEP_UP_CHALLENGE)
+    signature = key.sign(message, ec.ECDSA(hashes.SHA256(), deterministic_signing=True))
+    return {
+        "public_key_spki_b64": _b64e(key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)),
+        "challenge": STEP_UP_CHALLENGE,
+        "message": message.decode("ascii"),
+        "signature_der_b64": _b64e(signature),
     }
 
 

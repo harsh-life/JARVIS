@@ -30,6 +30,11 @@ class RuntimeBounds:
     # Backstop lifetime of a task-scoped grant. The grant is also revoked at task
     # end; this bounds it if the process dies first.
     task_grant_ttl_seconds: float = 900.0
+    # docs/23 §5.3: how long a task may wait for an on-device dependency (e.g.
+    # Shizuku re-paired after a reboot), and how many such waits one task may
+    # have. The *operation* never waits: it is rebuilt, re-authorized, fresh.
+    max_platform_wait_seconds: float = 600.0
+    max_platform_waits: int = 2
 
 
 @dataclass(frozen=True)
