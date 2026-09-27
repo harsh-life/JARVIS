@@ -12,6 +12,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,6 +25,9 @@ import com.hypermind.jarvis.contract.PendingAction
 import com.hypermind.jarvis.contract.TaskStatus
 import com.hypermind.jarvis.contract.TaskView
 import com.hypermind.jarvis.tasks.TaskController
+import com.hypermind.jarvis.voice.VoiceInputState
+import com.hypermind.jarvis.voice.VoiceMessages
+import com.hypermind.jarvis.voice.VoiceRouting
 
 /** What the task panel is showing. */
 sealed interface TaskPanelState {
@@ -95,19 +99,30 @@ fun TaskPanel(
     onApprove: (String, PendingAction) -> Unit,
     onDecline: (String, PendingAction) -> Unit,
     draft: String? = null,
+    voice: VoiceControls? = null,
 ) {
     // A draft (a reminder's words, or a transcript) only fills the box; the
     // user still presses Send, and it goes out as an ordinary task.
     var input by remember(draft) { mutableStateOf(draft.orEmpty()) }
+    // docs/27 §3: a transcript joins the draft — the only thing it can do. It
+    // never reaches the confirmation card below.
+    val heard = voice?.state as? VoiceInputState.Heard
+    LaunchedEffect(heard) {
+        if (heard != null) input = VoiceRouting.route(heard.transcript, input).text
+    }
     OutlinedTextField(
         value = input,
         onValueChange = { input = it },
         label = { Text("Ask JARVIS") },
         modifier = Modifier.fillMaxWidth(),
     )
-    Button(enabled = input.isNotBlank() && state != TaskPanelState.Working, onClick = { onSubmit(input) }) {
-        Text("Send")
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Button(enabled = input.isNotBlank() && state != TaskPanelState.Working, onClick = { onSubmit(input) }) {
+            Text("Send")
+        }
+        voice?.let { VoiceButton(it) }
     }
+    voice?.let { VoiceStatus(it.state) }
     when (state) {
         TaskPanelState.Idle -> Unit
         TaskPanelState.Working -> Text("Working…")
@@ -118,6 +133,34 @@ fun TaskPanel(
                 onDecline(state.taskId, state.pending)
             }
     }
+}
+
+/** Push-to-talk for the task box (docs/27). `null` when voice input is off. */
+data class VoiceControls(
+    val state: VoiceInputState,
+    val onListen: () -> Unit,
+    val onStop: () -> Unit,
+)
+
+@Composable
+private fun VoiceButton(voice: VoiceControls) {
+    when (voice.state) {
+        VoiceInputState.Listening -> OutlinedButton(onClick = voice.onStop) { Text("Stop") }
+        VoiceInputState.Processing -> OutlinedButton(enabled = false, onClick = {}) { Text("…") }
+        else -> OutlinedButton(onClick = voice.onListen) { Text("Speak") }
+    }
+}
+
+@Composable
+private fun VoiceStatus(state: VoiceInputState) {
+    val text =
+        when (state) {
+            VoiceInputState.Listening -> "Listening — tap Stop when you're done."
+            VoiceInputState.Processing -> "Recognizing on this phone…"
+            is VoiceInputState.Failed -> VoiceMessages.of(state.error)
+            else -> null
+        }
+    text?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
 }
 
 /**

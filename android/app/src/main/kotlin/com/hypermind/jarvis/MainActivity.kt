@@ -2,6 +2,7 @@ package com.hypermind.jarvis
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -22,6 +23,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,12 +33,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.hypermind.jarvis.auth.ApiClient
 import com.hypermind.jarvis.auth.BiometricPresence
 import com.hypermind.jarvis.channel.ChannelService
 import com.hypermind.jarvis.channel.ChannelState
 import com.hypermind.jarvis.contract.MappingState
+import com.hypermind.jarvis.contract.VoiceConfigView
+import com.hypermind.jarvis.contract.VoicePlacement
 import com.hypermind.jarvis.permissions.GridSync
 import com.hypermind.jarvis.push.PushRegistrar
 import com.hypermind.jarvis.ui.AppGrid
@@ -44,7 +49,14 @@ import com.hypermind.jarvis.ui.GridRows
 import com.hypermind.jarvis.ui.InstalledApps
 import com.hypermind.jarvis.ui.TaskPanel
 import com.hypermind.jarvis.ui.TaskPanelState
+import com.hypermind.jarvis.ui.VoiceControls
 import com.hypermind.jarvis.ui.theme.JarvisTheme
+import com.hypermind.jarvis.voice.AndroidOnDeviceRecognizer
+import com.hypermind.jarvis.voice.AndroidSpeechEngine
+import com.hypermind.jarvis.voice.RecognizerError
+import com.hypermind.jarvis.voice.Speaker
+import com.hypermind.jarvis.voice.SpeechInput
+import com.hypermind.jarvis.voice.VoiceMessages
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -57,12 +69,47 @@ class MainActivity : FragmentActivity() {
     private val draft = mutableStateOf<String?>(null)
     private val requestNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
+    // docs/27: push-to-talk on this phone's own recognizer; system TTS for results.
+    private var speech: SpeechInput? = null
+    private var speaker: Speaker? = null
+    private val requestMicrophone =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) speech?.start() else notice.value = VoiceMessages.of(RecognizerError.PERMISSION)
+        }
+
+    private fun listen() {
+        val granted =
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        if (granted) speech?.start() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    override fun onPause() {
+        // Interruption: the microphone never stays open behind another app.
+        speech?.cancel()
+        speaker?.stop()
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        speech?.release()
+        speaker?.shutdown()
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         notice.value = intent?.getStringExtra(EXTRA_NOTICE)
         takeDraft(intent)
         val app = application as JarvisApplication
+        speech = SpeechInput(AndroidOnDeviceRecognizer(this), VoiceConfigView.DEFAULT.maxTranscriptChars) {}
+        speaker =
+            Speaker(
+                AndroidSpeechEngine(this),
+                enabled = { app.graph.voiceSettings.speakResults },
+                maxChars = VoiceConfigView.DEFAULT.maxTtsChars,
+            )
         setContent {
             JarvisTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
@@ -159,30 +206,7 @@ class MainActivity : FragmentActivity() {
                     ChannelService.stop(this)
                 }) { Text("Disconnect") }
         }
-        if (state is ChannelState.Connected) {
-            var panel by remember { mutableStateOf<TaskPanelState>(TaskPanelState.Idle) }
-            val presence =
-                BiometricPresence(
-                    this,
-                    title = getString(R.string.step_up_title),
-                    subtitle = getString(R.string.step_up_subtitle),
-                    cancel = getString(R.string.step_up_cancel),
-                )
-            TaskPanel(
-                state = panel,
-                onSubmit = { text ->
-                    panel = TaskPanelState.Working
-                    scope.launch { panel = TaskPanelState.of(graph.tasks.submit(text)) }
-                },
-                onApprove = { taskId, pending ->
-                    scope.launch { panel = TaskPanelState.of(graph.tasks.approve(taskId, pending, presence)) }
-                },
-                onDecline = { taskId, pending ->
-                    scope.launch { panel = TaskPanelState.of(graph.tasks.decline(taskId, pending)) }
-                },
-                draft = draft.value,
-            )
-        }
+        if (state is ChannelState.Connected) ConnectedPanel(app)
         if (graph.pushOffered) PushToggle(app)
         var showGrid by remember { mutableStateOf(false) }
         OutlinedButton(
@@ -243,6 +267,76 @@ class MainActivity : FragmentActivity() {
             })
         }
         note?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    }
+
+    /** The task box, its confirmation card, and push-to-talk (docs/23 §5.4, docs/27). */
+    @Composable
+    private fun ConnectedPanel(app: JarvisApplication) {
+        val graph = app.graph
+        val scope = rememberCoroutineScope()
+        var panel by remember { mutableStateOf<TaskPanelState>(TaskPanelState.Idle) }
+        var voiceView by remember { mutableStateOf(VoiceConfigView.DEFAULT) }
+        LaunchedEffect(Unit) {
+            voiceView =
+                withContext(Dispatchers.IO) {
+                    try {
+                        graph.api().voiceConfig(graph.sessions.accessToken().first)
+                    } catch (ignored: IOException) {
+                        VoiceConfigView.DEFAULT
+                    } catch (ignored: com.hypermind.jarvis.auth.EnrollmentLost) {
+                        VoiceConfigView.DEFAULT
+                    }
+                }
+        }
+        val heard = speech?.state?.collectAsState()
+        // Read the answer aloud only if the user turned it on (off by default).
+        LaunchedEffect(panel) {
+            val answer = panel as? TaskPanelState.Answer
+            if (answer != null && voiceView.tts == VoicePlacement.DEVICE) speaker?.speak(answer.text)
+        }
+        val presence =
+            BiometricPresence(
+                this,
+                title = getString(R.string.step_up_title),
+                subtitle = getString(R.string.step_up_subtitle),
+                cancel = getString(R.string.step_up_cancel),
+            )
+        TaskPanel(
+            state = panel,
+            onSubmit = { text ->
+                panel = TaskPanelState.Working
+                scope.launch { panel = TaskPanelState.of(graph.tasks.submit(text)) }
+            },
+            onApprove = { taskId, pending ->
+                scope.launch { panel = TaskPanelState.of(graph.tasks.approve(taskId, pending, presence)) }
+            },
+            onDecline = { taskId, pending ->
+                scope.launch { panel = TaskPanelState.of(graph.tasks.decline(taskId, pending)) }
+            },
+            draft = draft.value,
+            voice =
+                heard?.value?.takeIf { voiceView.stt == VoicePlacement.DEVICE }?.let { current ->
+                    VoiceControls(
+                        state = current,
+                        onListen = { listen() },
+                        onStop = { speech?.stopListening() },
+                    )
+                },
+        )
+        if (voiceView.tts == VoicePlacement.DEVICE) SpeakResultsToggle(app)
+    }
+
+    @Composable
+    private fun SpeakResultsToggle(app: JarvisApplication) {
+        var on by remember { mutableStateOf(app.graph.voiceSettings.speakResults) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Switch(checked = on, onCheckedChange = {
+                on = it
+                app.graph.voiceSettings.speakResults = it
+                if (!it) speaker?.stop()
+            })
+            Text("Read results aloud", style = MaterialTheme.typography.bodyMedium)
+        }
     }
 
     /** The per-app grid (PRD §13): local refusal at once, the server's grants reconciled after. */

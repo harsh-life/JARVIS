@@ -48,6 +48,7 @@ import com.hypermind.jarvis.reminders.AndroidReminderNotifier
 import com.hypermind.jarvis.reminders.ReminderInbox
 import com.hypermind.jarvis.reminders.ReminderNotifier
 import com.hypermind.jarvis.tasks.TaskController
+import com.hypermind.jarvis.voice.VoiceSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -161,6 +162,9 @@ class AppGraph(
             // The channel handles a lost enrollment itself.
         }
     }
+
+    /** docs/27: whether results are read aloud (off until the user turns it on). */
+    val voiceSettings = VoiceSettings(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
 
     /** docs/22: reminders shown as notifications — messages, never operations. */
     val reminders = ReminderInbox(deviceId = { store.deviceId?.toString() }, notifier = reminderNotifier)

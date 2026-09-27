@@ -7,6 +7,7 @@ import com.hypermind.jarvis.contract.GrantRequest
 import com.hypermind.jarvis.contract.PushClientConfig
 import com.hypermind.jarvis.contract.PushTokenRegistration
 import com.hypermind.jarvis.contract.TaskView
+import com.hypermind.jarvis.contract.VoiceConfigView
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
@@ -239,6 +240,22 @@ class ApiClient(
             if (e.status != NOT_FOUND) throw e
         }
     }
+
+    // ── voice (docs/27) — placement only ───────────────────────────────
+
+    /** Where speech recognition and synthesis run. Strict: a field it does not know is an error. */
+    fun voiceConfig(accessToken: String): VoiceConfigView =
+        ContractJson.decodeFromJsonElement(
+            VoiceConfigView.serializer(),
+            execute(
+                Request
+                    .Builder()
+                    .url(api("voice/config"))
+                    .header("Authorization", "Bearer $accessToken")
+                    .get()
+                    .build(),
+            ),
+        )
 
     // ── push wake (docs/23 §4) — this device's own registration only ───
 
