@@ -384,10 +384,98 @@ class ScheduledJob(Base):
         _sa_enum(JobStatus, "job_status"), nullable=False, default=JobStatus.ACTIVE
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # docs/22 §3 — the scheduler backend's own state, kept on the job row so
+    # the application database is the one job store: the next instant this job
+    # is due (NULL once it will never fire again).
+    next_fire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # docs/22 §1 provenance. `reason_source` says whose words `task_reason` is:
+    # `user` — typed by the user into `POST /jobs`; `task_input` — copied by the
+    # runtime from the user's own task instruction (never the worker's text).
+    reason_source: Mapped[str] = mapped_column(String, nullable=False, default="user", server_default="user")
+    origin_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("agent_tasks.task_id"), nullable=True
+    )
+    created_by_device_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("devices.device_id"), nullable=True
+    )
 
     __table_args__ = (
         CheckConstraint("length(trim(task_reason)) > 0", name="ck_scheduled_jobs_reason_nonempty"),
+        CheckConstraint("reason_source IN ('user','task_input')", name="ck_scheduled_jobs_reason_source"),
         Index("ix_scheduled_jobs_owner_status", "owner_user_id", "status"),
+        Index("ix_scheduled_jobs_due", "status", "next_fire_at"),
+        Index("ix_scheduled_jobs_owner_created", "owner_user_id", "created_at"),
+    )
+
+
+class ScheduledJobFiring(Base):
+    """One occurrence of a job coming due (docs/22 §2/§3) and what happened.
+
+    `01` §1.2 locks `job.status` to `active|cancelled|fired`, so the outcomes
+    docs/22 names (delivered late, undeliverable, missed, a failed fire-time
+    re-check) are recorded here rather than by widening that enum. The unique
+    `(job_id, scheduled_for)` makes firing idempotent: a duplicate scheduler
+    event for the same due instant cannot fire it twice. No content: the
+    reminder's words stay on the job row, owner-only.
+    """
+
+    __tablename__ = "scheduled_job_firings"
+
+    firing_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("scheduled_jobs.job_id"), nullable=False)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    fired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String, nullable=False)
+    # Why a re-check refused, as an identifier (`user_not_active`, ...).
+    reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    late: Mapped[bool] = mapped_column(nullable=False, default=False)
+    # Occurrences of a recurring job folded into this one row by a misfire.
+    coalesced: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IN ('delivered','queued','undeliverable','missed','cancelled_recheck')",
+            name="ck_scheduled_job_firings_outcome",
+        ),
+        CheckConstraint("coalesced >= 1", name="ck_scheduled_job_firings_coalesced"),
+        Index("uq_scheduled_job_firings_occurrence", "job_id", "scheduled_for", unique=True),
+        Index("ix_scheduled_job_firings_owner", "owner_user_id", "fired_at"),
+    )
+
+
+class ReminderDelivery(Base):
+    """A reminder owed to one of the owner's devices (docs/22 §2/§3).
+
+    Reminders carry no authority, so unlike device operations they may wait
+    for an offline device (docs/23 §4): `pending` until sent on its channel,
+    `sent` until the device acknowledges, then `acked`. `dropped` when the job
+    was cancelled, the device revoked, or the owner no longer passes the
+    re-check; `expired` past `expires_at`. Only ever the job owner's devices.
+    """
+
+    __tablename__ = "reminder_deliveries"
+
+    delivery_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    firing_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("scheduled_job_firings.firing_id"), nullable=False
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("scheduled_jobs.job_id"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    device_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("devices.device_id"), nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    acked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','sent','acked','dropped','expired')",
+            name="ck_reminder_deliveries_status",
+        ),
+        Index("uq_reminder_deliveries_firing_device", "firing_id", "device_id", unique=True),
+        Index("ix_reminder_deliveries_device_status", "device_id", "status"),
     )
 
 

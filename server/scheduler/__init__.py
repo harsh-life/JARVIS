@@ -1,12 +1,15 @@
-"""scheduler — placeholder package (foundation branch).
+"""Scheduler — task-linked reminders (docs/22, PRD §22 SCHED-001).
 
-Not implemented in the `foundation` branch. This package exists only so that:
-  1. the repository layout matches 00_CANONICAL_PRD.md §45 / 16_REPOSITORY_MODULE_BOUNDARIES.md §1, and
-  2. module-boundary (import-linter) contracts about this package are meaningful
-     for later branches (e.g. "server.agent must never import server.secrets").
+> **A firing reminder delivers a message. It never executes.** (docs/22 §0)
 
-Do not add implementation logic here from the `foundation` branch. The subsystem
-document that owns this package's real implementation is named below.
+There is no principal at fire time — no session is live — so this package
+never calls the runtime, never activates a capability, never touches a tool or
+a device operation. What it can do is bounded by what it imports: storage, the
+audit writer, the usage module's scheduler quota, and three Protocols of its
+own that the composition root satisfies (fire-time checks, a typed reminder
+channel, a content-free wake). The import-linter contracts in `pyproject.toml`
+make the rest unreachable.
 
-Owning subsystem doc: 01_DATA_MODEL_SCHEMA.md §6.2 (ScheduledJob) / PRD §22
+* `schedule` — what a `schedule` string means (cron / ISO datetime).
+* `backend` — `SchedulerBackend`, the replaceable "when is it due" store.
 """

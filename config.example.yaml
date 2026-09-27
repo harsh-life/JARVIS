@@ -98,6 +98,21 @@ vault:
 intelligence:
   enabled: false
 
+# Task-linked reminders (docs/22). A firing reminder delivers a message to the
+# owner's own devices; it never executes anything. Starting a task from it is
+# the user's own, ordinary action.
+scheduler:
+  enabled: true
+  backend: apscheduler_db          # APScheduler trigger semantics; the app DB is the job store
+  misfire_grace_minutes: 60        # later than this after a restart → recorded `missed`
+  max_active_jobs_per_user: 50     # breach → 429 (FAIL-010)
+  agent_tool_enabled: true         # scheduler.create.create_reminder inside execute tasks (OD-SCH-1)
+  poll_seconds: 30
+  min_recurrence_minutes: 5
+  max_horizon_days: 730
+  max_task_reason_chars: 1000
+  pending_delivery_ttl_hours: 72   # queued reminders for an offline device expire after this
+
 voice: {}
 
 # Execution branch (09 filesystem sandbox, 10 network egress, system.restricted
@@ -173,6 +188,7 @@ security:
     per_session_concurrent_tasks: 1
     per_user_concurrent_tasks: 2
     global_concurrent_tasks: 8
+    scheduler_creations_per_hour: 20     # reminder creations per user (docs/22 §4)
   budgets:
     per_user_daily_cost_limit: 0.0
     global_daily_cost_limit: 0.0

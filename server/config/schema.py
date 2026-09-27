@@ -274,6 +274,35 @@ class IntelligenceConfig(StrictModel):
     config: dict = Field(default_factory=dict)
 
 
+class SchedulerConfig(StrictModel):
+    """docs/22 §4 — task-linked reminders. A firing reminder delivers a message;
+    it never executes (docs/22 §0), so nothing here can authorize anything: these
+    are bounds on what a user may schedule and how late a reminder may arrive.
+
+    `backend` names the `SchedulerBackend` implementation. `apscheduler_db` is
+    APScheduler's trigger semantics (cron / one-shot) over the application
+    database as the one job store (docs/22 §3); it is the only one shipped.
+    `agent_tool_enabled` registers the `scheduler.reminders` tool (the
+    `scheduler.create` capability, OD-SCH-1 still open) — off removes the agent
+    path while leaving `POST /api/v1/jobs` and firing untouched."""
+
+    enabled: bool = True
+    backend: str = Field(default="apscheduler_db", pattern="^apscheduler_db$")
+    misfire_grace_minutes: int = Field(default=60, ge=0, le=24 * 60)
+    max_active_jobs_per_user: int = Field(default=50, ge=1)
+    agent_tool_enabled: bool = True
+    # How often the runner looks for due jobs when nothing wakes it sooner.
+    poll_seconds: float = Field(default=30.0, gt=0, le=300)
+    # A recurring reminder may not fire more often than this (a per-minute cron
+    # would turn the owner's phone into a notification stream).
+    min_recurrence_minutes: int = Field(default=5, ge=1)
+    max_horizon_days: int = Field(default=730, ge=1)
+    max_task_reason_chars: int = Field(default=1000, ge=20, le=8000)
+    # docs/22 §3: reminders for an offline device wait for its reconnect — but
+    # not forever; an undelivered one past this age is dropped and audited.
+    pending_delivery_ttl_hours: int = Field(default=72, ge=1, le=24 * 30)
+
+
 class VoiceConfig(StrictModel):
     stt: str | None = None
     diarization: str | None = None
@@ -494,6 +523,9 @@ class RateLimitsConfig(StrictModel):
     per_session_concurrent_tasks: int = Field(default=1, gt=0)
     per_user_concurrent_tasks: int = Field(default=2, gt=0)
     global_concurrent_tasks: int = Field(default=8, gt=0)
+    # docs/22 §4: reminder creations per user per rolling hour, over the jobs
+    # table itself (API and agent path alike). Breach → `429` (FAIL-010).
+    scheduler_creations_per_hour: int = Field(default=20, gt=0)
 
 
 class BudgetsConfig(StrictModel):
@@ -526,6 +558,7 @@ class AppConfig(StrictModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     vault: VaultConfig = Field(default_factory=VaultConfig)
     intelligence: IntelligenceConfig = Field(default_factory=IntelligenceConfig)
+    scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     android: AndroidConfig = Field(default_factory=AndroidConfig)

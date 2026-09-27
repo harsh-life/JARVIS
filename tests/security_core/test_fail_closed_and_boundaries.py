@@ -441,8 +441,10 @@ async def test_no_filesystem_network_or_device_execution_bypass_was_added():
     """
 
     # The memory build (docs/21) made `server/vault` real; it reads Git through
-    # dulwich in-process, so it needs none of the primitives below either.
-    still_stubs = ("voice", "scheduler")
+    # dulwich in-process, so it needs none of the primitives below either. The
+    # scheduler (docs/22) is real now too, and is held to the same scan below:
+    # it delivers messages and executes nothing.
+    still_stubs = ("voice",)
     for package in still_stubs:
         assert [p.name for p in Path(f"server/{package}").glob("*.py")] == [
             "__init__.py"
