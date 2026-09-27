@@ -23,15 +23,17 @@ definition asks for and did not have, fixed one defect, and measured the Android
 
 ## 2. Test matrix (final, exact)
 
-From the clean-environment run (§12) on `45612a6`. The code tree is identical to the PR head
-`0d63065`, a merge commit whose only change is `main`'s merge of H1. CI results are in §13.
+Final tree `94e348c`: Phase H plus `main`'s Judge J1–J2 (PR #23), merged in during H5. Server,
+memory, BR-T2 and import contracts were re-run locally on that tree. The clean-environment run (§12)
+was on `45612a6`, before the Judge merge: server 1533 passed / 7 skipped, memory 196, BR-T2 8,
+contracts 21. The Judge added 101 server tests and 3 contracts. CI results are in §13.
 
 | Suite | Result |
 |---|---|
-| Server (`pytest tests/ --ignore=tests/memory`, `HYPERMIND_REQUIRE_MEMORY_STACK=1`) | **1533 passed, 7 skipped**, 0 failed. The 7 skips are the conformance vectors of §1. |
+| Server (`pytest tests/ --ignore=tests/memory`, `HYPERMIND_REQUIRE_MEMORY_STACK=1`) | **1634 passed, 7 skipped**, 0 failed. The 7 skips are the conformance vectors of §1. |
 | Memory release-blocking (`pytest tests/memory`) | **196 passed**, 0 skipped |
 | BR-T2 (4 modules, `-s`) | **8 passed**; 41 rows printed (11 + 10 + 11 + 9), 14 REACHABLE, each as documented in `docs/OD_A1_BR_T2.md` |
-| Import contracts (`lint-imports`) | **21 kept, 0 broken** |
+| Import contracts (`lint-imports`) | **24 kept, 0 broken** (21 before the Judge merge) |
 | Migrations | `upgrade head → downgrade base → upgrade head` clean; `alembic check`: no drift |
 | Android `:contract` | **54 tests**, 0 failures, 0 skipped |
 | Android `:app` (Robolectric) | **206 tests**, 0 failures, 0 skipped |
@@ -40,7 +42,7 @@ From the clean-environment run (§12) on `45612a6`. The code tree is identical t
 | `assembleDebug` + `assembleDebugAndroidTest` | pass |
 | APK secret scan (ANDC-T11) | `app-debug.apk: no server secret found` |
 | Repository secret scan | tracked files: 0 findings (CI test); git history: 1,085 blobs, 0 real credentials (§7) |
-| Guard mutation check | **27/27 killed** (§6) |
+| Guard mutation check | **27/27 killed** (§6); M11 re-run after the Judge merge changed `secret_patterns.py`: killed |
 
 Phase H's additions to these counts:
 - server tests: +65 over the H0 baseline of 1468. These are the platform-wait, fs-race, hub-routing,
