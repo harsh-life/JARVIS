@@ -23,9 +23,33 @@ interface A11yNode {
     val selected: Boolean
     val password: Boolean
     val visible: Boolean
+    val focused: Boolean
     val childCount: Int
 
     fun child(index: Int): A11yNode?
+
+    /** Perform one typed Accessibility action on this node; whether it took. */
+    fun perform(action: NodeAction): Boolean
+}
+
+/**
+ * The only node actions this client performs — each an Accessibility action
+ * on a node the selector found, never a gesture at raw coordinates (08 §7).
+ */
+sealed interface NodeAction {
+    data object Click : NodeAction
+
+    /** Scroll the node's content in [direction] (up, down, left, right). */
+    data class Scroll(
+        val direction: String,
+    ) : NodeAction
+
+    data class SetText(
+        val text: String,
+    ) : NodeAction {
+        // The text may be anything the user asked to type; keep it out of logs.
+        override fun toString(): String = "SetText(<${text.length} chars>)"
+    }
 }
 
 /** What is in front: the app, and its window's Accessibility root. */

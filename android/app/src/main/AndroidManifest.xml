@@ -12,6 +12,15 @@
     <!-- So that foreground-service notification is actually shown (API 33+). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- android.intent.launch_activity: resolve a named app's own launcher
+         entry (API 30+ package visibility). Launcher entries only. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".JarvisApplication"
         android:allowBackup="false"

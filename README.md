@@ -166,8 +166,11 @@ toggle, off by default; refused for any app not classified non-sensitive and
 for FLAG_SECURE windows, one attempt, no retry); the image goes, in memory
 only, to the vision model configured in `android.vision` (none by default —
 the image is then dropped unread), and the agent reads only that model's
-description; the call is budget-checked and metered as a model call. Not yet:
-execution primitives (tap, swipe, typing, the typed Shizuku call), the
+description; the call is budget-checked and metered as a model call. The UI
+execution primitives (tap, directional scroll, typing, launching the named
+app, back/home/recents/notifications) act only inside the app the operation
+names, on the node an Accessibility selector found — never at raw coordinates,
+and never typing into a password field. Not yet: the typed Shizuku call, the
 per-app grid UI and confirmation screen.
 
 **Still not built:** the scheduler, the dashboard, voice. Their capabilities (where any exist) are absent from the

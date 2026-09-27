@@ -1,9 +1,12 @@
 package com.hypermind.jarvis.perception
 
 import android.accessibilityservice.AccessibilityService
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Build
+import android.os.Bundle
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -59,6 +62,34 @@ class JarvisAccessibilityService : AccessibilityService() {
         // same app; never another app's.
         val window = lastWindow?.takeIf { it.first == pkg }
         return ForegroundWindow(pkg, window?.second, window?.third, NodeInfoAdapter(root))
+    }
+
+    /** `accessibility.global_action` — the closed set the mapping allows. */
+    fun globalAction(name: String): Boolean {
+        val code =
+            when (name) {
+                "back" -> GLOBAL_ACTION_BACK
+                "home" -> GLOBAL_ACTION_HOME
+                "recents" -> GLOBAL_ACTION_RECENTS
+                "notifications" -> GLOBAL_ACTION_NOTIFICATIONS
+                else -> return false
+            }
+        return performGlobalAction(code)
+    }
+
+    /**
+     * `android.intent.launch_activity` — the named package's own launcher
+     * entry point, nothing else: no arbitrary component, action or extras.
+     */
+    fun launch(packageName: String): Boolean {
+        val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return false
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            startActivity(intent)
+            true
+        } catch (ignored: ActivityNotFoundException) {
+            false
+        }
     }
 
     /** What one screenshot attempt produced. */
@@ -165,7 +196,32 @@ private class NodeInfoAdapter(
     override val selected: Boolean get() = info.isSelected
     override val password: Boolean get() = info.isPassword
     override val visible: Boolean get() = info.isVisibleToUser
+    override val focused: Boolean get() = info.isFocused
     override val childCount: Int get() = info.childCount
 
     override fun child(index: Int): A11yNode? = info.getChild(index)?.let(::NodeInfoAdapter)
+
+    override fun perform(action: NodeAction): Boolean =
+        when (action) {
+            NodeAction.Click -> info.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            is NodeAction.Scroll ->
+                SCROLLS[action.direction]?.let { info.performAction(it.id) } ?: false
+            is NodeAction.SetText ->
+                info.performAction(
+                    AccessibilityNodeInfo.ACTION_SET_TEXT,
+                    Bundle().apply {
+                        putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, action.text)
+                    },
+                )
+        }
+
+    private companion object {
+        val SCROLLS =
+            mapOf(
+                "up" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP,
+                "down" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN,
+                "left" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT,
+                "right" to AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT,
+            )
+    }
 }

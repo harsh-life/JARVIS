@@ -26,6 +26,8 @@ class TreeExtractor(
         val truncated: Boolean,
         /** Bounds of every password field seen — OCR text inside them is dropped. */
         val passwordBounds: List<List<Int>>,
+        /** The live node behind each [ScreenNode], by id — used to act, never sent. */
+        val refs: List<A11yNode> = emptyList(),
     ) {
         /** Whether the tree says anything a reader could use. */
         val informative: Boolean get() =
@@ -43,6 +45,7 @@ class TreeExtractor(
     fun extract(root: A11yNode): Extracted {
         val nodes = mutableListOf<ScreenNode>()
         val passwords = mutableListOf<List<Int>>()
+        val refs = mutableListOf<A11yNode>()
         var truncated = false
         val stack = ArrayDeque<Pending>()
         stack.addLast(Pending(root, null, 0))
@@ -53,11 +56,12 @@ class TreeExtractor(
             if (node.visible && withinBounds) {
                 val id = nodes.size
                 nodes += screenNode(node, id, parent)
+                refs += node
                 if (node.password) passwords += node.bounds
                 pushChildren(stack, node, id, depth)
             }
         }
-        return Extracted(nodes, truncated, passwords)
+        return Extracted(nodes, truncated, passwords, refs)
     }
 
     /** Reversed, so the first child is taken next (pre-order). */
