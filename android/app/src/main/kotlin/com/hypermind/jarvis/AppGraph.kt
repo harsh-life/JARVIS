@@ -36,6 +36,7 @@ import com.hypermind.jarvis.permissions.GridStore
 import com.hypermind.jarvis.privileged.ForceStopPrimitive
 import com.hypermind.jarvis.privileged.RikkaShizukuGateway
 import com.hypermind.jarvis.privileged.ShizukuGateway
+import com.hypermind.jarvis.tasks.TaskController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -86,6 +87,9 @@ class AppGraph(
     private val stepUpKeys: StepUpKeyStore = KeystoreStepUpKeyStore()
 
     val stepUp = StepUpFlow(::api, { sessions.accessToken().first }, stepUpKeys) { store.deviceId }
+
+    /** Tasks from this phone, with the confirmation flow (docs/23 §5.4). */
+    val tasks = TaskController(::api, { sessions.accessToken().first }, stepUp)
 
     val login = LoginCoordinator(store, keys, ::api, sessions, enrollStepUp = stepUp::enroll)
 

@@ -183,7 +183,12 @@ Approving a `high_irreversible` action needs step-up by re-attestation: the
 device signs a single-use server challenge with a Keystore key that only
 unlocks after the user's biometric or device credential (registered only at
 enrollment), because a background-refreshed access token proves nobody is
-present. Not yet: the per-app grid UI and confirmation screen.
+present. From the phone, a task is typed in and its result shown; a paused
+action is shown on a confirmation card built only from the server's canonical
+pending action (capability, operation, app, exact arguments — never model
+prose), and the user's answer goes to `/agent/tasks/{id}/confirm` with the
+server-issued token. Not yet: the per-app grid UI, grid sync to the server,
+and the overlay.
 
 **Still not built:** the scheduler, the dashboard, voice. Their capabilities (where any exist) are absent from the
 registry or, for Android, dispatch to a transport that refuses every call — the

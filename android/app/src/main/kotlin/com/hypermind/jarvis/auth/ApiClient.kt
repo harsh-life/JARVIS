@@ -2,6 +2,7 @@ package com.hypermind.jarvis.auth
 
 import com.hypermind.jarvis.contract.AppPolicy
 import com.hypermind.jarvis.contract.ContractJson
+import com.hypermind.jarvis.contract.TaskView
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
@@ -182,6 +183,62 @@ class ApiClient(
             .parse(body.getValue("reattested_until").jsonPrimitive.content)
             .toInstant()
     }
+
+    // ── agent tasks (02 §5) — responses parsed strictly by TaskView ──────
+
+    /** Submit a task. A fresh Idempotency-Key per submission (02 §1.4). */
+    fun submitTask(
+        accessToken: String,
+        input: String,
+        idempotencyKey: String = UUID.randomUUID().toString(),
+    ): TaskView =
+        raw(
+            Request
+                .Builder()
+                .url(api("agent/tasks"))
+                .header("Authorization", "Bearer $accessToken")
+                .header("Idempotency-Key", idempotencyKey)
+                .post(buildJsonObject { put("input", input) }.toString().toRequestBody(JSON))
+                .build(),
+        )
+
+    fun getTask(
+        accessToken: String,
+        taskId: String,
+    ): TaskView =
+        raw(
+            Request
+                .Builder()
+                .url(api("agent/tasks/$taskId"))
+                .header("Authorization", "Bearer $accessToken")
+                .get()
+                .build(),
+        )
+
+    /** The user's own answer to a pending action (docs/23 §5.4) — never an Android-only token. */
+    fun confirmTask(
+        accessToken: String,
+        taskId: String,
+        confirmationToken: String,
+        approve: Boolean,
+    ): TaskView =
+        raw(
+            Request
+                .Builder()
+                .url(api("agent/tasks/$taskId/confirm"))
+                .header("Authorization", "Bearer $accessToken")
+                .post(
+                    buildJsonObject {
+                        put("confirmation_token", confirmationToken)
+                        put("approve", approve)
+                    }.toString().toRequestBody(JSON),
+                ).build(),
+        )
+
+    private fun raw(request: Request): TaskView =
+        http.newCall(request).execute().use { response ->
+            TaskView.parse(response.code, response.body?.string().orEmpty())
+        }
 
     fun channelUrl(): String =
         api("devices/channel").toString().replaceFirst("https://", "wss://")

@@ -28,6 +28,11 @@ sealed interface StepUpResult {
     data object Failed : StepUpResult
 }
 
+/** What the confirmation flow needs from step-up. */
+fun interface Reattestation {
+    suspend fun reattest(presence: UserPresence): StepUpResult
+}
+
 /**
  * docs/23 §3 step-up, device side: a server challenge, signed by the step-up
  * key only after the user authenticates, sent back so the server marks this
@@ -35,12 +40,13 @@ sealed interface StepUpResult {
  * `high_irreversible` action. Never a spoken phrase (27 §3), and never
  * satisfied by the background token refresh.
  */
+
 class StepUpFlow(
     private val api: () -> ApiClient,
     private val accessToken: () -> String,
     private val keys: StepUpKeyStore,
     private val deviceId: () -> UUID?,
-) {
+) : Reattestation {
     /** At enrollment, right after the interactive login. False if the device cannot hold the key. */
     fun enroll(): Boolean =
         try {
@@ -54,7 +60,7 @@ class StepUpFlow(
             false
         }
 
-    suspend fun reattest(presence: UserPresence): StepUpResult {
+    override suspend fun reattest(presence: UserPresence): StepUpResult {
         val device = deviceId() ?: return StepUpResult.NoKey
         val signer = keys.signer() ?: return StepUpResult.NoKey
         val (token, challenge) =

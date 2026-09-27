@@ -5,7 +5,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,17 +28,23 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.fragment.app.FragmentActivity
 import com.hypermind.jarvis.auth.ApiClient
+import com.hypermind.jarvis.auth.BiometricPresence
 import com.hypermind.jarvis.channel.ChannelService
 import com.hypermind.jarvis.channel.ChannelState
 import com.hypermind.jarvis.contract.MappingState
+import com.hypermind.jarvis.ui.TaskPanel
+import com.hypermind.jarvis.ui.TaskPanelState
 import com.hypermind.jarvis.ui.theme.JarvisTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
-class MainActivity : ComponentActivity() {
+// A FragmentActivity (still a ComponentActivity for Compose) so the platform
+// biometric prompt can attach to it for step-up (docs/23 §3).
+class MainActivity : FragmentActivity() {
     private val notice = mutableStateOf<String?>(null)
     private val requestNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
@@ -129,6 +134,29 @@ class MainActivity : ComponentActivity() {
                     ChannelService.start(this)
                 }) { Text("Connect") }
             else -> OutlinedButton(onClick = { ChannelService.stop(this) }) { Text("Disconnect") }
+        }
+        if (state is ChannelState.Connected) {
+            var panel by remember { mutableStateOf<TaskPanelState>(TaskPanelState.Idle) }
+            val presence =
+                BiometricPresence(
+                    this,
+                    title = getString(R.string.step_up_title),
+                    subtitle = getString(R.string.step_up_subtitle),
+                    cancel = getString(R.string.step_up_cancel),
+                )
+            TaskPanel(
+                state = panel,
+                onSubmit = { text ->
+                    panel = TaskPanelState.Working
+                    scope.launch { panel = TaskPanelState.of(graph.tasks.submit(text)) }
+                },
+                onApprove = { taskId, pending ->
+                    scope.launch { panel = TaskPanelState.of(graph.tasks.approve(taskId, pending, presence)) }
+                },
+                onDecline = { taskId, pending ->
+                    scope.launch { panel = TaskPanelState.of(graph.tasks.decline(taskId, pending)) }
+                },
+            )
         }
         OutlinedButton(onClick = {
             scope.launch {

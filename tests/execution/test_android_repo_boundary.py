@@ -136,3 +136,12 @@ def test_the_proof_vector_verifies_against_the_real_server_verifier():
     vector = _json.loads(PATH.read_text(encoding="ascii"))
     proof = DeviceProof.parse(vector["proof"])
     Ed25519PublicKey.from_public_bytes(_b64d(vector["public_key_b64"])).verify(proof.signature, proof.message())
+
+
+def test_the_shared_task_samples_are_current():
+    """The Android client's task models are held to these (TaskSampleTest).
+    Regenerate: `python -m tests.tools.export_task_samples export`."""
+
+    from tests.tools.export_task_samples import PATH, render_file
+
+    assert PATH.read_text(encoding="ascii") == render_file()

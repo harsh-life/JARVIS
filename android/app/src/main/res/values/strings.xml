@@ -4,6 +4,9 @@
     <string name="accessibility_label">JARVIS screen reading</string>
     <string name="accessibility_description">Lets JARVIS read and act in the app in front when a task you started asks it to, only for apps you have allowed in the per-app grid. Password fields are never read or typed into. Nothing read from the screen is stored.</string>
     <string name="notification_access_label">JARVIS notifications</string>
+    <string name="step_up_title">Verify it is you</string>
+    <string name="step_up_subtitle">To approve an action that cannot be undone</string>
+    <string name="step_up_cancel">Cancel</string>
     <string name="platform_channel">Needs your attention</string>
     <string name="platform_title">JARVIS needs something turned on</string>
     <string name="platform_shizuku">This task needs Shizuku. Open Shizuku and start it (after a reboot, pair wireless debugging again), then allow JARVIS. The task will continue once it is back.</string>

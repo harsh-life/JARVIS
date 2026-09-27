@@ -1,0 +1,176 @@
+{
+  "samples": [
+    {
+      "body": {
+        "active_capabilities": [
+          "app.interact"
+        ],
+        "break_glass_active": false,
+        "counters": {
+          "iterations": 3,
+          "model_calls": 3,
+          "tool_calls": 1,
+          "worker_switches": 0
+        },
+        "failure": null,
+        "mode": "execute",
+        "notes": [
+          "remembered 1 fact(s) from this task (private to you)"
+        ],
+        "pending": null,
+        "response": "Added 'Buy milk' to your note.",
+        "status": "completed",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "unresolved": false,
+        "waiting_for": null
+      },
+      "http_status": 200,
+      "name": "completed"
+    },
+    {
+      "body": {
+        "error": {
+          "code": "confirmation_required",
+          "details": {
+            "confirmation_token": "ct_sample_token_not_real",
+            "pending": {
+              "arguments": {
+                "text": "Buy milk",
+                "view_id": "note_body"
+              },
+              "capability": "app.interact",
+              "confirmation_token": "ct_sample_token_not_real",
+              "expires_at": "2026-09-27T12:00:30Z",
+              "kind": "tool_operation",
+              "operation": "input_text",
+              "requires_step_up": false,
+              "resource_ref": null,
+              "resource_scope": {
+                "package_name": "com.example.notes"
+              },
+              "risk_category": "consequential",
+              "tool_id": "device.app_interact"
+            },
+            "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001"
+          },
+          "message": "this action needs your confirmation before it runs",
+          "request_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000f001",
+          "retryable": false
+        }
+      },
+      "http_status": 403,
+      "name": "awaiting_confirmation"
+    },
+    {
+      "body": {
+        "error": {
+          "code": "confirmation_required",
+          "details": {
+            "confirmation_token": "ct_sample_token_not_real",
+            "pending": {
+              "arguments": {},
+              "capability": "app.interact",
+              "confirmation_token": "ct_sample_token_not_real",
+              "expires_at": "2026-09-27T12:00:30Z",
+              "kind": "tool_operation",
+              "operation": "force_stop",
+              "requires_step_up": true,
+              "resource_ref": null,
+              "resource_scope": {
+                "package_name": "com.wallet.pay"
+              },
+              "risk_category": "high_irreversible",
+              "tool_id": "device.app_interact"
+            },
+            "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001"
+          },
+          "message": "this action needs your confirmation before it runs",
+          "request_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000f001",
+          "retryable": false
+        }
+      },
+      "http_status": 403,
+      "name": "awaiting_step_up"
+    },
+    {
+      "body": {
+        "active_capabilities": [
+          "app.interact"
+        ],
+        "break_glass_active": false,
+        "counters": {
+          "iterations": 3,
+          "model_calls": 3,
+          "tool_calls": 1,
+          "worker_switches": 0
+        },
+        "failure": null,
+        "mode": "execute",
+        "notes": [],
+        "pending": null,
+        "response": null,
+        "status": "waiting_for_platform",
+        "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "unresolved": false,
+        "waiting_for": {
+          "dependency": "shizuku",
+          "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+          "expires_at": "2026-09-27T12:00:30Z"
+        }
+      },
+      "http_status": 200,
+      "name": "waiting_for_platform"
+    },
+    {
+      "body": {
+        "error": {
+          "code": "dependency_unavailable",
+          "details": {
+            "dependency": "device_platform",
+            "failure_code": "platform_unavailable",
+            "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001"
+          },
+          "message": "The task stopped: it needed Shizuku.",
+          "request_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000f001",
+          "retryable": true
+        }
+      },
+      "http_status": 503,
+      "name": "failed_platform"
+    },
+    {
+      "body": {
+        "error": {
+          "code": "confirmation_required",
+          "details": {
+            "confirmation_token": null,
+            "pending": {
+              "arguments": {
+                "text": "Buy milk",
+                "view_id": "note_body"
+              },
+              "capability": "app.interact",
+              "confirmation_token": null,
+              "expires_at": "2026-09-27T12:00:30Z",
+              "kind": "tool_operation",
+              "operation": "input_text",
+              "requires_step_up": false,
+              "resource_ref": null,
+              "resource_scope": {
+                "package_name": "com.example.notes"
+              },
+              "risk_category": "consequential",
+              "tool_id": "device.app_interact"
+            },
+            "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001"
+          },
+          "message": "this action needs your confirmation before it runs",
+          "request_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000f001",
+          "retryable": false
+        }
+      },
+      "http_status": 403,
+      "name": "replayed_confirmation_without_token"
+    }
+  ]
+}
