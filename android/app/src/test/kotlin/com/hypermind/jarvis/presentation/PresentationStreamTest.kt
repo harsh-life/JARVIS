@@ -20,7 +20,8 @@ class PresentationStreamTest {
     private val enrolled = MutableStateFlow(true)
     private val platforms = MutableStateFlow<Map<PlatformDependency, Boolean>>(emptyMap())
     private val push = MutableStateFlow(PushStatus.NOT_OFFERED)
-    private val stream = PresentationStream.of(channel, task, ops, rung, enrolled, platforms, push)
+    private val voice = MutableStateFlow(VoiceActivity.NONE)
+    private val stream = PresentationStream.of(channel, task, ops, rung, enrolled, platforms, push, voice)
 
     private fun now() = runBlocking { stream.first() }
 
@@ -45,5 +46,19 @@ class PresentationStreamTest {
         task.value = TaskSnapshot.Idle
         channel.value = ChannelState.Stopped
         assertEquals(ConnectionPhase.NOT_ENROLLED, now().deviceContext.connection)
+    }
+
+    @Test
+    fun `push-to-talk shows as listening only while nothing else is happening`() {
+        channel.value = ChannelState.Connected(Instant.parse("2099-01-01T00:00:00Z"))
+        voice.value = VoiceActivity.LISTENING
+        assertEquals(TaskPhase.LISTENING, now().taskStatus)
+        assertEquals(VoiceActivity.LISTENING, now().deviceContext.voice)
+        // A task's own phase outranks the microphone: voice is display only.
+        task.value = TaskSnapshot.InFlight
+        assertEquals(TaskPhase.THINKING, now().taskStatus)
+        task.value = TaskSnapshot.Idle
+        voice.value = VoiceActivity.NONE
+        assertEquals(TaskPhase.IDLE, now().taskStatus)
     }
 }

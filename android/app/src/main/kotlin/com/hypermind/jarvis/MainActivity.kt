@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
 import com.hypermind.jarvis.auth.ApiClient
 import com.hypermind.jarvis.auth.BiometricPresence
 import com.hypermind.jarvis.channel.ChannelService
@@ -51,6 +52,7 @@ import com.hypermind.jarvis.overlay.AppForeground
 import com.hypermind.jarvis.overlay.OverlayController
 import com.hypermind.jarvis.permissions.GridSync
 import com.hypermind.jarvis.presentation.PresentationText
+import com.hypermind.jarvis.presentation.VoiceActivity
 import com.hypermind.jarvis.push.PushRegistrar
 import com.hypermind.jarvis.tasks.TaskTracker
 import com.hypermind.jarvis.ui.AppGrid
@@ -71,6 +73,7 @@ import com.hypermind.jarvis.voice.RecognizerError
 import com.hypermind.jarvis.voice.Speaker
 import com.hypermind.jarvis.voice.SpeechInput
 import com.hypermind.jarvis.voice.VoiceMessages
+import com.hypermind.jarvis.voice.VoicePresence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -106,6 +109,7 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
+        (application as JarvisApplication).graph.reportVoice(VoiceActivity.NONE)
         speech?.release()
         speaker?.shutdown()
         super.onDestroy()
@@ -124,6 +128,10 @@ class MainActivity : FragmentActivity() {
                 enabled = { app.graph.voiceSettings.speakResults },
                 maxChars = VoiceConfigView.DEFAULT.maxTtsChars,
             )
+        // The status line shows while the microphone is open or recognizing (display only).
+        speech?.let { input ->
+            lifecycleScope.launch { input.state.collect { app.graph.reportVoice(VoicePresence.of(it)) } }
+        }
         setContent {
             JarvisTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { padding ->

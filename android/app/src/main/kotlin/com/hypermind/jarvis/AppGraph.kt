@@ -43,6 +43,7 @@ import com.hypermind.jarvis.presentation.PresentationState
 import com.hypermind.jarvis.presentation.PresentationStream
 import com.hypermind.jarvis.presentation.Presenter
 import com.hypermind.jarvis.presentation.PushStatus
+import com.hypermind.jarvis.presentation.VoiceActivity
 import com.hypermind.jarvis.privileged.ForceStopPrimitive
 import com.hypermind.jarvis.privileged.RikkaShizukuGateway
 import com.hypermind.jarvis.privileged.ShizukuGateway
@@ -305,6 +306,7 @@ class AppGraph(
     private val platformState = MutableStateFlow(platforms.snapshot())
     private val enrolledState = MutableStateFlow(enrolled)
     private val pushState = MutableStateFlow(pushStatus())
+    private val voiceState = MutableStateFlow(VoiceActivity.NONE)
 
     private fun pushStatus(): PushStatus =
         when {
@@ -328,6 +330,7 @@ class AppGraph(
                 enrolledState,
                 platformState,
                 pushState,
+                voiceState,
             ).stateIn(scope, SharingStarted.Eagerly, Presenter.of(PresentationInputs(enrolled, channel.state.value)))
 
     /** Re-read the inputs that have no callbacks of their own (on returning to the app). */
@@ -335,6 +338,11 @@ class AppGraph(
         enrolledState.value = enrolled
         platformState.value = platforms.snapshot()
         pushState.value = pushStatus()
+    }
+
+    /** Push-to-talk's state, for the status only (docs/27): never read as an approval or a command. */
+    fun reportVoice(activity: VoiceActivity) {
+        voiceState.value = activity
     }
 
     /** The floating status overlay: off until the user turns it on. */
