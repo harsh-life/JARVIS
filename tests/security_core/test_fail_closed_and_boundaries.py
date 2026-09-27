@@ -444,11 +444,8 @@ async def test_no_filesystem_network_or_device_execution_bypass_was_added():
     # dulwich in-process, so it needs none of the primitives below either. The
     # scheduler (docs/22) is real now too, and is held to the same scan below:
     # it delivers messages and executes nothing.
-    still_stubs = ("voice",)
-    for package in still_stubs:
-        assert [p.name for p in Path(f"server/{package}").glob("*.py")] == [
-            "__init__.py"
-        ], package
+    # Voice (docs/27) is real too; its HTTP client is httpx behind a declared-
+    # origin transport, and it is held to the same scan.
 
     mediating_packages = (Path("server/fs"), Path("server/net"), Path("server/execution"))
     forbidden_primitives = ("socket", "subprocess", "os.system", "shutil")

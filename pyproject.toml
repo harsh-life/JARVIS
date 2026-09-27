@@ -431,3 +431,46 @@ type = "forbidden"
 source_modules = ["server.scheduler"]
 forbidden_modules = ["subprocess", "socket"]
 allow_indirect_imports = true
+
+# docs/27 §0: a voice is an input method, not an identity. The voice package
+# produces text (a transcript) and audio, nothing more: it cannot reach
+# authentication, the authorization engine, capability grants, confirmation or
+# step-up (so no voice signal can satisfy either), the SecretStore (keys reach
+# its adapters only as an opaque callable wired at the composition root),
+# memory or the vault (audio and speaker signals never become memories), the
+# runtime, tools, device execution, the scheduler, the Judge, or the gateway.
+[[tool.importlinter.contracts]]
+name = "Voice is an input method, not an identity or an authority (docs/27, VOI-T3/T4)"
+type = "forbidden"
+source_modules = ["server.voice"]
+forbidden_modules = [
+    "server.auth",
+    "server.graph",
+    "server.capabilities",
+    "server.secrets.store",
+    "server.secrets.kek",
+    "server.secrets.crypto",
+    "server.secrets.requester",
+    "server.memory",
+    "server.vault",
+    "server.agent",
+    "server.tools",
+    "server.modeltools",
+    "server.execution",
+    "server.fs",
+    "server.scheduler",
+    "server.evaluation",
+    "server.intelligence",
+    "server.dashboard",
+    "server.gateway",
+    "server.composition",
+]
+
+# REPO-T5 for voice: no raw process or socket of its own (the HTTP client's own
+# socket use is indirect).
+[[tool.importlinter.contracts]]
+name = "Voice opens no process or socket (docs/27, REPO-T5)"
+type = "forbidden"
+source_modules = ["server.voice"]
+forbidden_modules = ["subprocess", "socket"]
+allow_indirect_imports = true
