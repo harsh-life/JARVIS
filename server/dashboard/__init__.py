@@ -1,12 +1,18 @@
-"""dashboard — placeholder package (foundation branch).
+"""dashboard — the operator console's read-only views (28_DASHBOARD_OPERATOR_CONSOLE.md).
 
-Not implemented in the `foundation` branch. This package exists only so that:
-  1. the repository layout matches 00_CANONICAL_PRD.md §45 / 16_REPOSITORY_MODULE_BOUNDARIES.md §1, and
-  2. module-boundary (import-linter) contracts about this package are meaningful
-     for later branches (e.g. "server.agent must never import server.secrets").
+> The dashboard shows. Controls live elsewhere. (28 §0)
 
-Do not add implementation logic here from the `foundation` branch. The subsystem
-document that owns this package's real implementation is named below.
+  * `console`   — the ten views of 28 §3 and the persistent banner, as reads
+  * `ports`     — the read-only live snapshots it needs, satisfied by the
+                  composition root (`server/composition/console.py`)
+  * `redaction` — server-side secret and PII redaction (DASH-005/006)
 
-Owning subsystem doc: 00_CANONICAL_PRD.md §28
+`[LOCKED]` DASH-002: read-only over gated results, no mutation path, no secret
+resolution — enforced by the import contracts "The dashboard is read-only" and
+"Dashboard cannot import secrets", and by a check that no module here writes
+through a session (`tests/dashboard/test_console_readonly.py`). The HTTP routes
+(`GET /api/v1/admin/*`, superuser only) live in `server/gateway/routers/admin.py`;
+operator *actions* are the separate `/api/v1/admin/control/*` routes owned by
+the subsystems that enforce them (18, 19, 20). This package holds no superuser
+authority itself (pyproject: "Only the gateway reaches superuser authority").
 """

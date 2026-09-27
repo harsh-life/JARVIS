@@ -279,6 +279,12 @@ found that needs a decision is listed here; everything else is in
 | OD-SCH-2 | Fire-time `suggest` task with a sessionless principal | Not implemented (docs/22 recommendation); would introduce a principal with no session. |
 | OD-VOI-1 | Whether any server STT provider is enabled at pilot | A cloud STT receives user audio; default is on-device only (§2E). |
 | VOI-B3 | Opt-in raw-audio retention (LIFE-002) | Not built; where retained audio would live and for how long is a privacy call. |
+| OD-JDG-1 | Ratify EvaluationProvider as separate from DecisionProvider | Built as recommended behind `evaluation.enabled` (§2F); not ratified. |
+| OD-JDG-2 | Judge budget scope | Own budget always; `budget_scope` default `own_and_global` (§2F); not ratified. |
+| OD-JDG-3 | Pilot Judge provider (model, cloud or local) | None chosen; the Judge is off by default. |
+| OD-JDG-4 | `usage.kind` extension vs `model_call` + attribution | `model_call` + `evaluator:` attribution; the locked enum is unchanged. |
+| OD-DASH-1 | Dashboard/control split vs amending DASH-002 | Split built as recommended; DASH-002 unchanged; not ratified. |
+| OD-DASH-2 | Console UI | Not built; JSON API only (§2F). |
 
 ---
 

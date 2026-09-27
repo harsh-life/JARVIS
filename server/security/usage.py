@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.storage.models import ScheduledJob, UsageEvent
 from shared.schemas.enums import JobStatus, UsageKind
+from shared.schemas.evaluation import EVALUATOR_USAGE_PREFIX
 
 logger = logging.getLogger("hypermind.security.usage")
 
@@ -69,6 +70,10 @@ class UsageLimits:
     global_calls_per_minute: int
     per_user_daily_cost_limit: float
     global_daily_cost_limit: float
+    # 19 §8 / OD-JDG-2: Judge spend never counts toward a user's own budget or
+    # any rate; whether it counts toward the global budget is this switch
+    # (`evaluation.budget_scope`), defaulting to the more restrictive reading.
+    evaluation_counts_toward_global_budget: bool = True
 
 
 class UsageLedger:
@@ -115,8 +120,11 @@ class UsageLedger:
         since: datetime,
         user_id: uuid.UUID | None = None,
         device_id: uuid.UUID | None = None,
+        exclude_evaluation: bool = False,
     ) -> int:
         query = select(func.count()).select_from(UsageEvent).where(UsageEvent.timestamp >= since)
+        if exclude_evaluation:
+            query = query.where(_not_evaluation())
         if user_id is not None:
             query = query.where(UsageEvent.user_id == user_id)
         if device_id is not None:
@@ -124,11 +132,14 @@ class UsageLedger:
         return int((await session.execute(query)).scalar_one())
 
     async def cost_since(
-        self, session: AsyncSession, *, since: datetime, user_id: uuid.UUID | None = None
+        self, session: AsyncSession, *, since: datetime, user_id: uuid.UUID | None = None,
+        exclude_evaluation: bool = False,
     ) -> float:
         query = select(func.coalesce(func.sum(UsageEvent.estimated_cost), 0.0)).where(
             UsageEvent.timestamp >= since
         )
+        if exclude_evaluation:
+            query = query.where(_not_evaluation())
         if user_id is not None:
             query = query.where(UsageEvent.user_id == user_id)
         return float((await session.execute(query)).scalar_one())
@@ -179,17 +190,18 @@ class UsagePolicy:
         rate_since = now - RATE_WINDOW
         retry = int(RATE_WINDOW.total_seconds())
 
-        if await self._ledger.calls_since(session, since=rate_since, user_id=user_id) >= (
+        if await self._ledger.calls_since(session, since=rate_since, user_id=user_id,
+                                          exclude_evaluation=True) >= (
             limits.per_user_calls_per_minute
         ):
             raise LimitExceeded("per_user_rate", retry_after_seconds=retry)
 
         if device_id is not None and await self._ledger.calls_since(
-            session, since=rate_since, device_id=device_id
+            session, since=rate_since, device_id=device_id, exclude_evaluation=True
         ) >= limits.per_device_calls_per_minute:
             raise LimitExceeded("per_device_rate", retry_after_seconds=retry)
 
-        if await self._ledger.calls_since(session, since=rate_since) >= (
+        if await self._ledger.calls_since(session, since=rate_since, exclude_evaluation=True) >= (
             limits.global_calls_per_minute
         ):
             raise LimitExceeded("global_rate", retry_after_seconds=retry)
@@ -197,12 +209,23 @@ class UsagePolicy:
         if projected_cost > 0:
             budget_since = now - BUDGET_WINDOW
             retry_budget = int(BUDGET_WINDOW.total_seconds())
-            user_spent = await self._ledger.cost_since(session, since=budget_since, user_id=user_id)
+            user_spent = await self._ledger.cost_since(session, since=budget_since, user_id=user_id,
+                                                       exclude_evaluation=True)
             if user_spent + projected_cost > limits.per_user_daily_cost_limit:
                 raise LimitExceeded("per_user_budget", retry_after_seconds=retry_budget)
-            global_spent = await self._ledger.cost_since(session, since=budget_since)
+            global_spent = await self._ledger.cost_since(
+                session, since=budget_since,
+                exclude_evaluation=not limits.evaluation_counts_toward_global_budget,
+            )
             if global_spent + projected_cost > limits.global_daily_cost_limit:
                 raise LimitExceeded("global_budget", retry_after_seconds=retry_budget)
+
+
+def _not_evaluation():
+    """Rows that are not Judge calls (19 §8). A `NULL` tool id is a model call
+    of a task, and counts."""
+
+    return (UsageEvent.tool_id.is_(None)) | (~UsageEvent.tool_id.like(f"{EVALUATOR_USAGE_PREFIX}%"))
 
 
 @dataclass(frozen=True)

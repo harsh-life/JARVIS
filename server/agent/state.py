@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -24,6 +25,11 @@ from shared.schemas.enums import RiskCategory
 
 if TYPE_CHECKING:
     from server.agent.breaker import Trip
+    from server.agent.ports import TraceEvent, WorkerTuning
+
+# 19 §4: the task's own events, mirrored for an observer. Bounded: the oldest
+# are dropped first (and counted), so a long task cannot grow it without limit.
+MAX_TRACE_EVENTS = 1000
 
 
 @dataclass(frozen=True)
@@ -132,6 +138,10 @@ class TaskState:
     notes: list[str] = field(default_factory=list)
     allowed_tool_ids: frozenset[str] | None = None
     created_monotonic: float = field(default_factory=time.monotonic)
+    # 19 §4 — volatile like the transcript, discarded with the task.
+    trace_events: "deque[TraceEvent]" = field(default_factory=lambda: deque(maxlen=MAX_TRACE_EVENTS))
+    # 19 §9 — the human-approved worker tuning read when this segment started.
+    tuning: "WorkerTuning | None" = None
 
     def active_capability_names(self) -> list[str]:
         return sorted({a.capability for a in self.activations})

@@ -281,7 +281,8 @@ shared/    schemas/  — canonical Pydantic data contracts, importable by both
                         vectors, the proof vectors and the perception samples
                         both sides read
 tests/     pytest suite (tests/foundation/, tests/security_core/, tests/runtime/,
-                          tests/execution/, tests/integration/, tests/memory/)
+                          tests/execution/, tests/integration/, tests/memory/,
+                          tests/scheduler/, tests/voice/, tests/evaluation/, tests/dashboard/)
 docs/      RUNNING_*.md, OD_A1_BR_T2.md, CAPABILITY_MATRIX.md, DECISION_REGISTER.md
 Working Markdown/   the architecture/PRD document package (source of truth)
 ```

@@ -163,6 +163,29 @@ class AuditAction(str, Enum):
     VOICE_SYNTHESIZED = "voice.synthesized"
     VOICE_REFUSED = "voice.refused"
 
+    # ── the Judge (docs/19). `resource` names the task, the evaluation, the
+    # outcome and identifiers only — never trace content, scores' reasons in
+    # prose, or a candidate's text.
+    EVALUATION_RECORDED = "evaluation.recorded"
+    EVALUATION_UNAVAILABLE = "evaluation.unavailable"
+    EVALUATION_REJECTED = "evaluation.rejected"          # malformed output
+    EVALUATION_SKIPPED = "evaluation.skipped"            # over budget
+    EVALUATION_TRACE_REDACTED = "evaluation.trace.redacted"
+    EVALUATION_STOP_REQUESTED = "evaluation.stop_requested"
+    EVALUATION_STOP_ALERT = "evaluation.stop_alert"
+    IMPROVEMENT_CANDIDATE_QUEUED = "improvement.candidate.queued"
+    IMPROVEMENT_CANDIDATE_REFUSED = "improvement.candidate.refused"   # at creation (19 §9)
+    IMPROVEMENT_CANDIDATE_APPROVED = "improvement.candidate.approved"
+    IMPROVEMENT_CANDIDATE_REJECTED = "improvement.candidate.rejected"
+    CONFIG_VERSION_APPLIED = "config.version.applied"
+    CONFIG_VERSION_ROLLED_BACK = "config.version.rolled_back"
+    # A superuser request on the Judge's control path (switches, review queue).
+    CONTROL_EVALUATION = "control.evaluation"
+
+    # ── operator console (docs/28, DASH-006): viewing unredacted user content
+    # is a separate, privileged, audited action.
+    CONSOLE_UNREDACTED_VIEW = "console.unredacted_view"
+
 
 # 12 §5 emits through a port that speaks plain strings (server/secrets is
 # below server/security and cannot import this enum). This is the one

@@ -819,3 +819,120 @@ class SupervisorLatch(Base):
     changed_by: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (CheckConstraint("latch_id = 1", name="ck_supervisor_latch_single_row"),)
+
+
+# ── the Judge (docs/19) ────────────────────────────────────────────────────
+
+
+class TaskEvaluation(Base):
+    """One evaluation attempt of one task (19 §5, §7) — every outcome recorded:
+    `recorded`, `unavailable`, `malformed`, `over_budget`.
+
+    A record, never a control: nothing reads `quality`, `efficiency` or the
+    reward in `findings` to decide anything. Stored with the task's ownership
+    and the most restrictive visibility (owner-private, 11's triplet); the
+    operator console shows it redacted (28). `reason_code`,
+    `anomaly_reason` and `stop_not_honoured_because` are identifiers; `findings`
+    holds the Judge's step refs, failure categories, notes and reward — never
+    the trace itself, which is not persisted.
+    """
+
+    __tablename__ = "evaluations"
+
+    evaluation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    task_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_tasks.task_id"), nullable=False, index=True)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False, index=True)
+    graph_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("graphs.graph_id"), nullable=True)
+    visibility: Mapped[Visibility] = mapped_column(
+        _sa_enum(Visibility, "visibility"), nullable=False, default=Visibility.PRIVATE
+    )
+    evaluator_id: Mapped[str] = mapped_column(String, nullable=False)
+    evaluator_version: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    outcome: Mapped[str] = mapped_column(String, nullable=False)
+    reason_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    quality: Mapped[float | None] = mapped_column(Float, nullable=True)
+    efficiency: Mapped[float | None] = mapped_column(Float, nullable=True)
+    anomaly: Mapped[str] = mapped_column(String, nullable=False, default="none")
+    anomaly_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    findings: Mapped[dict | None] = mapped_column(SAJSON, nullable=True)
+    stop_requested: Mapped[bool] = mapped_column(nullable=False, default=False)
+    stop_honoured: Mapped[bool] = mapped_column(nullable=False, default=False)
+    stop_not_honoured_because: Mapped[str | None] = mapped_column(String, nullable=True)
+    redactions: Mapped[list | None] = mapped_column(SAJSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class ImprovementCandidateRow(Base):
+    """19 §9's review queue. A candidate is a suggestion awaiting a human: it
+    changes nothing until a **superuser** approves it, and approval produces a
+    `ConfigVersion` row that can be rolled back. `target` is from the closed
+    registry (`server/evaluation/candidates.py`) — a candidate aimed anywhere
+    else never reaches this table. `proposed_value` and `expected_effect` are
+    model-written text derived from one user's task: user content, shown
+    redacted in the console by default (DASH-006)."""
+
+    __tablename__ = "improvement_candidates"
+
+    candidate_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    evaluation_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("evaluations.evaluation_id"), nullable=False, index=True
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_tasks.task_id"), nullable=False)
+    source_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    evaluator_id: Mapped[str] = mapped_column(String, nullable=False)
+    target: Mapped[str] = mapped_column(String, nullable=False)
+    subject: Mapped[str | None] = mapped_column(String, nullable=True)
+    proposed_value: Mapped[str] = mapped_column(String, nullable=False)
+    expected_effect: Mapped[str] = mapped_column(String, nullable=False, default="")
+    evidence: Mapped[list] = mapped_column(SAJSON, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    decision_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    config_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class ConfigVersion(Base):
+    """The versioned, human-approved configuration changes (19 §9).
+
+    Append-only history: every approval and every rollback is a new row, and
+    the effective value of a target is its latest row's `value` (`NULL` = back
+    to the operator's base configuration). Nothing updates or deletes a row, so
+    the history of what applied, when, by whom and why is itself the record.
+    Only the superuser path writes here (`server/composition/improvements.py`).
+    """
+
+    __tablename__ = "config_versions"
+
+    version_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    target_key: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    value: Mapped[str | None] = mapped_column(String, nullable=True)
+    action: Mapped[str] = mapped_column(String, nullable=False)  # "approve" | "rollback"
+    candidate_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("improvement_candidates.candidate_id"), nullable=True
+    )
+    rolled_back_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class EvaluationControl(Base):
+    """The operator's runtime switches for the Judge (28 §1: "Judge
+    enable/disable"), one row, id 1. Each switch is **capped by configuration**:
+    it can turn the Judge or its stop requests off, and back on only where
+    `evaluation.enabled` / `evaluation.may_request_stop` already allow — so no
+    runtime action, and no Judge output, can silently turn a stop ability on.
+    No row means "as configured"."""
+
+    __tablename__ = "evaluation_control"
+
+    control_id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    judge_enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+    stop_requests_enabled: Mapped[bool] = mapped_column(nullable=False, default=True)
+    changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    changed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    __table_args__ = (CheckConstraint("control_id = 1", name="ck_evaluation_control_single_row"),)

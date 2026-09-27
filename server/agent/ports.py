@@ -27,7 +27,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -361,6 +361,98 @@ class SupervisorGatePort(Protocol):
         ...
 
 
+# ── observation (19 §4, §6) ────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class TraceEvent:
+    """One fact the runtime produced for a task, mirrored in the task's volatile
+    state: the same events it audits (with the tier and decision of each
+    authorization, and the units and cost of each metered call). `position` is
+    how many transcript messages preceded it."""
+
+    position: int
+    at: float
+    name: str
+    result: str | None = None
+    resource: str | None = None
+    decision: str | None = None
+    risk: str | None = None
+    units: int | None = None
+    cost: float | None = None
+
+
+@dataclass(frozen=True)
+class TaskSnapshot:
+    """A read-only copy of one task, for an observer. Only what the worker
+    produced (its proposals) and what the runtime fed back (observations),
+    plus the task's own counters and events — never the system prompt, the
+    hydrated memory or vault context, a confirmation token, a grant, or any
+    handle on the task itself. Nothing in it can be used to act."""
+
+    task_id: uuid.UUID
+    user_id: uuid.UUID
+    graph_id: uuid.UUID | None
+    mode: str
+    user_input: str
+    status: str
+    failure_code: str | None
+    final_response: str | None
+    unresolved: bool
+    iterations: int
+    model_calls: int
+    tool_calls: int
+    worker_switches: int
+    denials: int
+    violations: int
+    rejections: int
+    tripped_source: str | None
+    elapsed_seconds: float
+    transcript: tuple[tuple[str, str], ...]
+    events: tuple[TraceEvent, ...]
+
+
+class TaskObserver(Protocol):
+    """Something outside the runtime that watches tasks — the Judge (19),
+    wired by the composition root. The runtime never imports it (pyproject:
+    "The runtime never depends on the Judge").
+
+    Both methods are **synchronous and must only enqueue**: the runtime calls
+    them inline, ignores anything they raise, and never waits for what they
+    start (19 §6 — "the task does not wait for it"). There is no return value
+    the runtime reads, so an observer cannot steer a task. Its one lawful way
+    to affect a running task is the breaker's `trip()`, which it receives
+    separately from the composition root, never from here."""
+
+    def step_completed(self, task_id: uuid.UUID, tool_calls: int, snapshot: Callable[[], TaskSnapshot]) -> None:
+        ...
+
+    def task_ended(self, snapshot: TaskSnapshot) -> None:
+        ...
+
+
+# ── tuning (19 §9: human-approved, versioned configuration) ────────────────
+
+
+@dataclass(frozen=True)
+class WorkerTuning:
+    """Worker-facing values a **superuser** approved (19 §9), read at the start
+    of each task segment. Guidance for the worker and bounds for recovery —
+    never authority: the text is shown to the worker, whose every proposal is
+    still parsed and authorized from scratch, and a recovery value can only be
+    one the registry's ranges allow. `None` everywhere is the base config."""
+
+    system_prompt: str | None = None
+    tool_descriptions: Mapping[str, str] = field(default_factory=dict)
+    stall_window: int | None = None
+    loop_repeat_limit: int | None = None
+    max_worker_switches: int | None = None
+
+
+class TuningPort(Protocol):
+    async def current(self) -> WorkerTuning: ...
+
+
 @dataclass
 class TaskEnvironment:
     """Everything request-scoped the runtime uses for one API call."""
@@ -372,6 +464,7 @@ class TaskEnvironment:
     hydrator: HydratorPort
     supervisor: SupervisorGatePort
     memory: MemoryFormationPort | None = None
+    tuning: TuningPort | None = None
 
 
 __all__: Sequence[str] = [
@@ -388,6 +481,11 @@ __all__: Sequence[str] = [
     "SecurityPort",
     "SupervisorGatePort",
     "TaskEnvironment",
+    "TaskObserver",
+    "TaskSnapshot",
+    "TraceEvent",
+    "TuningPort",
+    "WorkerTuning",
     "ToolCatalog",
     "UsageLimitReached",
     "UsagePort",

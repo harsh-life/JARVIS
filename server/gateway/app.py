@@ -21,9 +21,13 @@ from server.gateway.errors import install_error_handlers
 from server.gateway.request_context import RequestIdMiddleware
 from server.gateway.agent_port import AgentTaskPort
 from server.gateway.control_port import SupervisorControlPort
+from server.gateway.console_port import OperatorConsolePort
+from server.gateway.evaluation_control_port import EvaluationControlPort
 from server.gateway.memory_port import MemoryPort, VaultPort
 from server.gateway.scheduler_port import ReminderInbox, SchedulerPort
 from server.gateway.voice_port import VoicePort
+from server.gateway.routers import admin as admin_routes
+from server.gateway.routers import evaluation_control as evaluation_control_routes
 from server.gateway.routers import (
     agent,
     auth,
@@ -73,6 +77,8 @@ def create_app(
     scheduler_port: SchedulerPort | None = None,
     reminder_inbox: ReminderInbox | None = None,
     voice_port: VoicePort | None = None,
+    evaluation_control: EvaluationControlPort | None = None,
+    operator_console: OperatorConsolePort | None = None,
     background: Sequence[BackgroundService] = (),
 ) -> FastAPI:
     """Build the FastAPI app.
@@ -139,6 +145,8 @@ def create_app(
     v1.include_router(capabilities.router)
     v1.include_router(agent.router)
     v1.include_router(control.router)
+    v1.include_router(evaluation_control_routes.router)
+    v1.include_router(admin_routes.router)
     v1.include_router(memory.router)
     v1.include_router(vault.router)
     v1.include_router(jobs.router)
@@ -155,6 +163,11 @@ def create_app(
     # 18 §5.4 — likewise assembled above this layer. Without one, the control
     # endpoints answer `503` (after superuser authentication).
     app.state.supervisor_control = supervisor_control
+    # 19 §9 / 28 §1 — the Judge's switches and review queue, superuser only.
+    app.state.evaluation_control = evaluation_control
+    # 28 — the operator console's read-only views (DASH-002). Without one, the
+    # `/admin/*` views answer `503` (after superuser authentication).
+    app.state.operator_console = operator_console
     # 11 / docs/21 — assembled above this layer too. Without one, the memory and
     # vault endpoints answer `503` with `mem0` / `vault` (02 §13).
     app.state.memory = memory_port

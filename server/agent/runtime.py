@@ -34,6 +34,7 @@ import hmac
 import logging
 import time
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
@@ -50,7 +51,10 @@ from server.agent.ports import (
     CapabilityStatus,
     ResolvedModels,
     TaskEnvironment,
+    TaskObserver,
+    TaskSnapshot,
     ToolCatalog,
+    TraceEvent,
     UsageLimitReached,
 )
 from server.agent.proposals import (
@@ -136,6 +140,10 @@ _TRIP_NOTES: dict[str, str] = {
         "Stopped by the safety breaker: you declined too many proposed actions in this task."
     ),
     TripSource.OPERATOR.value: "Stopped by the server operator.",
+    TripSource.EVALUATOR.value: (
+        "Stopped by the safety breaker: an automated evaluator flagged this task's behaviour as "
+        "anomalous, and the breaker stopped it."
+    ),
     TripSource.GLOBAL_LATCH.value: "Stopped: the server operator has suspended all tasks.",
 }
 _GENERIC_TRIP_NOTE = "Stopped by the safety breaker."
@@ -234,6 +242,7 @@ class AgentRuntime:
         states: TaskStateRegistry | None = None,
         breaker_limits: BreakerLimits | None = None,
         recovery: RecoveryPolicy | None = None,
+        observer: TaskObserver | None = None,
     ) -> None:
         self._bounds = bounds
         self._concurrency = concurrency
@@ -245,6 +254,9 @@ class AgentRuntime:
         # 18 §4: `None` keeps today's behaviour (per-step primary → fallback,
         # no switching, no stall detection).
         self._recovery = recovery
+        # 19: the Judge, if configured — notified, never waited on, never read
+        # back. `None` (evaluation disabled) changes nothing here.
+        self._observer = observer
 
     @property
     def bounds(self) -> RuntimeBounds:
@@ -548,6 +560,22 @@ class AgentRuntime:
         self._breaker.trip(BreakerScope.TASK, task_id, reason=reason, source=source)
         return True
 
+    async def enforce_trip(self, env: TaskEnvironment, task_id: uuid.UUID) -> StopOutcome:
+        """Enforce a trip that is **already recorded** on a task nobody is
+        driving (paused for a confirmation or for its phone). It trips nothing
+        itself: a task that was not tripped is left exactly as it is.
+
+        A running task needs none of this — its own request enforces the stop
+        at the next checkpoint (18 §5.3)."""
+
+        state = self._states.get(task_id)
+        if state is None or state.tripped is None:
+            return StopOutcome.NOT_FOUND
+        if (state.pending is not None or state.platform_wait is not None) and not state.stop_enforced:
+            await self._emergency_stop(env, state)
+            return StopOutcome.STOPPED
+        return StopOutcome.SIGNALLED
+
     async def operator_stop(
         self, env: TaskEnvironment, task_id: uuid.UUID, *, reason: str, source: str
     ) -> StopOutcome:
@@ -628,6 +656,7 @@ class AgentRuntime:
             except ModelUnavailable:
                 raise _Stop(AgentFailureCode.MODEL_UNAVAILABLE) from None
             state.allowed_tool_ids = models.allowed_tool_ids
+            state.tuning = await self._load_tuning(env)
 
             while True:
                 # 18 §5.3: the breaker's checkpoint comes first — a tripped task
@@ -718,8 +747,13 @@ class AgentRuntime:
         bounded, budget-checked, and metered."""
 
         messages = list(state.messages)
+        tuning = state.tuning
         messages[0] = ctx.ChatMessage(
-            "system", ctx.system_prompt(self._visible_tools(state), state.active_capability_names(), state.mode)
+            "system", ctx.system_prompt(
+                self._visible_tools(state), state.active_capability_names(), state.mode,
+                guidance=tuning.system_prompt if tuning else None,
+                descriptions=tuning.tool_descriptions if tuning else None,
+            )
         )
         messages = ctx.compact(messages, max_chars=self._bounds.max_context_chars)
         prompt_chars = sum(len(m.content) for m in messages)
@@ -804,7 +838,7 @@ class AgentRuntime:
         outage, which stays `model_unavailable` (a dependency is down).
         """
 
-        policy = self._recovery
+        policy = self._recovery_for(state)
         chain = models.chain
         current = state.worker_index
         nxt = next(
@@ -841,10 +875,11 @@ class AgentRuntime:
         """18 §4.1 no-progress stall: `stall_window` consecutive steps without
         a successful tool execution or capability activation."""
 
-        assert self._recovery is not None
+        policy = self._recovery_for(state)
+        assert policy is not None
         state.no_progress_steps = 0 if state.progressed else state.no_progress_steps + 1
         state.progressed = False
-        if state.no_progress_steps >= self._recovery.stall_window:
+        if state.no_progress_steps >= policy.stall_window:
             await self._event(env, state, AgentEvent.STALL_DETECTED, AuditResult.BLOCKED,
                               resource=f"stall:{state.task_id}:no_progress")
             await self._switch(env, state, models, SwitchReason.STALL, stuck=AgentFailureCode.STALLED)
@@ -965,6 +1000,8 @@ class AgentRuntime:
             capability=pending.capability, resource_scope=pending.resource_scope,
             confirmation_token=pending.token,
         ))
+        self._trace(state, "authz.decision", resource=self._pending_resource(pending),
+                    decision=verdict.decision.value, risk=verdict.risk_category.value)
         if verdict.needs_confirmation:
             raise ConfirmationMismatch()
         if not verdict.allowed:
@@ -1030,7 +1067,7 @@ class AgentRuntime:
             key = operation_key(call.tool, call.operation, (call.platform or ExecutionPlatform.SERVER).value,
                                 call.arguments, call.resource_ref, call.scope)
             state.operation_counts[key] = state.operation_counts.get(key, 0) + 1
-            if state.operation_counts[key] >= self._recovery.loop_repeat_limit:
+            if state.operation_counts[key] >= self._recovery_for(state).loop_repeat_limit:
                 await self._event(env, state, AgentEvent.STALL_DETECTED, AuditResult.BLOCKED,
                                   resource=f"stall:{state.task_id}:loop")
                 await self._switch(env, state, models, SwitchReason.LOOP, stuck=AgentFailureCode.STALLED)
@@ -1096,6 +1133,8 @@ class AgentRuntime:
             resource_scope=scope,
         )
         verdict = await env.security.authorize_action(request)
+        self._trace(state, "authz.decision", resource=resource, decision=verdict.decision.value,
+                    risk=verdict.risk_category.value)
 
         if verdict.prohibited:
             await self._reject(env, state, "That action is prohibited and can never be performed.",
@@ -1226,6 +1265,8 @@ class AgentRuntime:
             units=output.units, estimated_cost=output.estimated_cost,
             provider=output.provider, model=output.model, tool_id=handle.tool_id,
         )
+        self._trace(state, f"usage.{output.usage_kind.value}", resource=f"tool:{handle.tool_id}",
+                    units=output.units, cost=output.estimated_cost)
         # Execution-layer failures (sandbox_violation, egress_denied,
         # platform_unsupported, timeout, ...) already arrive as a structured
         # `ExecutionErrorCode` in `output.error` (server/execution/contracts.py).
@@ -1249,6 +1290,7 @@ class AgentRuntime:
         self._breaker.record_tool_outcome(state, ok=output.ok, error=output.error)
         if output.ok:
             state.progressed = True
+        self._notify_step(state)
         return output
 
     def _maybe_wait_for_platform(
@@ -1352,6 +1394,7 @@ class AgentRuntime:
             units=units, estimated_cost=cost, provider=provider.spec.provider,
             model=provider.spec.model,
         )
+        self._trace(state, "usage.model_call", resource=f"worker:{_worker_id(provider)}", units=units, cost=cost)
 
     # ── lifecycle ───────────────────────────────────────────────────────
 
@@ -1414,6 +1457,7 @@ class AgentRuntime:
         await self._event(env, state, event,
                           AuditResult.SUCCESS if status is AgentTaskStatus.COMPLETED else AuditResult.FAILURE)
         self._states.pop(state.task_id)
+        self._notify_ended(state, status, failure=failure, response=response, unresolved=unresolved)
         if unresolved:
             state.notes.append("The worker reported that it could not resolve this request.")
         result = self._result_from_state(state, status)
@@ -1601,10 +1645,90 @@ class AgentRuntime:
     async def _event(self, env: TaskEnvironment, state: TaskState, event: AgentEvent,
                      result: AuditResult, *, resource: str | None = None,
                      decision: PermissionDecisionValue | None = None) -> None:
+        resource = resource or f"agent_task:{state.task_id}"
         await env.security.record(
             event, principal=state.principal, graph_id=state.graph_id,
-            resource=resource or f"agent_task:{state.task_id}", result=result, decision=decision,
+            resource=resource, result=result, decision=decision,
         )
+        self._trace(state, event.value, result=result.value, resource=resource,
+                    decision=decision.value if decision is not None else None)
+
+    # ── observation (19 §4, §6) — the Judge's inputs, never its outputs ──
+
+    @staticmethod
+    def _trace(state: TaskState, name: str, **fields: Any) -> None:
+        state.trace_events.append(TraceEvent(
+            position=max(0, len(state.messages) - 2),
+            at=time.monotonic() - state.created_monotonic, name=name, **fields,
+        ))
+
+    @staticmethod
+    def _snapshot(state: TaskState, status: AgentTaskStatus, *, failure: AgentFailureCode | None = None,
+                  response: str | None = None, unresolved: bool = False) -> TaskSnapshot:
+        # messages[0] is the system prompt and messages[1] the hydrated context
+        # with the user's request: neither is an artifact the worker produced.
+        return TaskSnapshot(
+            task_id=state.task_id, user_id=state.principal.user_id, graph_id=state.graph_id,
+            mode=state.mode.value, user_input=state.user_input, status=status.value,
+            failure_code=failure.value if failure is not None else None, final_response=response,
+            unresolved=unresolved, iterations=state.iterations, model_calls=state.model_calls,
+            tool_calls=state.tool_calls, worker_switches=state.worker_switches, denials=state.denials,
+            violations=state.violations, rejections=state.rejections,
+            tripped_source=state.tripped.source if state.tripped is not None else None,
+            elapsed_seconds=time.monotonic() - state.created_monotonic,
+            transcript=tuple((m.role, m.content) for m in state.messages[2:]),
+            events=tuple(state.trace_events),
+        )
+
+    def _notify_step(self, state: TaskState) -> None:
+        if self._observer is None:
+            return
+        try:
+            self._observer.step_completed(
+                state.task_id, state.tool_calls,
+                lambda: self._snapshot(state, AgentTaskStatus.RUNNING),
+            )
+        except Exception:  # noqa: BLE001 — an observer can never affect a task
+            logger.warning("task observer failed on a step of %s", state.task_id, exc_info=False)
+
+    def _notify_ended(self, state: TaskState, status: AgentTaskStatus, *, failure: AgentFailureCode | None,
+                      response: str | None, unresolved: bool) -> None:
+        if self._observer is None:
+            return
+        try:
+            self._observer.task_ended(self._snapshot(state, status, failure=failure, response=response,
+                                                     unresolved=unresolved))
+        except Exception:  # noqa: BLE001 — an observer can never affect a task
+            logger.warning("task observer failed at the end of %s", state.task_id, exc_info=False)
+
+    # ── tuning (19 §9) ──────────────────────────────────────────────────
+
+    @staticmethod
+    async def _load_tuning(env: TaskEnvironment):
+        if env.tuning is None:
+            return None
+        try:
+            return await env.tuning.current()
+        except Exception:  # noqa: BLE001 — unreadable tuning = the base config
+            logger.warning("worker tuning could not be read; using the base configuration", exc_info=False)
+            return None
+
+    def _recovery_for(self, state: TaskState) -> RecoveryPolicy | None:
+        """The recovery bounds for this task: the operator's, with any value a
+        superuser approved (19 §9) in place of it. Only when recovery is
+        configured at all — tuning never turns it on."""
+
+        policy, tuning = self._recovery, state.tuning
+        if policy is None or tuning is None:
+            return policy
+        overrides = {
+            name: value for name in ("stall_window", "loop_repeat_limit", "max_worker_switches")
+            if (value := getattr(tuning, name)) is not None
+        }
+        try:
+            return replace(policy, **overrides) if overrides else policy
+        except ValueError:
+            return policy
 
     @staticmethod
     def _pending_resource(pending: PendingStep) -> str:

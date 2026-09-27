@@ -196,6 +196,12 @@ class DeviceHub:
     async def is_connected(self, *, device_id: uuid.UUID) -> bool:
         return device_id in self._sessions
 
+    def connected_device_ids(self) -> frozenset[uuid.UUID]:
+        """A snapshot of which devices hold an authenticated channel now — for
+        the operator console's read-only devices view (28 §3)."""
+
+        return frozenset(self._sessions)
+
     async def send(self, operation: DeviceOperation) -> ExecutionResult:
         now = self._clock()
         if now >= operation.expires_at:

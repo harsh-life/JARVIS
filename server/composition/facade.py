@@ -20,6 +20,7 @@ from server.agent import (
 from server.agent.ports import Hydration, TaskEnvironment, UsageLimitReached
 from server.auth.errors import StepUpRequired
 from server.composition.break_glass import BreakGlassRegistry
+from server.composition.improvements import TuningCache
 from server.composition.latch import InProcessLatch, SupervisorGate
 from server.composition.memory import MemoryFacade, VaultFacade
 from server.composition.models import ConfiguredModelResolver, ProviderFactory
@@ -81,7 +82,9 @@ class AgentTaskFacade:
         break_glass: BreakGlassRegistry | None = None,
         memory: MemoryFacade | None = None,
         vault: VaultFacade | None = None,
+        tuning: TuningCache | None = None,
     ) -> None:
+        self._tuning = tuning
         self._memory = memory
         self._vault = vault
         self._latch = latch
@@ -113,6 +116,8 @@ class AgentTaskFacade:
             hydrator=_BoundHydrator(self._hydrator, session, self._vault),
             supervisor=SupervisorGate(self._latch, session),
             memory=self._memory.bound_formation(session, audit) if self._memory is not None else None,
+            # 19 §9: human-approved worker tuning, read with its own session.
+            tuning=self._tuning,
         )
 
     def _observe(self, result: AgentResult) -> AgentResult:
