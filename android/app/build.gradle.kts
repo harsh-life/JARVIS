@@ -128,6 +128,8 @@ dependencies {
     implementation(libs.mlkit.text.recognition)
     // docs/23 §5.3: Shizuku, on demand, for typed primitives only (AIDL in
     // src/main/aidl). Never a shell.
+    // docs/23 §3 step-up: the platform's biometric / device-credential prompt.
+    implementation(libs.androidx.biometric)
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
 

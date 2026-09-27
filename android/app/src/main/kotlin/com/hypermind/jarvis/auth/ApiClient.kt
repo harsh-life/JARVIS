@@ -7,8 +7,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -16,6 +18,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.time.Instant
 import java.util.UUID
 
 /** An error from the Track B API, in its canonical envelope (02 §1.6/§1.7). */
@@ -127,6 +130,57 @@ class ApiClient(
                     .build(),
             )
         return lenient.decodeFromJsonElement(AppPolicy.serializer(), body)
+    }
+
+    /** docs/23 §3: register the step-up key's public half (SPKI) — enrollment only. */
+    fun registerStepUpKey(
+        accessToken: String,
+        publicKey: String,
+    ) {
+        execute(
+            Request
+                .Builder()
+                .url(api("devices/me/step-up-key"))
+                .header("Authorization", "Bearer $accessToken")
+                .post(buildJsonObject { put("public_key", publicKey) }.toString().toRequestBody(JSON))
+                .build(),
+            expectBody = false,
+        )
+    }
+
+    /** A single-use step-up challenge. */
+    fun stepUpChallenge(accessToken: String): String =
+        execute(
+            Request
+                .Builder()
+                .url(api("sessions/step-up/challenge"))
+                .header("Authorization", "Bearer $accessToken")
+                .post(ByteArray(0).toRequestBody(JSON))
+                .build(),
+        ).getValue("challenge").jsonPrimitive.content
+
+    /** The signed challenge; returns until when this device counts as re-attested. */
+    fun stepUpAttest(
+        accessToken: String,
+        challenge: String,
+        signature: String,
+    ): Instant {
+        val body =
+            execute(
+                Request
+                    .Builder()
+                    .url(api("sessions/step-up"))
+                    .header("Authorization", "Bearer $accessToken")
+                    .post(
+                        buildJsonObject {
+                            put("challenge", challenge)
+                            put("signature", signature)
+                        }.toString().toRequestBody(JSON),
+                    ).build(),
+            )
+        return java.time.OffsetDateTime
+            .parse(body.getValue("reattested_until").jsonPrimitive.content)
+            .toInstant()
     }
 
     fun channelUrl(): String =

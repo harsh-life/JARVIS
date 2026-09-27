@@ -207,11 +207,12 @@ async def confirm_task(
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> JSONResponse:
     """02 §5 / PERM-004. Approving a `high_irreversible` action additionally
-    needs a step-up-fresh session (OD-F1 tier 4, SESSION-003); the freshness
-    fact is computed here from the token and enforced by the runtime."""
+    needs step-up (OD-F1 tier 4, SESSION-003): a re-attestation by the
+    device's user-presence-bound key within the window (docs/23 §3). The fact
+    is computed here and enforced by the runtime."""
 
     try:
-        core.sessions.require_step_up(resolved)
+        core.sessions.require_reattestation(resolved)
         step_up_fresh = True
     except StepUpRequired:
         step_up_fresh = False

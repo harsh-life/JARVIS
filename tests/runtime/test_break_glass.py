@@ -310,7 +310,7 @@ async def test_a_record_does_not_skip_activation_confirmation_or_step_up(bg):
         await s.execute(update(AccessToken).where(AccessToken.token_hash == hash_token(alice.token))
                         .values(issued_at=datetime.now(timezone.utc) - timedelta(minutes=30)))
         await s.commit()
-    stale = await h.confirm(alice, task_id, paused["confirmation_token"])
+    stale = await h.confirm(alice, task_id, paused["confirmation_token"], step_up=False)
     assert stale.status_code == 401 and stale.json()["error"]["details"].get("step_up_required") is True
     assert h.break_glass.active()[0].remaining == 3  # nothing was spent
 

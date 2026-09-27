@@ -4,11 +4,13 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.security.KeyFactory
 import java.security.Signature
 import java.security.spec.EdECPrivateKeySpec
 import java.security.spec.NamedParameterSpec
+import java.security.spec.X509EncodedKeySpec
 import java.util.UUID
 
 /**
@@ -69,5 +71,28 @@ class ProofVectorTest {
                 field("public_key_b64").content,
             )
         assertEquals(field("rotation_signature").content, signature)
+    }
+
+    @Test
+    fun `the step-up message matches the server's format and its signature verifies`() {
+        val stepUp = vector.getValue("step_up").jsonObject
+        val message =
+            StepUp.message(
+                deviceId = field("device_id").content,
+                challenge = stepUp.getValue("challenge").jsonPrimitive.content,
+            )
+        assertEquals(stepUp.getValue("message").jsonPrimitive.content, String(message, Charsets.UTF_8))
+        val publicKey =
+            KeyFactory
+                .getInstance("EC")
+                .generatePublic(
+                    X509EncodedKeySpec(DeviceProof.unb64(stepUp.getValue("public_key_spki_b64").jsonPrimitive.content)),
+                )
+        val verifier =
+            Signature.getInstance("SHA256withECDSA").apply {
+                initVerify(publicKey)
+                update(message)
+            }
+        assertTrue(verifier.verify(DeviceProof.unb64(stepUp.getValue("signature_der_b64").jsonPrimitive.content)))
     }
 }

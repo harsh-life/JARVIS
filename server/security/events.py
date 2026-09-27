@@ -32,6 +32,11 @@ class AuditAction(str, Enum):
     # ── device credential lifecycle (03 §4) ─────────────────────────────
     DEVICE_REGISTERED = "device.registered"
     DEVICE_CREDENTIAL_ROTATED = "device.credential.rotated"
+    # docs/23 §3 / 03 §5.5: step-up by a user-presence-bound device key.
+    STEP_UP_KEY_REGISTERED = "device.step_up_key.registered"
+    STEP_UP_KEY_REJECTED = "device.step_up_key.rejected"
+    STEP_UP_ATTESTED = "session.step_up.attested"
+    STEP_UP_ATTESTATION_FAILED = "session.step_up.failed"
     DEVICE_REVOKED = "device.revoked"
     DEVICE_PROOF_REJECTED = "device.proof.rejected"
     DEVICE_CHANNEL_OPENED = "device.channel.opened"

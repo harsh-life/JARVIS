@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request, Response, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.auth.sessions import ResolvedSession
@@ -154,3 +154,86 @@ async def set_active_graph(
         session_id=updated.session_id,
         active_graph_id=body.graph_id,
     )
+
+
+# ── docs/23 §3 / 03 §5.5: step-up by re-attestation ────────────────────
+
+
+class StepUpKeyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # SubjectPublicKeyInfo (DER, base64url) of a P-256 key whose every use
+    # needs the user's biometric or device credential.
+    public_key: str = Field(min_length=1, max_length=512)
+
+
+class StepUpChallengeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    challenge: str
+    expires_at: datetime
+
+
+class StepUpAttestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    challenge: str = Field(min_length=1, max_length=128)
+    signature: str = Field(min_length=1, max_length=256)
+
+
+class StepUpAttestResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reattested_until: datetime
+
+
+async def _own_device(session: AsyncSession, core: SecurityCore, resolved: ResolvedSession):
+    # The device is the one the bearer token was issued to — never one named
+    # in the request (PHONE-003).
+    device = await core.auth_repository.get_device(session, resolved.principal.device_id)
+    if device is None or device.revoked:
+        raise AppError(ErrorCode.NOT_FOUND, "not found")
+    return device
+
+
+@router.post("/devices/me/step-up-key", status_code=status.HTTP_204_NO_CONTENT)
+async def register_step_up_key(
+    body: StepUpKeyRequest,
+    session: AsyncSession = Depends(get_db_session),
+    core: SecurityCore = Depends(get_security_core),
+    resolved: ResolvedSession = Depends(get_resolved_session),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> Response:
+    """Register this device's step-up key: during enrolment (the window right
+    after the interactive login registered the device), or to replace a key
+    after a fresh re-attestation with it."""
+
+    device = await _own_device(session, core, resolved)
+    await core.step_up.register_key(session, device=device, public_key=body.public_key, audit=audit)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/sessions/step-up/challenge", response_model=StepUpChallengeResponse)
+async def step_up_challenge(
+    session: AsyncSession = Depends(get_db_session),
+    core: SecurityCore = Depends(get_security_core),
+    resolved: ResolvedSession = Depends(get_resolved_session),
+) -> StepUpChallengeResponse:
+    device = await _own_device(session, core, resolved)
+    challenge, expires_at = await core.step_up.challenge(session, device=device)
+    return StepUpChallengeResponse(challenge=challenge, expires_at=expires_at)
+
+
+@router.post("/sessions/step-up", response_model=StepUpAttestResponse)
+async def step_up_attest(
+    body: StepUpAttestRequest,
+    session: AsyncSession = Depends(get_db_session),
+    core: SecurityCore = Depends(get_security_core),
+    resolved: ResolvedSession = Depends(get_resolved_session),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> StepUpAttestResponse:
+    device = await _own_device(session, core, resolved)
+    until = await core.step_up.attest(session, device=device, challenge=body.challenge,
+                                      signature=body.signature, audit=audit)
+    return StepUpAttestResponse(reattested_until=until)
+

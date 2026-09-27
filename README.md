@@ -179,7 +179,11 @@ confirmation) and a fresh operation is sent. Shizuku is used on demand for its
 one typed primitive (`force_stop`, a fixed AIDL call — no shell, no argv): bound
 for that call and released after, a lost binding reported as
 `platform_unavailable` with a notification telling the user what to turn on.
-Not yet: the per-app grid UI and confirmation screen.
+Approving a `high_irreversible` action needs step-up by re-attestation: the
+device signs a single-use server challenge with a Keystore key that only
+unlocks after the user's biometric or device credential (registered only at
+enrollment), because a background-refreshed access token proves nobody is
+present. Not yet: the per-app grid UI and confirmation screen.
 
 **Still not built:** the scheduler, the dashboard, voice. Their capabilities (where any exist) are absent from the
 registry or, for Android, dispatch to a transport that refuses every call — the

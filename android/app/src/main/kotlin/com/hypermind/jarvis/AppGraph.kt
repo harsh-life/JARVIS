@@ -8,9 +8,12 @@ import com.hypermind.jarvis.auth.DeviceKey
 import com.hypermind.jarvis.auth.DeviceKeyStore
 import com.hypermind.jarvis.auth.EnrollmentStore
 import com.hypermind.jarvis.auth.KeystoreDeviceKeyStore
+import com.hypermind.jarvis.auth.KeystoreStepUpKeyStore
 import com.hypermind.jarvis.auth.LoginCoordinator
 import com.hypermind.jarvis.auth.Revocation
 import com.hypermind.jarvis.auth.SessionManager
+import com.hypermind.jarvis.auth.StepUpFlow
+import com.hypermind.jarvis.auth.StepUpKeyStore
 import com.hypermind.jarvis.channel.ChannelCredentials
 import com.hypermind.jarvis.channel.DeviceChannel
 import com.hypermind.jarvis.contract.DeviceGuard
@@ -79,7 +82,12 @@ class AppGraph(
 
     val revocation = Revocation(keys, store, sessions)
 
-    val login = LoginCoordinator(store, keys, ::api, sessions)
+    /** docs/23 §3: the user-presence-bound key that step-up re-attestation signs with. */
+    private val stepUpKeys: StepUpKeyStore = KeystoreStepUpKeyStore()
+
+    val stepUp = StepUpFlow(::api, { sessions.accessToken().first }, stepUpKeys) { store.deviceId }
+
+    val login = LoginCoordinator(store, keys, ::api, sessions, enrollStepUp = stepUp::enroll)
 
     /** The user's per-app grid — local, refusal only (docs/23 §5.2). */
     val grid = GridStore(context.getSharedPreferences(GRID_PREFS, Context.MODE_PRIVATE))
@@ -110,6 +118,7 @@ class AppGraph(
     init {
         revocation.onWipe(grid::wipe)
         revocation.onWipe(appPolicy::wipe)
+        revocation.onWipe(stepUpKeys::destroy)
     }
 
     private fun refreshAppPolicy() {

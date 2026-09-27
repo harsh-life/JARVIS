@@ -12,6 +12,8 @@ sealed interface LoginOutcome {
     data class Enrolled(
         val deviceId: UUID,
         val protection: KeyProtection,
+        /** Whether a step-up key could be registered (needs a secure lock screen). */
+        val stepUpReady: Boolean = false,
     ) : LoginOutcome
 
     data class Rejected(
@@ -31,6 +33,8 @@ sealed interface LoginOutcome {
  *    account.
  * 3. A key pair is generated in the Keystore, and only its public half is
  *    registered, with a signature proving possession (03 §4.2).
+ * 4. The step-up key (user-presence-bound) is created and registered, in the
+ *    enrollment window right after this interactive login (docs/23 §3).
  *
  * The device never tells the server who the user is: the account is whatever
  * the server derived from Google's verified identity (PHONE-003).
@@ -42,6 +46,8 @@ class LoginCoordinator(
     private val sessions: SessionManager,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val random: SecureRandom = SecureRandom(),
+    /** docs/23 §3: register the step-up key now — the only window the server allows. */
+    private val enrollStepUp: () -> Boolean = { false },
 ) {
     /** Returns the Google sign-in URL to open in the browser. */
     fun begin(): String {
@@ -77,7 +83,7 @@ class LoginCoordinator(
         store.enrolled(deviceId)
         sessions.forget()
         sessions.accessToken(forceRefresh = true)
-        return LoginOutcome.Enrolled(deviceId, key.protection)
+        return LoginOutcome.Enrolled(deviceId, key.protection, stepUpReady = enrollStepUp())
     }
 
     private fun parseFragment(fragment: String?): Map<String, String>? {
