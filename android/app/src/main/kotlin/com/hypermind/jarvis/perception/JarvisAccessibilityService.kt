@@ -61,13 +61,26 @@ class JarvisAccessibilityService : AccessibilityService() {
         return ForegroundWindow(pkg, window?.second, window?.third, NodeInfoAdapter(root))
     }
 
+    /** What one screenshot attempt produced. */
+    sealed interface Capture {
+        /** A transient bitmap; the caller must recycle it. */
+        class Frame(
+            val bitmap: Bitmap,
+        ) : Capture
+
+        /** The window is FLAG_SECURE: the platform refused, as it should. */
+        data object SecureWindow : Capture
+
+        /** Too old a platform, too soon after the last capture, or an error. */
+        data object Unavailable : Capture
+    }
+
     /**
-     * A transient bitmap of the default display (API 30+), or null — also for
-     * a FLAG_SECURE window, which the platform refuses to capture. The caller
-     * must recycle it.
+     * One screenshot attempt of the default display (API 30+). Never retried
+     * here: a refusal is reported, not worked around.
      */
-    suspend fun capture(): Bitmap? {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+    suspend fun capture(): Capture {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return Capture.Unavailable
         return suspendCancellableCoroutine { cont ->
             try {
                 takeScreenshot(
@@ -86,18 +99,27 @@ class JarvisAccessibilityService : AccessibilityService() {
                                 } finally {
                                     buffer.close()
                                 }
-                            if (cont.isActive) cont.resume(bitmap) else bitmap?.recycle()
+                            val outcome = bitmap?.let { Capture.Frame(it) } ?: Capture.Unavailable
+                            if (cont.isActive) cont.resume(outcome) else bitmap?.recycle()
                         }
 
                         override fun onFailure(errorCode: Int) {
-                            if (cont.isActive) cont.resume(null)
+                            val outcome =
+                                if (errorCode ==
+                                    ERROR_TAKE_SCREENSHOT_SECURE_WINDOW
+                                ) {
+                                    Capture.SecureWindow
+                                } else {
+                                    Capture.Unavailable
+                                }
+                            if (cont.isActive) cont.resume(outcome)
                         }
                     },
                 )
             } catch (ignored: IllegalStateException) {
-                if (cont.isActive) cont.resume(null)
+                if (cont.isActive) cont.resume(Capture.Unavailable)
             } catch (ignored: SecurityException) {
-                if (cont.isActive) cont.resume(null)
+                if (cont.isActive) cont.resume(Capture.Unavailable)
             }
         }
     }

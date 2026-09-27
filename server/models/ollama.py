@@ -23,7 +23,10 @@ class OllamaProvider:
     async def invoke(self, messages: Sequence[ChatMessage], *, timeout: float) -> ModelResult:
         payload = {
             "model": self.spec.model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": [
+                {"role": m.role, "content": m.content, **({"images": [i.base64() for i in m.images]} if m.images else {})}
+                for m in messages
+            ],
             "stream": False,
             "options": dict(self.spec.generation_policy),
         }

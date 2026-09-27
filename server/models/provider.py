@@ -14,6 +14,7 @@ an instruction to follow.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Mapping, Protocol, Sequence
 
@@ -31,9 +32,23 @@ class ModelUnavailable(Exception):
 
 
 @dataclass(frozen=True)
+class ImageInput:
+    """An image attached to a message, for a vision-capable model (docs/23 §6
+    level 4). Held in memory for one call only; its bytes never appear in a
+    repr, a log line or an exception."""
+
+    media_type: str
+    data: bytes = field(repr=False)
+
+    def base64(self) -> str:
+        return base64.b64encode(self.data).decode("ascii")
+
+
+@dataclass(frozen=True)
 class ChatMessage:
     role: str  # "system" | "user" | "assistant"
     content: str
+    images: tuple[ImageInput, ...] = ()
 
 
 @dataclass(frozen=True)

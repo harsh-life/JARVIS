@@ -152,6 +152,15 @@ android:
     non_sensitive: []                  # e.g. [com.android.settings]
     sensitive: []                      # e.g. [com.whatsapp]
     payment: []                        # e.g. [com.google.android.apps.nbu.paisa.user]
+  # docs/23 §6 level 4: the vision-capable model that describes a
+  # capture_screenshot image server-side. null = no vision rung: a screenshot
+  # is dropped unread. The image is never stored, logged or remembered; only
+  # the model's description reaches the agent. A paid provider must be priced.
+  vision: null
+  # vision:
+  #   provider: ollama
+  #   model: llava:7b
+  #   endpoint: "http://127.0.0.1:11434"
 
 security:
   oidc:

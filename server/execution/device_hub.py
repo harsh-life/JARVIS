@@ -269,10 +269,18 @@ def _interpret(operation: DeviceOperation, envelope: DeviceResultEnvelope) -> Ex
         # then rendered as quoted data (device_observations).
         observation = parse_observation(operation, envelope.result, envelope.perception_level)
         if observation.kind is ResultKind.SCREENSHOT:
-            # docs/23 §6 level 4 needs a server-side vision rung; without one
-            # the image is dropped here, unread and unstored.
-            raise ExecutionError(
-                ExecutionErrorCode.PLATFORM_UNSUPPORTED, "no vision model is configured; screenshot discarded"
+            # docs/23 §6 level 4: the image is not text for the worker. It is
+            # handed up, in memory only, to the tool adapter's vision rung
+            # (server/tools/device_vision.py), which describes it and drops it.
+            # Nothing here renders, logs or stores it.
+            return ExecutionResult(
+                content="",
+                metadata={
+                    "primitive": operation.primitive,
+                    "result_kind": observation.kind.value,
+                    "perception_level": None,
+                    "screenshot": observation.value,
+                },
             )
         return ExecutionResult(
             content=render_observation(observation),

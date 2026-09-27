@@ -161,9 +161,14 @@ validated server-side against its primitive's declared shape
 (`server/execution/device_observations.py`, held to
 `shared/android/perception_samples.json` on both sides) and rendered to the
 worker as quoted, labelled untrusted data; none of it is stored or reaches
-memory extraction. Not yet: screenshots and the vision rung, execution
-primitives (tap, swipe, typing, the typed Shizuku call), the per-app grid UI
-and confirmation screen.
+memory extraction. `capture_screenshot` is its own operation (its own grid
+toggle, off by default; refused for any app not classified non-sensitive and
+for FLAG_SECURE windows, one attempt, no retry); the image goes, in memory
+only, to the vision model configured in `android.vision` (none by default —
+the image is then dropped unread), and the agent reads only that model's
+description; the call is budget-checked and metered as a model call. Not yet:
+execution primitives (tap, swipe, typing, the typed Shizuku call), the
+per-app grid UI and confirmation screen.
 
 **Still not built:** the scheduler, the dashboard, voice. Their capabilities (where any exist) are absent from the
 registry or, for Android, dispatch to a transport that refuses every call — the

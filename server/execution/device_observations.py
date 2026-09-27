@@ -36,6 +36,7 @@ from pydantic import BaseModel, ValidationError
 from server.execution.android import DeviceOperation, PrimitiveSpec, primitive_spec
 from shared.schemas.device_channel import (
     ActionResult,
+    AppMetadata,
     BatteryState,
     NotificationList,
     PerceptionLevel,
@@ -232,6 +233,24 @@ def render_observation(observation: DeviceObservation) -> str:
     return "\n".join([OBSERVATION_PREAMBLE, *_render(observation), OBSERVATION_END])
 
 
+# The vision rung's description is model output about untrusted pixels: it is
+# bounded and quoted exactly like text read from the screen.
+MAX_VISION_DESCRIPTION = 4000
+
+
+def render_vision_observation(app: AppMetadata, description: str) -> str:
+    """docs/23 §6 level 4: a server-side model's description of a screenshot."""
+
+    text = description.strip()[:MAX_VISION_DESCRIPTION]
+    return "\n".join([
+        OBSERVATION_PREAMBLE,
+        f"app: {quote(app.package_name)}",
+        "perception: vision (a server-side model's description of a screenshot; the image was not kept)",
+        f"description: {quote(text)}",
+        OBSERVATION_END,
+    ])
+
+
 __all__ = [
     "OBSERVATION_END",
     "OBSERVATION_PREAMBLE",
@@ -240,4 +259,5 @@ __all__ = [
     "parse_observation",
     "quote",
     "render_observation",
+    "render_vision_observation",
 ]

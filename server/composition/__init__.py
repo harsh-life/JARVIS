@@ -44,6 +44,7 @@ from server.modeltools import model_tool_definition
 from server.secrets.requester import SecretRequester
 from server.security.usage import UsageLimits, UsagePolicy
 from server.storage import StorageBackend
+from server.tools.device_vision import ScreenshotVision
 from server.tools.registry import ToolDefinition, ToolRegistry
 from shared.schemas.authorization import ResourceType
 
@@ -107,6 +108,17 @@ def concurrency_from_config(config: AppConfig) -> ConcurrencyLimits:
         per_user=rates.per_user_concurrent_tasks,
         global_=rates.global_concurrent_tasks,
     )
+
+
+def _screenshot_vision(config: AppConfig, factory: ProviderFactory) -> ScreenshotVision | None:
+    """docs/23 §6 level 4: the configured vision model, resolving its own
+    declared `secret_ref` at call time like a model-tool — or none."""
+
+    entry = config.android.vision
+    if not config.android.enabled or entry is None:
+        return None
+    provider = factory(spec_from_entry(entry), key_provider=key_provider_for(entry.secret_ref, SecretRequester.server()))
+    return ScreenshotVision(provider)
 
 
 def build_tool_registry(
@@ -193,7 +205,10 @@ def build_application(
     # gateway's device channel — built only when the operator enabled it.
     device_hub = DeviceHub() if config.android.enabled else None
     tool_definitions = (
-        build_execution_tools(config, break_glass=break_glass, device_transport=device_hub)
+        build_execution_tools(
+            config, break_glass=break_glass, device_transport=device_hub,
+            screenshot_vision=_screenshot_vision(config, factory),
+        )
         if extra_tools is None
         else extra_tools
     )
