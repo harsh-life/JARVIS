@@ -21,6 +21,7 @@ import com.hypermind.jarvis.channel.DeviceChannel
 import com.hypermind.jarvis.contract.DeviceGuard
 import com.hypermind.jarvis.contract.DeviceLocalState
 import com.hypermind.jarvis.contract.MappingState
+import com.hypermind.jarvis.overlay.OverlaySettings
 import com.hypermind.jarvis.perception.AccessibilityScreenCapture
 import com.hypermind.jarvis.perception.BatteryPrimitive
 import com.hypermind.jarvis.perception.DeviceActions
@@ -325,11 +326,15 @@ class AppGraph(
         pushState.value = pushStatus()
     }
 
+    /** The floating status overlay: off until the user turns it on. */
+    val overlaySettings = OverlaySettings(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
+
     /** The user's push-wake choice, reflected in the presentation at once. */
     fun setPushOptedIn(on: Boolean): PushRegistrar.Status = push.setOptedIn(on).also { pushState.value = pushStatus() }
 
     init {
         revocation.onWipe(taskTracker::wipe)
+        revocation.onWipe { overlaySettings.set(false) }
         revocation.onWipe { enrolledState.value = false }
     }
 

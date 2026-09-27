@@ -15,11 +15,17 @@ import android.os.IBinder
 import com.hypermind.jarvis.JarvisApplication
 import com.hypermind.jarvis.MainActivity
 import com.hypermind.jarvis.R
+import com.hypermind.jarvis.overlay.AppForeground
+import com.hypermind.jarvis.overlay.OverlayActions
+import com.hypermind.jarvis.overlay.OverlayController
+import com.hypermind.jarvis.overlay.OverlayPolicy
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
@@ -31,6 +37,8 @@ import kotlinx.coroutines.launch
 class ChannelService : Service() {
     private val scope = CoroutineScope(SupervisorJob())
     private var watcher: Job? = null
+    private var overlayJob: Job? = null
+    private var overlay: OverlayController? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -56,6 +64,56 @@ class ChannelService : Service() {
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(callback)
         networkCallback = callback
         channel.start()
+        attachOverlay()
+    }
+
+    /**
+     * docs/23 §7: the floating status overlay lives with this (already
+     * visible) foreground service — shown only by [OverlayPolicy], and fed
+     * only by the app's one presentation stream.
+     */
+    private fun attachOverlay() {
+        val graph = (application as JarvisApplication).graph
+        val controller =
+            OverlayController(
+                this,
+                object : OverlayActions {
+                    override fun openApp() {
+                        startActivity(
+                            Intent(
+                                this@ChannelService,
+                                MainActivity::class.java,
+                            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+
+                    override fun cancelTask() {
+                        graph.taskTracker.cancel()
+                    }
+
+                    override fun hideOverlay() {
+                        graph.overlaySettings.set(false)
+                    }
+                },
+            )
+        overlay = controller
+        overlayJob =
+            scope.launch(Dispatchers.Main) {
+                combine(
+                    graph.presentation,
+                    graph.overlaySettings.enabled,
+                    AppForeground.visibleCount,
+                ) { state, on, fg ->
+                    val visible =
+                        OverlayPolicy.visible(
+                            enabled = on,
+                            canDraw = OverlayController.canDraw(this@ChannelService),
+                            enrolled = graph.enrolled,
+                            appInForeground = fg > 0,
+                        )
+                    state to visible
+                }.collectLatest { (state, visible) -> controller.render(state, visible) }
+            }
     }
 
     override fun onStartCommand(
@@ -65,6 +123,9 @@ class ChannelService : Service() {
     ): Int = START_NOT_STICKY
 
     override fun onDestroy() {
+        overlayJob?.cancel()
+        overlay?.destroy()
+        overlay = null
         networkCallback?.let { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) }
         (application as JarvisApplication).graph.channel.stop()
         watcher?.cancel()

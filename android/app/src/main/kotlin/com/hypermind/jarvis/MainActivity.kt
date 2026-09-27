@@ -37,6 +37,8 @@ import com.hypermind.jarvis.auth.BiometricPresence
 import com.hypermind.jarvis.channel.ChannelService
 import com.hypermind.jarvis.channel.ChannelState
 import com.hypermind.jarvis.contract.MappingState
+import com.hypermind.jarvis.overlay.AppForeground
+import com.hypermind.jarvis.overlay.OverlayController
 import com.hypermind.jarvis.permissions.GridSync
 import com.hypermind.jarvis.push.PushRegistrar
 import com.hypermind.jarvis.ui.AppGrid
@@ -84,6 +86,17 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // The overlay steps aside while JARVIS's own screen is in front.
+        AppForeground.started()
+    }
+
+    override fun onStop() {
+        AppForeground.stopped()
+        super.onStop()
     }
 
     override fun onResume() {
@@ -190,6 +203,7 @@ class MainActivity : FragmentActivity() {
             )
         }
         if (graph.pushOffered) PushToggle(app)
+        OverlayToggle(app)
         var showGrid by remember { mutableStateOf(false) }
         OutlinedButton(
             onClick = { showGrid = !showGrid },
@@ -249,6 +263,30 @@ class MainActivity : FragmentActivity() {
             })
         }
         note?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+    }
+
+    /**
+     * docs/23 §7: the floating status overlay — off until turned on here, and
+     * shown only once the system's "display over other apps" is granted. It
+     * shows state only and never approves anything.
+     */
+    @Composable
+    private fun OverlayToggle(app: JarvisApplication) {
+        val graph = app.graph
+        val on by graph.overlaySettings.enabled.collectAsState()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Floating status over other apps", style = MaterialTheme.typography.bodyMedium)
+            Switch(checked = on, onCheckedChange = { wanted ->
+                if (wanted && !OverlayController.canDraw(this@MainActivity)) {
+                    startActivity(OverlayController.permissionIntent(this@MainActivity))
+                }
+                graph.overlaySettings.set(wanted)
+            })
+        }
     }
 
     /** The per-app grid (PRD §13): local refusal at once, the server's grants reconciled after. */
