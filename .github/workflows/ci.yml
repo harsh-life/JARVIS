@@ -108,9 +108,10 @@ jobs:
         # execution dimensions integration made measurable (09/10, the process
         # executor) — docs/OD_A1_BR_T2.md §3/§4.
         # The memory rows (docs/21 MP-T12) re-measure with the real Mem0 store present.
+        # The Android rows (docs/23 §9) measure the device client (§3d).
         env:
           HYPERMIND_REQUIRE_MEMORY_STACK: "1"
-        run: python -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py tests/integration/test_br_t2_memory_rows.py -q -s
+        run: python -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py tests/integration/test_br_t2_memory_rows.py tests/integration/test_br_t2_android_rows.py -q -s
 
   android:
     # docs/23 §8: Kotlin lint and unit tests from the first commit. Like the job
