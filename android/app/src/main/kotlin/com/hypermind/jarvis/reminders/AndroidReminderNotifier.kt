@@ -35,7 +35,7 @@ class AndroidReminderNotifier(
             PendingIntent.getActivity(
                 context,
                 request,
-                draftIntent(context, reminder.taskReason),
+                draftIntent(context, reminder.deliveryId),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
         val title = title(reminder)
@@ -108,13 +108,17 @@ class AndroidReminderNotifier(
         const val CHANNEL_ID = "jarvis_reminders"
         private const val NOTIFICATION_ID = 4220
 
-        /** Opens the app with [text] as a draft task — never submitted by itself. */
+        /**
+         * Opens the app with this reminder's words as a draft task — never
+         * submitted by itself. Only the delivery id travels in the intent; the
+         * words are read from [ReminderDrafts], never from the intent.
+         */
         fun draftIntent(
             context: Context,
-            text: String,
+            deliveryId: String,
         ): Intent =
             Intent(context, MainActivity::class.java)
                 .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(MainActivity.EXTRA_TASK_DRAFT, text)
+                .putExtra(MainActivity.EXTRA_REMINDER_DELIVERY, deliveryId)
     }
 }

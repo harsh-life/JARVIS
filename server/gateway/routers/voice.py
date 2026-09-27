@@ -80,4 +80,4 @@ async def synthesize(
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> Response:
     audio, media_type = await _voice(request).synthesize(session, principal=principal, request=body, audit=audit)
-    return Response(content=audio, media_type=media_type, headers={"Cache-Control": "no-store"})
+    return Response(content=audio, media_type=media_type, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})

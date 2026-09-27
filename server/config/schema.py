@@ -321,6 +321,16 @@ def _voice_endpoint(value: str) -> str:
         raise ValueError("voice provider endpoint must be https://…, or http:// only on loopback")
     if parts.username or parts.password or parts.query or parts.fragment:
         raise ValueError("voice provider endpoint must be a plain URL (no credentials, query or fragment)")
+    import ipaddress
+
+    try:
+        address = ipaddress.ip_address(parts.hostname)
+    except ValueError:
+        address = None
+    # Cloud-metadata and other non-routable targets are never a voice provider
+    # (10 §4); a self-hosted provider on the LAN or loopback is allowed.
+    if address is not None and (address.is_link_local or address.is_multicast or address.is_unspecified):
+        raise ValueError("voice provider endpoint may not be a link-local, multicast or unspecified address")
     return value.rstrip("/")
 
 

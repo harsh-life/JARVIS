@@ -185,3 +185,40 @@ async def test_the_adapter_reports_an_empty_speech_response():
 
 def test_provider_stub_is_what_the_suite_uses():
     assert ProviderStub().transport is not None
+
+
+# ── security-review hardening ────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("endpoint", ["https://169.254.169.254/v1", "https://[fe80::1]/v1", "https://0.0.0.0/v1",
+                                      "https://224.0.0.1/v1"])
+def test_a_provider_endpoint_cannot_be_a_metadata_or_non_routable_address(endpoint):
+    from pydantic import ValidationError
+
+    from server.config.schema import VoiceConfig
+
+    with pytest.raises(ValidationError):
+        VoiceConfig.model_validate({"providers": [{"id": "x", "endpoint": endpoint, "stt_model": "w", "pricing": {}}]})
+
+
+async def test_a_providers_echoed_language_is_returned_only_if_it_is_a_language_tag(make_harness, provider):
+    original = provider.handler
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = original(request)
+        body = response.json()
+        body["language"] = "<script>alert(1)</script>" + "x" * 5000
+        return httpx.Response(200, json=body)
+
+    h = await make_harness(config=server_voice(), transport=httpx.MockTransport(handler))
+    alice = await h.user("alice")
+    body = (await h.client.post(f"{VOICE}/transcribe", params={"language": "en"}, content=WAV,
+                                headers=audio_headers(alice))).json()
+    assert body["language"] == "en"
+
+
+async def test_synthesized_audio_is_never_content_sniffed(make_harness, provider):
+    h = await make_harness(config=server_voice(), transport=provider.transport)
+    alice = await h.user("alice")
+    resp = await h.client.post(f"{VOICE}/synthesize", json={"text": "hi"}, headers=alice.auth)
+    assert resp.headers["x-content-type-options"] == "nosniff"

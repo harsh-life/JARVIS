@@ -139,9 +139,20 @@ class MainActivity : FragmentActivity() {
         takeDraft(intent)
     }
 
-    /** docs/22 §2: "start task" on a reminder pre-fills the task box — nothing is sent. */
+    /**
+     * docs/22 §2: "start task" on a reminder pre-fills the task box — nothing is
+     * sent. The intent names only a delivery id; the words come from this app's
+     * own record of reminders it received, so another app launching this
+     * (exported) activity cannot put its text in the box.
+     */
     private fun takeDraft(intent: Intent?) {
-        val text = intent?.getStringExtra(EXTRA_TASK_DRAFT)?.take(MAX_DRAFT_CHARS) ?: return
+        val deliveryId = intent?.getStringExtra(EXTRA_REMINDER_DELIVERY) ?: return
+        val app = application as JarvisApplication
+        if (app.mapping !is MappingState.Valid) return
+        val text =
+            app.graph.reminderDrafts
+                .lookup(deliveryId)
+                ?.take(MAX_DRAFT_CHARS) ?: return
         if (text.isBlank()) return
         draft.value = text
         notice.value = getString(R.string.reminder_draft_notice)
@@ -384,7 +395,7 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         const val EXTRA_NOTICE = "notice"
-        const val EXTRA_TASK_DRAFT = "task_draft"
+        const val EXTRA_REMINDER_DELIVERY = "reminder_delivery"
         private const val MAX_DRAFT_CHARS = 8000
     }
 }

@@ -143,7 +143,7 @@ class VoiceService:
         return VoiceTranscription(
             voice_event_id=event_id, session_id=principal.session_id, transcript=text[:limit],
             audio_retained=False, timestamp=self._clock(), confidence=transcript.confidence,
-            language=transcript.language or language, truncated=truncated,
+            language=_safe_language(transcript.language) or language, truncated=truncated,
         )
 
     # ── TTS ─────────────────────────────────────────────────────────────
@@ -203,6 +203,13 @@ class VoiceService:
             result=AuditResult.BLOCKED, user_id=principal.user_id, device_id=principal.device_id,
             session_id=principal.session_id,
         )
+
+
+def _safe_language(value: str | None) -> str | None:
+    """A provider's echoed language, only if it is a plain language tag —
+    never arbitrary provider text returned to the client."""
+
+    return value if isinstance(value, str) and _LANGUAGE.match(value) else None
 
 
 def _price(pricing: VoicePricingConfig | None, field: str, amount: float) -> float:

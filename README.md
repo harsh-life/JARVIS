@@ -214,9 +214,24 @@ never executes.*
 - **Boundaries**: two import contracts keep `server/scheduler` away from the
   runtime, tools, devices, authority, secrets, memory and the Judge.
 
-**Still not built:** the dashboard, voice. Their capabilities (where any exist)
-are absent from the registry — the runtime and execution layer both refuse
-rather than run unbounded, not silently degrade.
+**Voice build** — STT / TTS / speaker context (`docs/27_VOICE.md`, operator guide
+`docs/RUNNING_VOICE.md`). *A voice is an input method, not an identity; voice is
+detachable.*
+
+- **On the device by default**: the phone's on-device recognizer (no network
+  fallback) and system TTS. Raw audio never leaves the phone. Push-to-talk
+  fills the task box, and the user sends it as an ordinary task.
+- **Voice cannot confirm or step up**: a spoken "yes" never approves anything.
+  `SpeakerContext` can never be an authorization signal, whatever pydantic
+  path is used.
+- **Optional server providers** behind `/api/v1/voice/*` (declared egress, key
+  by reference, metered). Audio is held in request memory only and never
+  stored.
+- **Detachable**: every setting `null` → Track B unchanged (VOI-T1).
+
+**Still not built:** the dashboard. Its capabilities (where any exist) are
+absent from the registry — the runtime and execution layer both refuse rather
+than run unbounded, not silently degrade.
 
 ### Before putting real data anywhere near this
 

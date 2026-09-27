@@ -45,8 +45,10 @@ import com.hypermind.jarvis.push.PushRegistrar
 import com.hypermind.jarvis.push.PushSettings
 import com.hypermind.jarvis.push.WakeHandler
 import com.hypermind.jarvis.reminders.AndroidReminderNotifier
+import com.hypermind.jarvis.reminders.ReminderDrafts
 import com.hypermind.jarvis.reminders.ReminderInbox
 import com.hypermind.jarvis.reminders.ReminderNotifier
+import com.hypermind.jarvis.reminders.SharedPrefsReminderDrafts
 import com.hypermind.jarvis.tasks.TaskController
 import com.hypermind.jarvis.voice.VoiceSettings
 import kotlinx.coroutines.CoroutineScope
@@ -167,7 +169,11 @@ class AppGraph(
     val voiceSettings = VoiceSettings(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
 
     /** docs/22: reminders shown as notifications — messages, never operations. */
-    val reminders = ReminderInbox(deviceId = { store.deviceId?.toString() }, notifier = reminderNotifier)
+    val reminderDrafts: ReminderDrafts =
+        SharedPrefsReminderDrafts(context.getSharedPreferences(REMINDER_PREFS, Context.MODE_PRIVATE))
+
+    val reminders =
+        ReminderInbox(deviceId = { store.deviceId?.toString() }, notifier = reminderNotifier, drafts = reminderDrafts)
 
     val channel: DeviceChannel =
         DeviceChannel(
@@ -202,6 +208,7 @@ class AppGraph(
 
     init {
         channel.onReminder = reminders::receive
+        revocation.onWipe(reminderDrafts::wipe)
     }
 
     // ── docs/23 §4 push wake: optional, off by default ──────────────────
@@ -278,6 +285,7 @@ class AppGraph(
     private companion object {
         const val PREFS = "jarvis"
         const val GRID_PREFS = "jarvis_grid"
+        const val REMINDER_PREFS = "jarvis_reminders"
         const val PUSH_PREFS = "jarvis_push"
 
         /**
