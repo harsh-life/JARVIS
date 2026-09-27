@@ -400,3 +400,65 @@ async def test_judge_authority_responses_change_nothing(judged, answer):
     assert h.ui.calls == []
     rows = await h.rows(TaskEvaluation)
     assert rows and all(r.stop_honoured is False for r in rows)
+
+
+# ── the Judge's own key: its own context, its own class, audited ───────────
+
+
+async def test_the_judge_resolves_only_a_model_key_in_its_own_context(judged):
+    """The Judge's worker runs in a fresh context, so no request's secret
+    resolver is visible to it; its own resolver hands out only `model_api_key`
+    handles, and each resolution is audited with the evaluation."""
+
+    import uuid as _uuid
+
+    from server.composition.secret_context import CURRENT_SECRET_RESOLVER, key_provider_for
+    from server.secrets.requester import SecretRequester
+    from server.security.audit import AuditLogger
+    from shared.schemas.enums import SecretClass, SecretOwnerScopeType
+    from shared.schemas.evaluation import Evaluation
+
+    h, _ = await judged()
+
+    async def store(value: str, cls: SecretClass) -> str:
+        async with h.storage.session() as s:
+            ref = await h.core.secret_store.set(
+                s, owner_scope_type=SecretOwnerScopeType.SERVER, owner_scope_id=None, secret_class=cls,
+                value=value, requester=SecretRequester.server(), audit=AuditLogger(s, request_id=_uuid.uuid4()))
+            await s.commit()
+            return ref
+
+    model_key = await store("judge-model-key-value-0001", SecretClass.MODEL_API_KEY)
+    oauth = await store("an-oauth-token-value-0002", SecretClass.OAUTH_TOKEN)
+    seen: dict[str, object] = {}
+
+    class KeyedJudge:
+        id, version = "keyed_judge", "1"
+
+        async def health(self):
+            return True
+
+        async def evaluate(self, trace, kind):
+            seen["resolver_in_job"] = CURRENT_SECRET_RESOLVER.get() is not None
+            seen["model_key"] = await key_provider_for(f"secretstore:{model_key}", SecretRequester.server())()
+            try:
+                await key_provider_for(f"secretstore:{oauth}", SecretRequester.server())()
+                seen["oauth"] = "resolved"
+            except Exception as exc:  # noqa: BLE001
+                seen["oauth"] = type(exc).__name__
+            return Evaluation(task_id=trace.task_id, evaluator_id=self.id, evaluator_version="1", kind=kind)
+
+    h.app.state.evaluation.service._provider = KeyedJudge()
+    alice = await h.user("alice")
+    await completed_task(h, alice, final("ok"))
+    await drain(h)
+
+    assert seen == {"resolver_in_job": True, "model_key": "judge-model-key-value-0001",
+                    "oauth": "SecretUnavailable"}
+    [row] = await evaluations(h)
+    assert row.outcome == "recorded"
+    gets = await audit(h, AuditAction.SECRET_RESOLVED)
+    judged_gets = [g for g in gets if g.request_id == row.evaluation_id]
+    assert {g.result.value for g in judged_gets} == {"success", "blocked"}
+    blob = " ".join(g.resource for g in gets)
+    assert "judge-model-key-value-0001" not in blob and "an-oauth-token-value-0002" not in blob

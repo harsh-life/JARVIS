@@ -19,7 +19,7 @@ HUMAN CONFIRMS WHERE REQUIRED
 
 Model output is never the security boundary.
 
-## Current state: the memory build
+## Current state: through Stage 5 (Judge + operator console)
 
 Five branches, the runtime foundation (U0–U6), and the memory build are in:
 
@@ -234,9 +234,40 @@ detachable.*
   stored.
 - **Detachable**: every setting `null` → Track B unchanged (VOI-T1).
 
-**Still not built:** the dashboard. Its capabilities (where any exist) are
-absent from the registry — the runtime and execution layer both refuse rather
-than run unbounded, not silently degrade.
+**Judge build** — evaluation and human-approved improvement (`docs/19_JUDGE_EVALUATION.md`,
+operator guide `docs/RUNNING_EVALUATION.md`). *The Judge observes and scores. It
+never authorizes, never executes, and never kills on its own authority.*
+
+- **Optional, off by default** (`evaluation.enabled`): Track B is unchanged
+  without it. The runtime never imports it — it notifies an observer port, never
+  waits, and never reads anything back.
+- **One task, one user, redacted**: the trace is the worker's own proposals, the
+  observations it was fed, and the task's audited events (with each
+  authorization's tier) — secret patterns redacted and audited before any call.
+- **Strict output**: a typed `Evaluation` with no field that could carry
+  authority; malformed output (including "approve"/"resume"/"authorize") is
+  rejected and recorded, never coerced. Scores are records, never controls.
+- **Stop only through the breaker**: a live `stop_requested` becomes a breaker
+  `trip()` only with `may_request_stop` (off by default); the breaker enforces.
+- **Metered on its own budget**: never charged to the task or to the user's own
+  budget or rates (OD-JDG-2 open on the global budget).
+- **Improvement under human oversight**: candidates only for a closed set of
+  targets (worker guidance, tool descriptions, recovery bounds, rubric,
+  suggestion template); security policy is refused at creation; nothing applies
+  until a superuser approves; every change is a versioned, rollback-able row.
+
+**Operator console** — `GET /api/v1/admin/*` (`docs/28_DASHBOARD_OPERATOR_CONSOLE.md`,
+operator guide `docs/RUNNING_CONSOLE.md`). *The dashboard shows. Controls live
+elsewhere.* Superuser only; ten read-only views (health, tasks, recovery &
+breaker, break-glass, evaluations, usage, memory & vault, devices, audit,
+configuration) with a persistent banner while break-glass is enabled or a global
+stop is latched. Secret-free (handles plus whether they resolve) and
+PII-redacted server-side; unredacted content is a separate, audited request.
+Actions stay in `/api/v1/admin/control/*`, owned by the supervisor, break-glass
+and the Judge's control layer. No browser UI ships (OD-DASH-2).
+
+The owner decisions these builds leave open — OD-JDG-1..4, OD-DASH-1/2 — are
+listed in `docs/DECISION_REGISTER.md` §2F/§3; none is ratified by being built.
 
 ### Before putting real data anywhere near this
 
@@ -261,7 +292,8 @@ shared/    schemas/  — canonical Pydantic data contracts, importable by both
                         vectors, the proof vectors and the perception samples
                         both sides read
 tests/     pytest suite (tests/foundation/, tests/security_core/, tests/runtime/,
-                          tests/execution/, tests/integration/, tests/memory/)
+                          tests/execution/, tests/integration/, tests/memory/,
+                          tests/scheduler/, tests/voice/, tests/evaluation/, tests/dashboard/)
 docs/      RUNNING_*.md, OD_A1_BR_T2.md, CAPABILITY_MATRIX.md, DECISION_REGISTER.md
 Working Markdown/   the architecture/PRD document package (source of truth)
 ```

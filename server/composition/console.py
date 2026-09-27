@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from typing import Any
 
 from server.agent import AgentRuntime
 from server.composition.break_glass import BreakGlassRegistry
@@ -97,9 +98,9 @@ class Probes:
         self._switchboard = switchboard
         self._jobs = jobs
 
-    def _model_entries(self) -> list[tuple[str, object]]:
+    def _model_entries(self) -> list[tuple[str, Any]]:
         config = self._config
-        entries: list[tuple[str, object]] = [("agent.primary", config.agent)]
+        entries: list[tuple[str, Any]] = [("agent.primary", config.agent)]
         if config.agent.fallback is not None:
             entries.append(("agent.fallback", config.agent.fallback))
         if config.agent.recovery is not None:
@@ -128,7 +129,7 @@ class Probes:
                 "local": entry.provider == "ollama",
                 "status": await self._probe(entry) if probe_models else "not_probed",
             })
-        memory = {"status": "disabled"}
+        memory: dict[str, Any] = {"status": "disabled"}
         if self._memory is not None:
             try:
                 status = await self._memory.status()
@@ -182,7 +183,7 @@ class Probes:
 
     def judge_state(self) -> dict:
         view = self._switchboard.view()
-        state = {
+        state: dict[str, Any] = {
             "configured_enabled": view.configured_enabled,
             "configured_may_request_stop": view.configured_may_request_stop,
             "judge_enabled": view.judge_enabled,

@@ -41,7 +41,7 @@ def verdict(**fields: Any) -> str:
 
 
 @pytest_asyncio.fixture
-async def judged(make_harness, monkeypatch):
+async def judged(make_harness, monkeypatch):  # noqa: F811 — the re-exported fixture
     """`await judged(config_overrides...)` → (harness, judge model)."""
 
     monkeypatch.setenv(SUPERUSER_TOKEN_ENV, TOKEN)
