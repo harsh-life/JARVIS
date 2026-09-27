@@ -12,10 +12,12 @@ is sent. A wait that runs out fails the task explicitly.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from server.security.audit import AuditLogger
+from server.storage.models import AgentTask
 from shared.schemas.agent import ToolInvocation, ToolOutput
 from tests.runtime.conftest import android_ui_tool, ask, call, final, pending_of
 
@@ -159,3 +161,65 @@ async def test_a_restart_fails_a_waiting_task_closed(make_harness):
     assert uuid.UUID(task_id) in closed
     assert (await h.get(alice, task_id)).json()["failure"]["code"] == "platform_unavailable"
     assert len(device.calls) == 1
+
+
+# ── Phase H: the wait under adversarial timing (docs/23 §5.3) ──────────────
+
+
+async def test_repeated_availability_reports_resume_the_call_exactly_once(make_harness):
+    """A flapping Shizuku binding (or a duplicated report) must not send the
+    waited-for call twice: the first report claims the wait, every other one
+    finds nothing to resume."""
+
+    h, alice, device, _ = await _setup(make_harness, UNAVAILABLE)
+    h.model.push(ask("app.interact", scope=SCOPE), _read(), final("The total is 42."))
+    assert (await h.submit(alice)).json()["status"] == "waiting_for_platform"
+
+    batches = await asyncio.gather(*(_resume(h, alice.device_id) for _ in range(5)))
+    resumed = [result for batch in batches for result in batch]
+    assert len(resumed) == 1 and resumed[0].status.value == "completed"
+    assert len(device.calls) == 2  # the refused call, then exactly one fresh operation
+    assert await _resume(h, alice.device_id) == []
+
+
+async def test_a_device_revoked_during_the_wait_can_never_resume_the_call(make_harness):
+    """Revocation is immediate (SESSION-002): the waited-for call belongs to
+    that device's session, so an availability report naming the revoked
+    device resumes nothing that could run — the task fails closed and no
+    operation is sent."""
+
+    h, alice, device, _ = await _setup(make_harness, UNAVAILABLE)
+    h.model.push(ask("app.interact", scope=SCOPE), _read(), final("unused"))
+    task_id = (await h.submit(alice)).json()["task_id"]
+    revoked = await h.client.delete(f"/api/v1/devices/{alice.device_id}", headers=alice.auth)
+    assert revoked.status_code == 204, revoked.text
+
+    [result] = await _resume(h, alice.device_id)
+    assert result.status.value == "failed"
+    assert result.failure is not None and result.failure.code.value == "principal_revoked"
+    assert len(device.calls) == 1
+    assert await _resume(h, alice.device_id) == []
+    [row] = await h.rows(AgentTask)
+    assert str(row.task_id) == task_id and row.status == "failed"
+
+
+async def test_an_approval_spent_before_the_wait_is_refused_after_it(make_harness):
+    """The approval given before the wait authorized one operation that never
+    ran. Presented again after the wait it is refused — only the new, freshly
+    bound confirmation can approve the re-proposed call."""
+
+    h, alice, device, _ = await _setup(make_harness, UNAVAILABLE)
+    h.model.push(ask("app.interact", scope=SCOPE),
+                 call("ui.app", "input_text", args={"text": "milk"}, platform="android"), final("Typed."))
+    first = pending_of(await h.submit(alice))
+    assert (await h.confirm(alice, first["task_id"], first["confirmation_token"])).json()["status"] \
+        == "waiting_for_platform"
+    [result] = await _resume(h, alice.device_id)
+    assert result.status.value == "awaiting_confirmation"
+
+    replay = await h.confirm(alice, first["task_id"], first["confirmation_token"])
+    assert replay.status_code == 409 and replay.json()["error"]["code"] == "conflict", replay.text
+    assert len(device.calls) == 1  # nothing ran on the stale approval
+    done = await h.confirm(alice, first["task_id"], result.pending.confirmation_token)
+    assert done.json()["status"] == "completed"
+    assert len(device.calls) == 2
