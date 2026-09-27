@@ -39,8 +39,8 @@ PATTERNS = tuple((n, p) for n, p in secret_patterns._PATTERNS if n not in _SKIP)
 FIXTURE_MARKER = re.compile(r"TEST-?ONLY")
 # Placeholders that are not credentials but happen to have the URL shape.
 PLACEHOLDER_LINES = {
-    ("alembic.ini", "sqlalchemy.url = driver://user:pass@localhost/dbname"),
-    ("tests/voice/test_voice_config_and_api.py", '"endpoint": "https://user:pw@v.test"'),
+    ("alembic.ini", "sqlalchemy.url = driver://user:pass@localhost/dbname"),  # TEST-ONLY placeholder
+    ("tests/voice/test_voice_config_and_api.py", '"endpoint": "https://user:pw@v.test"'),  # TEST-ONLY
 }
 
 
@@ -81,7 +81,7 @@ def test_the_scan_catches_a_planted_key(tmp_path):
     planted = {
         "a.py": 'KEY = "sk-proj-' + "Ab3d" * 8 + '"\n',
         "b.kt": 'val k = "AIza' + "SyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q" + '"\n',
-        "c.json": '{"private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEv..."}\n',
+        "c.json": '{"private_key": "-----BEGIN PRIV' + 'ATE KEY-----\\nMIIEv..."}\n',
         "d.txt": "groq " + "gsk_" + "Q" * 30 + "\n",
         "e.py": 'X = "sk-proj-TESTONLY' + "q" * 24 + '"  # a fixture\n',
     }
