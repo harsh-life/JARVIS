@@ -16,6 +16,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import okhttp3.Call
+import okhttp3.EventListener
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -287,19 +289,52 @@ class ApiClient(
 
     // ── agent tasks (02 §5) — responses parsed strictly by TaskView ──────
 
-    /** Submit a task. A fresh Idempotency-Key per submission (02 §1.4). */
+    /**
+     * Submit a task. One Idempotency-Key per submission (02 §1.4): sending the
+     * same key again (a retry after no answer) returns the original result and
+     * never runs the task twice. [onSent] fires once the request is on the
+     * wire, so the UI can tell "sending" from "the server is working".
+     */
     fun submitTask(
         accessToken: String,
         input: String,
         idempotencyKey: String = UUID.randomUUID().toString(),
-    ): TaskView =
-        raw(
+        onSent: () -> Unit = {},
+    ): TaskView {
+        val client =
+            http
+                .newBuilder()
+                .eventListener(
+                    object : EventListener() {
+                        override fun requestBodyEnd(
+                            call: Call,
+                            byteCount: Long,
+                        ) = onSent()
+                    },
+                ).build()
+        return raw(
             Request
                 .Builder()
                 .url(api("agent/tasks"))
                 .header("Authorization", "Bearer $accessToken")
                 .header("Idempotency-Key", idempotencyKey)
                 .post(buildJsonObject { put("input", input) }.toString().toRequestBody(JSON))
+                .build(),
+            client,
+        )
+    }
+
+    /** Cancel a live task (02 §5). The server decides; the answer is its canonical result. */
+    fun cancelTask(
+        accessToken: String,
+        taskId: String,
+    ): TaskView =
+        raw(
+            Request
+                .Builder()
+                .url(api("agent/tasks/$taskId/cancel"))
+                .header("Authorization", "Bearer $accessToken")
+                .post(ByteArray(0).toRequestBody(JSON))
                 .build(),
         )
 
@@ -336,8 +371,11 @@ class ApiClient(
                 ).build(),
         )
 
-    private fun raw(request: Request): TaskView =
-        http.newCall(request).execute().use { response ->
+    private fun raw(
+        request: Request,
+        client: OkHttpClient = http,
+    ): TaskView =
+        client.newCall(request).execute().use { response ->
             TaskView.parse(response.code, response.body?.string().orEmpty())
         }
 

@@ -114,6 +114,21 @@ class ScreenPerceptionTest {
         }
 
     @Test
+    fun `the rung being climbed is reported for the status display, and nothing else`() =
+        runBlocking {
+            val rungs = mutableListOf<PerceptionLevel>()
+            val ocr = CountingOcr(listOf(OcrText("Balance 42", listOf(0, 0, 500, 50))))
+            val unreadable = layout(FakeNode(className = "android.widget.EditText", password = true))
+            ScreenPerception(FakeScreen(window(unreadable)), ocr, onRung = { rungs += it })
+                .readTree(envelope(), readTreeSpec)
+            assertEquals(listOf(PerceptionLevel.ACCESSIBILITY, PerceptionLevel.OCR), rungs)
+            rungs.clear()
+            ScreenPerception(FakeScreen(window(layout(FakeNode(text = "Header")))), ocr, onRung = { rungs += it })
+                .readTree(envelope(), readTreeSpec)
+            assertEquals(listOf(PerceptionLevel.ACCESSIBILITY), rungs)
+        }
+
+    @Test
     fun `with nothing readable and no OCR only app metadata is returned`() =
         runBlocking {
             val out =

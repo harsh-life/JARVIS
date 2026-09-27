@@ -21,9 +21,14 @@ sealed interface TaskSnapshot {
     /** The server has the task and is working on it (the answer has not come back yet). */
     data object InFlight : TaskSnapshot
 
-    /** The server's latest answer about this task. */
+    /**
+     * The server's latest answer about this task. [unreachable]: the last
+     * attempt to reach the server about it (a refresh, an approval, a cancel)
+     * got no answer, so this may be out of date.
+     */
     data class Known(
         val view: TaskView,
+        val unreachable: Boolean = false,
     ) : TaskSnapshot
 
     /** No answer: the server could not be reached. The same submission may be sent again. */

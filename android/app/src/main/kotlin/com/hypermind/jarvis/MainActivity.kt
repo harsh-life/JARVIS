@@ -86,6 +86,12 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Inputs without callbacks (platform availability, enrollment, push) are re-read on return.
+        (application as JarvisApplication).graph.refreshPresentation()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         notice.value = intent.getStringExtra(EXTRA_NOTICE)
@@ -232,7 +238,7 @@ class MainActivity : FragmentActivity() {
             Switch(checked = on, onCheckedChange = { wanted ->
                 on = wanted
                 scope.launch {
-                    val status = withContext(Dispatchers.IO) { graph.push.setOptedIn(wanted) }
+                    val status = withContext(Dispatchers.IO) { graph.setPushOptedIn(wanted) }
                     note =
                         when (status) {
                             is PushRegistrar.Status.Unavailable -> "Push is not available on this phone."

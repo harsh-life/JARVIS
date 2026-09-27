@@ -59,7 +59,14 @@ object Presenter {
                 )
             is TaskSnapshot.StepUpBlocked ->
                 confirmation(task.pending, context).copy(error = PresentationError(stepUpError(task.result)))
-            is TaskSnapshot.Known -> known(task.view, context, inputs.platforms)
+            is TaskSnapshot.Known ->
+                known(task.view, context, inputs.platforms).let { state ->
+                    if (task.unreachable && state.error == null) {
+                        state.copy(error = PresentationError(ErrorKind.SERVER_UNREACHABLE))
+                    } else {
+                        state
+                    }
+                }
         }
     }
 

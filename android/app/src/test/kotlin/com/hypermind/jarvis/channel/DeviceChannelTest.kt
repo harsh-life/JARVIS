@@ -453,4 +453,48 @@ class DeviceChannelTest {
         Thread.sleep(300)
         assertEquals(1, server.requestCount)
     }
+
+    // ── docs/23 §7: what the phone is running, for the status display ──
+
+    @Test
+    fun `running operations are published by kind while they run, and cleared when they end`() {
+        acceptConnections(1)
+        val release = CompletableDeferred<Unit>()
+        val channel =
+            channel { envelope: OperationEnvelope ->
+                release.await()
+                ResultEnvelope.ok(envelope.opId, JsonObject(emptyMap()))
+            }.also { it.start() }
+        val side = connections.take()
+        connected(channel, side)
+        assertTrue(channel.operations.value.isEmpty())
+        side.socket.send(operation(opId = "op-7", taskId = "task-7"))
+        waitFor { channel.operations.value.isNotEmpty() }
+        val running = channel.operations.value.single()
+        assertEquals(RunningOperation("task-7", "device.read", "read_battery", "android.api.battery_state"), running)
+        release.complete(Unit)
+        side.next()
+        waitFor { channel.operations.value.isEmpty() }
+        channel.stop()
+    }
+
+    @Test
+    fun `a cancelled or orphaned operation stops showing as running`() {
+        acceptConnections(2)
+        val channel =
+            channel { _ ->
+                awaitCancellation()
+            }.also { it.start() }
+        val side = connections.take()
+        connected(channel, side)
+        side.socket.send(operation(opId = "op-8", taskId = "task-8"))
+        waitFor { channel.operations.value.isNotEmpty() }
+        side.socket.send("""{"type":"cancel","op_id":"op-8"}""")
+        waitFor { channel.operations.value.isEmpty() }
+        side.socket.send(operation(opId = "op-9", taskId = "task-9"))
+        waitFor { channel.operations.value.isNotEmpty() }
+        side.socket.close(1001, "going away")
+        waitFor { channel.operations.value.isEmpty() }
+        channel.stop()
+    }
 }

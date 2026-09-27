@@ -86,6 +86,16 @@ class DeviceChannel(
     private var reconnectJob: Job? = null
     private var reauthJob: Job? = null
     private val inFlight = mutableMapOf<String, Pair<String, Job>>() // opId → (taskId, job)
+    private val runningKinds = mutableMapOf<String, RunningOperation>()
+    private val _operations = MutableStateFlow<List<RunningOperation>>(emptyList())
+
+    /** What this phone is running right now — kinds only, for the status display (docs/23 §7). */
+    val operations: StateFlow<List<RunningOperation>> = _operations.asStateFlow()
+
+    private fun publishRunning() {
+        runningKinds.keys.retainAll(inFlight.keys)
+        _operations.value = runningKinds.values.toList()
+    }
 
     @Synchronized
     fun start() {
@@ -259,9 +269,13 @@ class DeviceChannel(
                     if (inFlight.remove(envelope.opId) != null && webSocket === socket) {
                         webSocket.send(result.encode())
                     }
+                    publishRunning()
                 }
             }
         inFlight[envelope.opId] = envelope.taskId to job
+        runningKinds[envelope.opId] =
+            RunningOperation(envelope.taskId, envelope.capability, envelope.operation, envelope.primitive)
+        publishRunning()
         job.start()
     }
 
@@ -276,11 +290,13 @@ class DeviceChannel(
             inFlight.remove(id)
             entry.second.cancel()
         }
+        publishRunning()
     }
 
     private fun cancelAllOperations() {
         inFlight.values.forEach { it.second.cancel() }
         inFlight.clear()
+        publishRunning()
     }
 
     @Synchronized

@@ -53,3 +53,11 @@ enum class ReconnectCause {
     SERVER_UNREACHABLE,
     NOT_CONFIGURED,
 }
+
+/** One operation running on this phone: its kind, never its arguments or result. */
+data class RunningOperation(
+    val taskId: String,
+    val capability: String,
+    val operation: String,
+    val primitive: String,
+)
