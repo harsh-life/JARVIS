@@ -94,11 +94,12 @@ class ReminderChannel(Protocol):
 
 
 class WakeSender(Protocol):
-    """Asks a sleeping device to reconnect (docs/23 §4). It is given a device id
-    and nothing else, so no reminder content can reach a third-party push
-    service; the payload it may send is `DeviceWakePush` — `{"type":"wake"}`."""
+    """Asks a sleeping device to reconnect (docs/23 §4). It is given the device
+    and its owner (so the waker can refuse any other user's device) and nothing
+    else, so no reminder content can reach a third-party push service; the
+    payload it may send is `DeviceWakePush` — `{"type":"wake"}`."""
 
-    async def wake(self, *, device_id: uuid.UUID) -> None: ...
+    async def wake(self, *, device_id: uuid.UUID, user_id: uuid.UUID) -> None: ...
 
 
 class NoChannel:
@@ -109,9 +110,10 @@ class NoChannel:
 
 
 class NoWake:
-    """OD-AND-5 (push provider) is open: nothing is sent to any third party."""
+    """No push wake configured (`android.push.provider: none`): nothing is sent
+    to any third party."""
 
-    async def wake(self, *, device_id: uuid.UUID) -> None:
+    async def wake(self, *, device_id: uuid.UUID, user_id: uuid.UUID) -> None:
         return None
 
 
@@ -125,7 +127,7 @@ class PayloadWake:
     def __init__(self, send: Callable[[uuid.UUID, str], "object"]) -> None:
         self._send = send
 
-    async def wake(self, *, device_id: uuid.UUID) -> None:
+    async def wake(self, *, device_id: uuid.UUID, user_id: uuid.UUID) -> None:
         result = self._send(device_id, self.PAYLOAD)
         if asyncio.iscoroutine(result):
             await result
@@ -419,10 +421,10 @@ class ReminderFirer:
                 await self._audit(audit, job, AuditAction.SCHEDULER_REMINDER_QUEUED, AuditResult.SUCCESS,
                                   f"reminder:{delivery.delivery_id}", delivery.device_id)
             await session.commit()
-            device_id = delivery.device_id
+            device_id, owner = delivery.device_id, delivery.user_id
         if not pushed and wake_if_offline:
             try:
-                await self.wake_sender.wake(device_id=device_id)
+                await self.wake_sender.wake(device_id=device_id, user_id=owner)
             except Exception:  # noqa: BLE001 — a failed wake leaves the reminder queued
                 logger.warning("wake for device %s failed", device_id)
         return pushed

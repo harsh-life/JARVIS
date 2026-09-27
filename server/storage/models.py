@@ -110,8 +110,18 @@ class Device(Base):
     step_up_challenge_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     step_up_challenge_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reattested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # docs/23 §4 push wake: this device's own push registration token, bound
+    # by the device itself over its authenticated session (never a claim about
+    # another device). Unique: one token wakes exactly one device. Cleared on
+    # revocation and when the provider reports it dead.
+    push_provider: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    push_token: Mapped[str | None] = mapped_column(String(4096), nullable=True)
+    push_token_registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    __table_args__ = (Index("ix_devices_user_id", "user_id"),)
+    __table_args__ = (
+        Index("ix_devices_user_id", "user_id"),
+        Index("ux_devices_push_token", "push_token", unique=True),
+    )
 
 
 class Session(Base):

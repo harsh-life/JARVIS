@@ -1,7 +1,7 @@
 """scheduler: task-linked reminders (docs/22)
 
 Revision ID: b6d4f8a2c1e7
-Revises: a7c3e9f1b5d2
+Revises: b8d4f2a6c0e3
 Create Date: 2026-09-27 12:00:00.000000
 
 Adds to `scheduled_jobs` the scheduler backend's own state and provenance:
@@ -20,7 +20,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "b6d4f8a2c1e7"
-down_revision: Union[str, Sequence[str], None] = "a7c3e9f1b5d2"
+down_revision: Union[str, Sequence[str], None] = "b8d4f2a6c0e3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

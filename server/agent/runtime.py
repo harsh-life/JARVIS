@@ -1259,12 +1259,19 @@ class AgentRuntime:
         dependency is unavailable puts the *task* into a bounded wait — at most
         `max_platform_waits` times, each for at most `max_platform_wait_seconds`.
         Only the call's description is kept; nothing is queued on the device,
-        and the refused operation itself is never re-sent."""
+        and the refused operation itself is never re-sent.
 
+        The same bounded wait covers a device that was not connected but was
+        sent a push wake (docs/23 §4): `device_unavailable` with
+        `required_platform: device_channel`. The task resumes only when that
+        device's authenticated channel is back — never on the push itself."""
+
+        waitable = (output.error == "platform_unavailable" and bool(output.required_platform)) or (
+            output.error == "device_unavailable" and output.required_platform == "device_channel"
+        )
         if (
             output.ok
-            or output.error != "platform_unavailable"
-            or not output.required_platform
+            or not waitable
             or platform is not ExecutionPlatform.ANDROID
             or state.principal.device_id is None
             or state.platform_waits >= self._bounds.max_platform_waits

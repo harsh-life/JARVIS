@@ -176,6 +176,29 @@ android:
   #   provider: ollama
   #   model: llava:7b
   #   endpoint: "http://127.0.0.1:11434"
+  # docs/23 §4: waking a sleeping phone so it reconnects. OFF by default:
+  # JARVIS works without it (the phone reconnects when opened or when its
+  # network returns). With `fcm`, the server sends Google Firebase Cloud
+  # Messaging a content-free data message — exactly {"type": "wake"} — and
+  # nothing else: no task, operation, user content, id or token. Everything
+  # substantive travels over the authenticated device channel afterwards.
+  # Using FCM is a Google dependency for wake-up only (OD-AND-5).
+  push:
+    provider: none                     # none | fcm
+  # push:
+  #   provider: fcm
+  #   fcm:
+  #     client:                          # public Firebase identifiers, served to enrolled phones
+  #       project_id: my-jarvis-project
+  #       application_id: "1:123456789012:android:0123456789abcdef"
+  #       sender_id: "123456789012"
+  #       # ...and the Firebase *client* key in the field named `api_key` —
+  #       # a public identifier from google-services.json (restrict it in the
+  #       # Firebase console), not the server's sending credential.
+  #     # The server's sending credential: a Google service-account key (JSON)
+  #     # in the SecretStore (class oauth_token, server-owned) or an env var.
+  #     service_account_ref: "secretstore:fcm-service-account"
+  #     min_interval_seconds: 30         # coalesce wakes to one phone
 
 security:
   oidc:

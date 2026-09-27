@@ -42,6 +42,13 @@ class AuditAction(str, Enum):
     DEVICE_CHANNEL_OPENED = "device.channel.opened"
     DEVICE_CHANNEL_REJECTED = "device.channel.rejected"
     DEVICE_CHANNEL_CLOSED = "device.channel.closed"
+    # docs/23 §4 push wake: a device binds its own push token; the server sends
+    # a content-free wake. Records carry the device id — never the token.
+    DEVICE_PUSH_TOKEN_REGISTERED = "device.push_token.registered"
+    DEVICE_PUSH_TOKEN_REFUSED = "device.push_token.refused"
+    DEVICE_PUSH_TOKEN_CLEARED = "device.push_token.cleared"
+    DEVICE_WAKE_SENT = "device.wake.sent"
+    DEVICE_WAKE_FAILED = "device.wake.failed"
 
     # ── sessions / access tokens (03 §5, §6) ────────────────────────────
     ACCESS_TOKEN_ISSUED = "session.token.issued"

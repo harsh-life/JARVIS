@@ -396,6 +396,18 @@ class HubReminderChannel:
         return await self._hub.send_reminder(reminder, user_id=user_id)
 
 
+class HubWake:
+    """`WakeSender` over the hub's optional push waker (docs/23 §4). The waker
+    is attached after the app is built, so it is looked up per call; without
+    one (`android.push.provider: none`) nothing is sent anywhere."""
+
+    def __init__(self, hub: DeviceHub) -> None:
+        self._hub = hub
+
+    async def wake(self, *, device_id: uuid.UUID, user_id: uuid.UUID) -> None:
+        await self._hub.request_wake(device_id, user_id=user_id)
+
+
 class ReminderInboxAdapter:
     """`ReminderInbox` for the device channel."""
 
@@ -417,6 +429,7 @@ __all__ = [
     "CURRENT_REMINDER_SCOPE",
     "REMINDER_TOOL_ID",
     "HubReminderChannel",
+    "HubWake",
     "ReminderInboxAdapter",
     "ReminderToolAdapter",
     "SchedulerFacade",

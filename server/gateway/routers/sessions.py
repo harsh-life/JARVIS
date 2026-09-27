@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.auth.push_tokens import PushTokenRefused
 from server.auth.sessions import ResolvedSession
 from server.gateway.deps import (
     get_audit_logger,
@@ -29,6 +30,7 @@ from server.security.audit import AuditLogger
 from shared.schemas.authorization import DenialSurface, Operation, ResourceType
 from shared.schemas.device_channel import DeviceCloseCode
 from shared.schemas.errors import ErrorCode
+from shared.schemas.push import PushClientConfig, PushProvider, PushTokenRegistration
 
 router = APIRouter(tags=["sessions"])
 
@@ -210,6 +212,67 @@ async def register_step_up_key(
 
     device = await _own_device(session, core, resolved)
     await core.step_up.register_key(session, device=device, public_key=body.public_key, audit=audit)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ── docs/23 §4 push wake: this device's own registration ───────────────
+
+
+def _push_config(request: Request) -> PushClientConfig:
+    android = getattr(request.app.state, "android", None)
+    push = getattr(android, "push", None)
+    if push is None or push.provider is not PushProvider.FCM or push.fcm is None or not android.enabled:
+        return PushClientConfig(provider=PushProvider.NONE)
+    return PushClientConfig(provider=PushProvider.FCM, fcm=push.fcm.client)
+
+
+@router.get("/devices/push-config", response_model=PushClientConfig, response_model_exclude_none=True)
+async def push_config(
+    request: Request,
+    resolved: ResolvedSession = Depends(get_resolved_session),
+) -> PushClientConfig:
+    """Whether this server wakes phones, and the public Firebase identifiers a
+    phone needs to obtain its token. `none` (the default): the phone never
+    initializes a push SDK. The server's sending credential is never here."""
+
+    return _push_config(request)
+
+
+@router.put("/devices/me/push-token", status_code=status.HTTP_204_NO_CONTENT)
+async def register_push_token(
+    body: PushTokenRegistration,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    core: SecurityCore = Depends(get_security_core),
+    resolved: ResolvedSession = Depends(get_resolved_session),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> Response:
+    """Bind this device's own push token (token rotation re-sends it). The
+    device is the authenticated caller; nothing in the body names a device,
+    user or graph (PHONE-003)."""
+
+    if _push_config(request).provider is PushProvider.NONE:
+        raise AppError(ErrorCode.CONFLICT, "push wake is not enabled on this server")
+    device = await _own_device(session, core, resolved)
+    try:
+        await core.push_tokens.register(session, device=device, registration=body, audit=audit)
+    except PushTokenRefused:
+        raise AppError(ErrorCode.CONFLICT, "push registration refused") from None
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/devices/me/push-token", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_push_token(
+    session: AsyncSession = Depends(get_db_session),
+    core: SecurityCore = Depends(get_security_core),
+    resolved: ResolvedSession = Depends(get_resolved_session),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> Response:
+    """The user turned push wake off on this phone: it is never woken again
+    until it registers anew. Idempotent."""
+
+    device = await _own_device(session, core, resolved)
+    await core.push_tokens.clear(session, device=device, audit=audit)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -435,3 +435,34 @@ async def test_the_reminder_channel_accepts_only_a_reminder(make_harness):
     hub = h.app.state.device_hub
     with pytest.raises(TypeError):
         await hub.send_reminder({"type": "operation"}, user_id=uuid.uuid4())  # type: ignore[arg-type]
+
+
+async def test_offline_wake_goes_through_the_configured_push_waker(make_harness):
+    """With push configured (docs/23 §4, `android.push`), the hub's waker is
+    asked to wake exactly the owner's offline device — given the device and the
+    owner, nothing else. Without one, nothing is sent anywhere."""
+
+    h = await make_harness(config=ANDROID)
+    alice = await h.user("alice")
+
+    class RecordingWaker:
+        def __init__(self) -> None:
+            self.calls: list[tuple] = []
+
+        async def wake(self, device_id, *, user_id):
+            self.calls.append((device_id, user_id))
+            return True
+
+    waker = RecordingWaker()
+    h.app.state.device_hub.attach_waker(waker)
+    job = await create(h, alice)
+    await fire_at(h, job["job_id"])
+    assert waker.calls == [(alice.device_id, alice.user_id)]
+
+    # A connected device is not woken.
+    ws = await phone(h, alice)
+    await next_frame(ws)
+    job = await create(h, alice, "second")
+    await fire_at(h, job["job_id"])
+    assert len(waker.calls) == 1
+    await ws.disconnect()

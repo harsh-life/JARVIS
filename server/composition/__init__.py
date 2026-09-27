@@ -30,6 +30,7 @@ from server.composition.latch import InProcessLatch
 from server.composition.supervisor import SupervisorControl
 from server.execution.device_hub import DeviceHub
 from server.composition.models import ProviderFactory, spec_from_entry
+from server.composition.push import attach_push_wake
 from server.composition.secret_context import key_provider_for
 from server.config.errors import ConfigError
 from server.config.schema import AppConfig
@@ -38,6 +39,7 @@ from server.gateway.security import SecurityCore, build_security_core
 from server.composition.memory import MemoryFacade, MemoryFactLoader, VaultFacade
 from server.composition.scheduler import (
     HubReminderChannel,
+    HubWake,
     ReminderInboxAdapter,
     SchedulerFacade,
     SecurityCoreFireChecks,
@@ -285,6 +287,7 @@ def build_application(
             storage=storage, backend=scheduler_service.backend, config=config.scheduler,
             checks=SecurityCoreFireChecks(core),
             channel=HubReminderChannel(device_hub) if device_hub is not None else None,
+            wake=HubWake(device_hub) if device_hub is not None else None,
         )
         background.append(SchedulerRunner(reminder_firer, poll_seconds=config.scheduler.poll_seconds))
 
@@ -313,7 +316,7 @@ def build_application(
         memory=memory_facade,
         vault=vault_facade,
     )
-    return create_app(
+    app = create_app(
         config=config,
         storage=storage,
         security=core,
@@ -333,6 +336,9 @@ def build_application(
         reminder_inbox=ReminderInboxAdapter(reminder_firer) if reminder_firer is not None else None,
         background=background,
     )
+    # docs/23 §4: the optional push wake — nothing at all unless configured.
+    attach_push_wake(config, app, device_hub)
+    return app
 
 
 def _open_memory_provider(config: AppConfig) -> MemoryProvider:

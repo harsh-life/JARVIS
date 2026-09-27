@@ -15,6 +15,8 @@ import com.hypermind.jarvis.auth.SessionManager
 import com.hypermind.jarvis.auth.StepUpFlow
 import com.hypermind.jarvis.auth.StepUpKeyStore
 import com.hypermind.jarvis.channel.ChannelCredentials
+import com.hypermind.jarvis.channel.ChannelService
+import com.hypermind.jarvis.channel.ConnectionIntent
 import com.hypermind.jarvis.channel.DeviceChannel
 import com.hypermind.jarvis.contract.DeviceGuard
 import com.hypermind.jarvis.contract.DeviceLocalState
@@ -37,6 +39,11 @@ import com.hypermind.jarvis.permissions.GridSync
 import com.hypermind.jarvis.privileged.ForceStopPrimitive
 import com.hypermind.jarvis.privileged.RikkaShizukuGateway
 import com.hypermind.jarvis.privileged.ShizukuGateway
+import com.hypermind.jarvis.push.FirebasePushClient
+import com.hypermind.jarvis.push.PushClient
+import com.hypermind.jarvis.push.PushRegistrar
+import com.hypermind.jarvis.push.PushSettings
+import com.hypermind.jarvis.push.WakeHandler
 import com.hypermind.jarvis.reminders.AndroidReminderNotifier
 import com.hypermind.jarvis.reminders.ReminderInbox
 import com.hypermind.jarvis.reminders.ReminderNotifier
@@ -44,6 +51,7 @@ import com.hypermind.jarvis.tasks.TaskController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.io.IOException
 import java.time.Instant
@@ -62,7 +70,10 @@ class AppGraph(
     private val shizuku: RikkaShizukuGateway = RikkaShizukuGateway(context.applicationContext),
     primitives: Map<String, Primitive> = defaultPrimitives(context, shizuku),
     reminderNotifier: ReminderNotifier = AndroidReminderNotifier(context.applicationContext),
+    pushClient: PushClient = FirebasePushClient(context),
 ) {
+    private val appContext = context.applicationContext
+
     val platforms = Platforms(shizuku::available)
     private val prompt = PlatformPrompt(context.applicationContext)
 
@@ -178,12 +189,64 @@ class AppGraph(
                 // A toggle changed while offline is reconciled now; until then
                 // the local grid alone refuses.
                 gridSync.sync()
+                // docs/23 §4: push wake follows the server's offer and the
+                // user's choice; a rotated token is re-bound here too.
+                push.sync()
                 reportPlatforms()
             },
         )
 
     init {
         channel.onReminder = reminders::receive
+    }
+
+    // ── docs/23 §4 push wake: optional, off by default ──────────────────
+
+    /** Whether the user left JARVIS connected (a wake never overrides Disconnect). */
+    val connection = ConnectionIntent(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
+
+    private val pushSettings = PushSettings(context.getSharedPreferences(PUSH_PREFS, Context.MODE_PRIVATE))
+
+    val push =
+        PushRegistrar(
+            api = ::api,
+            accessToken = { sessions.accessToken().first },
+            enrolled = { enrolled },
+            settings = pushSettings,
+            client = pushClient,
+            scope = scope,
+        )
+
+    /** A push is only ever a request to (re)connect the authenticated channel. */
+    val wake =
+        WakeHandler(
+            enrolled = { enrolled },
+            connectionWanted = { connection.wanted },
+            channel = { channel.wake() },
+            startChannelService = {
+                try {
+                    ChannelService.start(appContext)
+                    true
+                } catch (ignored: IllegalStateException) {
+                    // Background start refused (ForegroundServiceStartNotAllowedException):
+                    // the phone reconnects when opened instead.
+                    false
+                }
+            },
+        )
+
+    /** A new or rotated token from the push SDK (off the main thread). */
+    fun onPushToken(token: String) {
+        scope.launch { push.register(token) }
+    }
+
+    val pushOffered: Boolean get() = pushSettings.serverProvider == com.hypermind.jarvis.contract.PushProviderKind.FCM
+
+    val pushOptedIn: Boolean get() = pushSettings.optedIn
+
+    init {
+        revocation.onWipe(push::wipe)
+        revocation.onWipe { connection.wanted = false }
     }
 
     private fun reportPlatforms() {
@@ -211,6 +274,7 @@ class AppGraph(
     private companion object {
         const val PREFS = "jarvis"
         const val GRID_PREFS = "jarvis_grid"
+        const val PUSH_PREFS = "jarvis_push"
 
         /**
          * The primitives this client implements, keyed by the mapping's

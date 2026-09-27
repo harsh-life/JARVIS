@@ -29,3 +29,18 @@ sealed interface ChannelState {
     /** The operator has not enabled the device channel on the server. */
     data object Disabled : ChannelState
 }
+
+/** What a push wake did to the channel (docs/23 §4). */
+enum class WakeResult {
+    /** A socket exists (connected or connecting): nothing to do — never a second one. */
+    ALREADY_CONNECTED,
+
+    /** Running but between attempts: reconnecting now instead of waiting out the backoff. */
+    RECONNECTING,
+
+    /** Stopped: the caller decides whether to start the service. */
+    NOT_RUNNING,
+
+    /** Stopped until the app is updated (mapping mismatch): a wake cannot help. */
+    BLOCKED,
+}

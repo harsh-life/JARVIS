@@ -363,4 +363,94 @@ class DeviceChannelTest {
         assertEquals(4008, first.closed.poll(5, TimeUnit.SECONDS))
         channel.stop()
     }
+
+    // ── docs/23 §4 push wake: idempotent, never a second socket, grants nothing ──
+
+    @Test
+    fun `a wake while connected opens no second socket`() {
+        acceptConnections(2)
+        val channel = channel(UnimplementedOperations).also { it.start() }
+        connected(channel, connections.take())
+        repeat(5) { assertEquals(WakeResult.ALREADY_CONNECTED, channel.wake()) }
+        Thread.sleep(300)
+        assertEquals(1, server.requestCount)
+        channel.stop()
+    }
+
+    @Test
+    fun `a wake while connecting opens no second socket`() {
+        acceptConnections(2)
+        val channel = channel(UnimplementedOperations).also { it.start() }
+        assertEquals(WakeResult.ALREADY_CONNECTED, channel.wake())
+        connected(channel, connections.take())
+        Thread.sleep(300)
+        assertEquals(1, server.requestCount)
+        channel.stop()
+    }
+
+    @Test
+    fun `a wake while backing off reconnects now, once, and authenticates as always`() {
+        acceptConnections(3)
+        val channel = channel(UnimplementedOperations).also { it.start() }
+        connected(channel, connections.take()).also { it.getValue("device_proof") }
+        allSides.first().socket.close(1001, "going away")
+        waitFor { channel.state.value is ChannelState.Reconnecting }
+        assertEquals(WakeResult.RECONNECTING, channel.wake())
+        // Well inside the ≥800 ms backoff: the wake connected it.
+        val second = requireNotNull(connections.poll(600, TimeUnit.MILLISECONDS)) { "the wake did not reconnect" }
+        val hello = connected(channel, second)
+        assertEquals(
+            setOf("type", "access_token", "device_proof", "mapping_version", "client_version", "features"),
+            hello.keys,
+        )
+        // The cancelled backoff does not open another one afterwards.
+        Thread.sleep(1_500)
+        assertEquals(2, server.requestCount)
+        channel.stop()
+    }
+
+    @Test
+    fun `a wake followed by a failed authentication recovers the ordinary way`() {
+        acceptConnections(3)
+        val channel = channel(UnimplementedOperations).also { it.start() }
+        val first = connections.take()
+        first.next()
+        first.socket.close(4001, "authentication failed")
+        waitFor { channel.state.value is ChannelState.Reconnecting }
+        assertEquals(WakeResult.RECONNECTING, channel.wake())
+        val hello = connected(channel, connections.take())
+        assertTrue(refreshes.get() >= 1) // re-authenticated with a refreshed token
+        assertEquals("token-${refreshes.get()}", hello.getValue("access_token").jsonPrimitive.content)
+        channel.stop()
+    }
+
+    @Test
+    fun `a stopped, revoked or outdated channel is not reconnected by a wake`() {
+        acceptConnections(2)
+        val stopped = channel(UnimplementedOperations)
+        assertEquals(WakeResult.NOT_RUNNING, stopped.wake())
+        assertEquals(0, server.requestCount)
+
+        val channel = channel(UnimplementedOperations).also { it.start() }
+        val side = connections.take()
+        connected(channel, side)
+        side.socket.close(4003, "device revoked")
+        waitFor { channel.state.value is ChannelState.Revoked }
+        assertEquals(WakeResult.NOT_RUNNING, channel.wake())
+        Thread.sleep(300)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `an app needing an update is not woken into a reconnect loop`() {
+        acceptConnections(2)
+        val channel = channel(UnimplementedOperations).also { it.start() }
+        val side = connections.take()
+        side.next()
+        side.socket.close(4004, "1-ffffffffffffffff")
+        waitFor { channel.state.value is ChannelState.UpdateRequired }
+        assertEquals(WakeResult.BLOCKED, channel.wake())
+        Thread.sleep(300)
+        assertEquals(1, server.requestCount)
+    }
 }

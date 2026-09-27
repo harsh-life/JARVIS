@@ -69,8 +69,16 @@ sealed interface TaskPanelState {
                     when (view.result.status) {
                         TaskStatus.COMPLETED -> Answer(view.result.response.orEmpty())
                         TaskStatus.WAITING_FOR_PLATFORM -> {
-                            val what = view.result.waitingFor?.dependency ?: "a phone setting"
-                            Message("Waiting for $what to be turned on. The task continues once it is.")
+                            val what = view.result.waitingFor?.dependency
+                            if (what == "device_channel") {
+                                // docs/23 §4: the device was offline; it was asked to reconnect.
+                                Message(
+                                    "Waiting for this phone to reconnect to JARVIS. The task continues once it does.",
+                                )
+                            } else {
+                                val setting = what ?: "a phone setting"
+                                Message("Waiting for $setting to be turned on. The task continues once it is.")
+                            }
                         }
                         TaskStatus.CANCELLED -> Message("Cancelled.")
                         TaskStatus.FAILED -> Message(view.result.failure?.message ?: "The task failed.")

@@ -40,7 +40,7 @@ from server.auth.errors import AccessTokenExpired, AuthError
 from server.auth.sessions import ResolvedSession
 from server.config.schema import AndroidConfig
 from server.execution.android import MAPPING_VERSION
-from server.execution.device_hub import DeviceHub, DeviceSession
+from server.execution.device_hub import DEVICE_CHANNEL, DeviceHub, DeviceSession
 from server.gateway.security import SecurityCore
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
@@ -271,6 +271,11 @@ async def device_channel(websocket: WebSocket) -> None:
         )
         if ChannelFeature.REMINDERS in session.features:
             _send_owed_reminders(websocket, principal.user_id, principal.device_id)
+        # docs/23 §4: the channel is back, authenticated as exactly this
+        # device. A task that waited for it (its device was offline and was
+        # sent a wake) proposes its call again through every check. A push
+        # alone resumes nothing — only this authenticated reconnect does.
+        _resume_waiting_tasks(websocket, principal.device_id, [DEVICE_CHANNEL])
         while True:
             wait = min(REVALIDATE_SECONDS, (expires_at - _utcnow()).total_seconds())
             if wait <= 0:

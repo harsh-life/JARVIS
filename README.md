@@ -187,8 +187,16 @@ present. From the phone, a task is typed in and its result shown; a paused
 action is shown on a confirmation card built only from the server's canonical
 pending action (capability, operation, app, exact arguments — never model
 prose), and the user's answer goes to `/agent/tasks/{id}/confirm` with the
-server-issued token. Not yet: the per-app grid UI, grid sync to the server,
-and the overlay.
+server-issued token. The per-app grid is backed by the user's own
+device-scoped, single-app capability grants (turning a toggle off refuses on
+the phone at once, then revokes). Push wake is optional and **off by
+default** (`android.push.provider: none`): with `fcm`, a phone that was offline
+when an operation was sent is sent a content-free data message — exactly
+`{"type": "wake"}` — and reconnects its authenticated channel; the operation
+itself had already failed (`device_unavailable`, never queued), and only the
+*task* waits, re-authorized when the channel is back. The phone binds its own
+token, opts in explicitly, and never initializes Firebase otherwise. Not yet:
+the overlay.
 
 **Scheduler build** — task-linked reminders (`docs/22_SCHEDULER.md`, operator
 guide `docs/RUNNING_SCHEDULER.md`). *A firing reminder delivers a message; it
