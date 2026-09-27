@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import PurePath
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
@@ -274,6 +274,65 @@ class IntelligenceConfig(StrictModel):
     enabled: bool = False
     provider: str | None = None
     config: dict = Field(default_factory=dict)
+
+
+class EvaluationPostHocConfig(StrictModel):
+    """19 §8: post-hoc evaluation may sample to control cost."""
+
+    sample_successful: float = Field(default=0.1, ge=0.0, le=1.0)
+    always_on_failure: bool = True
+
+
+class EvaluationLiveConfig(StrictModel):
+    """19 §6: live-window evaluation. Off by default; asynchronous — the task
+    never waits for it."""
+
+    enabled: bool = False
+    every_n_steps: int = Field(default=1, ge=1)
+    window_steps: int = Field(default=20, ge=1, le=200)
+
+
+class EvaluationConfig(StrictModel):
+    """19 §10 — the Judge. Optional: with `enabled: false` (the default) Track B
+    is fully functional and every breaker trigger except the evaluator's still
+    works (JDG-T1). Nothing here is authority: the Judge scores and records, and
+    its only effect on a running task is a stop *request* to the deterministic
+    breaker, which the operator must opt into (`may_request_stop`).
+
+    `provider` is an entry shaped like `agent` (06): an operator-configured
+    model, so a cloud Judge is a disclosed configuration choice, never a hidden
+    egress (19 §4). `evaluator: rules` needs no model at all."""
+
+    enabled: bool = False
+    evaluator: Literal["llm", "rules"] = "llm"
+    provider: ModelEntryConfig | None = None
+    post_hoc: EvaluationPostHocConfig = Field(default_factory=EvaluationPostHocConfig)
+    live: EvaluationLiveConfig = Field(default_factory=EvaluationLiveConfig)
+    # The operator must opt in before any evaluator can call `trip()`.
+    may_request_stop: bool = False
+    # 19 §6: more evaluator stops than this in `stop_alert_window_minutes`
+    # alerts the operator (audited), who may disable the Judge.
+    stop_alert_threshold: int = Field(default=5, ge=1)
+    stop_alert_window_minutes: int = Field(default=60, ge=1)
+    # 19 §8: the Judge's own daily budget, separate from every task's. 0.0 → a
+    # paid Judge call is refused (a local Judge costs nothing).
+    budget: float = Field(default=0.0, ge=0.0)
+    # OD-JDG-2 is open (own / per-user / global). Judge spend is never charged
+    # to the evaluated task or to the user's own budget or rates (19 §8). This
+    # switch only says whether it *also* counts toward the global daily
+    # budget; the default is the more restrictive reading, pending the owner.
+    budget_scope: Literal["own", "own_and_global"] = "own_and_global"
+    max_observation_chars: int = Field(default=2000, ge=100, le=20000)
+    queue_size: int = Field(default=64, ge=1, le=10000)
+
+    @model_validator(mode="after")
+    def _provider_when_llm(self) -> "EvaluationConfig":
+        if self.enabled and self.evaluator == "llm" and self.provider is None:
+            raise ValueError(
+                "evaluation.enabled with evaluator 'llm' needs evaluation.provider — the "
+                "Judge's model is an explicit operator choice (19 §4), never a silent default"
+            )
+        return self
 
 
 class SchedulerConfig(StrictModel):
@@ -706,6 +765,7 @@ class AppConfig(StrictModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     vault: VaultConfig = Field(default_factory=VaultConfig)
     intelligence: IntelligenceConfig = Field(default_factory=IntelligenceConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
