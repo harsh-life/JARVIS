@@ -156,7 +156,7 @@ async def test_a_secret_in_an_observation_never_reaches_the_judge(judged):
     async def leaky(invocation):
         from shared.schemas.agent import ToolOutput
 
-        return ToolOutput(ok=True, content=f"config: token={secret} and AKIAABCDEFGHIJKLMNOP")
+        return ToolOutput(ok=True, content=f"config: token={secret} and AKIAABCDEFGHIJKLMNOP")  # TEST-ONLY fixture
 
     h.reads.execute = leaky  # the adapter returns secret-shaped text
     await completed_task(h, alice, call("files.read", "list_directory"), final(f"found {secret}"),
@@ -164,7 +164,7 @@ async def test_a_secret_in_an_observation_never_reaches_the_judge(judged):
     await drain(h)
 
     sent = "\n".join(m.content for m in judge.seen[0])
-    assert secret not in sent and "AKIAABCDEFGHIJKLMNOP" not in sent
+    assert secret not in sent and "AKIAABCDEFGHIJKLMNOP" not in sent  # TEST-ONLY fixture
     [row] = await evaluations(h)
     assert set(row.redactions) >= {"github_token", "aws_access_key_id"}
     redacted = await audit(h, AuditAction.EVALUATION_TRACE_REDACTED)

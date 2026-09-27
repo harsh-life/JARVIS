@@ -10,7 +10,7 @@ JARVIS / Hypermind Track B: a configurable, self-hostable personal-agent runtime
 maps the 17 numbered subsystem documents (`Working Markdown/0X_*.md`,
 `docs/1X_*.md`+) to the code. `README.md` has a detailed per-branch tour of
 what's built and, critically, what is **not** — read it before assuming a
-feature (dashboard, Judge, Darwin, real IntelligenceProvider, account
+feature (Darwin, a real IntelligenceProvider, account
 deletion) exists. The central invariant, enforced structurally, not by
 convention:
 

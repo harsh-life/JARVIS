@@ -267,6 +267,49 @@ found that needs a decision is listed here; everything else is in
 | H-2 | Push registration token stored in plaintext (BR-T2 §3d row 36, at rest). Usable only with the server's separate FCM credential, and only for the content-free wake. | Plaintext column; cleared on revocation. | **OPEN — owner** (low severity): accept for the pilot, or encrypt the column |
 | H-3 | A symlink swapped in at a sandbox leaf between the last check and the open escaped as a raw `OSError` (task failed as an internal error) instead of a typed `FORBIDDEN_PATH`. Containment itself held (`O_NOFOLLOW`). | **Fixed** (`server/fs/sandbox.py::_open_leaf`), race tests added. | IMPLEMENTED (defect fix, not a decision) |
 
+---
+
+## 2G. Stage 5 — Judge and operator console (`[PROPOSED]`, pending ratification)
+
+The Stage 5 build (`docs/19_JUDGE_EVALUATION.md`, `docs/28_DASHBOARD_OPERATOR_CONSOLE.md`;
+operator guides `docs/RUNNING_EVALUATION.md`, `docs/RUNNING_CONSOLE.md`) keeps
+19 §0 — *the Judge observes and scores; it never authorizes, never executes, and
+never kills on its own authority* — and 28 §0 — *the dashboard shows; controls
+live elsewhere*. Each row is the value implemented where a document leaves a
+choice. **None of the `[OPEN — OWNER]` items below is ratified by being
+implemented**: each was built behind configuration, off by default or in its
+more restrictive reading, so the owner's decision changes a setting or a
+document, not the architecture.
+
+| ID | Decision | Value implemented | Where |
+|---|---|---|---|
+| OD-JDG-1 | EvaluationProvider separate from DecisionProvider (19 §2) | **`[OPEN — OWNER]`.** Built as the recommended separate `EvaluationProvider` Protocol; no DecisionProvider exists (OD-DP-9 unchanged). | `server/evaluation/provider.py` |
+| OD-JDG-2 | Judge budget scope (own / per-user / global) | **`[OPEN — OWNER]`.** Judge spend is always checked against its own `evaluation.budget` (daily, default `0.0` → a paid Judge call is refused) and is **never** charged to the evaluated task or to the user's own budget or rate limits (19 §8). Whether it also counts toward the global daily budget is `evaluation.budget_scope`, default `own_and_global` (the more restrictive reading, as recommended). | `server/evaluation/service.py`, `server/security/usage.py` |
+| OD-JDG-3 | Pilot Judge provider | **`[OPEN — OWNER]`.** None chosen: `evaluation.enabled: false` and `provider: null` by default; enabling the LLM Judge requires naming a provider (a non-local one logs that redacted traces are sent to it, 19 §4). `evaluator: rules` needs no model. | `server/config/schema.py` |
+| OD-JDG-4 | `usage.kind: evaluation_call` vs `model_call` + attribution | **`[OPEN — OWNER]`.** `01` §1.2 is locked, so no enum was added: Judge calls are `model_call` rows attributed by `tool_id = "evaluator:<id>"`. Extending the enum later is a registry edit plus a data migration of those rows. | `shared/schemas/evaluation.py` |
+| OD-DASH-1 | Read-only dashboard + separate control endpoints vs amending DASH-002 | **`[OPEN — OWNER]`.** Built as the recommended split: `GET /api/v1/admin/*` views (read-only, asserted at import and by an import contract) and `/api/v1/admin/control/*` owned by 18 (stop/latch), 20 (break-glass) and 19 (Judge switches, review queue). DASH-002 is not amended. | `server/gateway/routers/admin.py`, `server/dashboard/` |
+| OD-DASH-2 | Console UI technology | `[IMPL]`, **not built**: the console is the JSON API only. A browser page would need either a public shell route (`02` §12: `/health` is the only data-free public endpoint besides OIDC start/callback) or an in-page superuser credential — an owner call. | — |
+| JDG-B1 | Where the Judge's trace comes from | The runtime mirrors the events it already audits (plus each authorization's decision and tier, and each metered call's units and cost) in the task's volatile state, and hands a copy to an observer port. A live window must be evaluated while the task's own request still holds its uncommitted audit rows, so the trace cannot be read back from the store. The trace is never persisted. | `server/agent/runtime.py`, `server/agent/ports.py` |
+| JDG-B2 | Stop-request gating | Only `live_window` evaluations may request a stop, only with `may_request_stop: true` (without it the Judge holds no breaker handle at all), and only through `trip()` with source `evaluator`. A paused task that is tripped is enforced by the runtime's own emergency-stop sequence. Post-hoc stop requests are recorded, never acted on. | `server/composition/evaluation.py` |
+| JDG-B3 | Stop alert | More than `stop_alert_threshold` honoured evaluator stops in `stop_alert_window_minutes` → one `evaluation.stop_alert` audit row per window and a warning log; the operator may switch the Judge off (`/admin/control/evaluation/switches`). | `server/evaluation/service.py` |
+| JDG-B4 | Operator switches | Runtime on/off for the Judge and for its stop requests, persisted (`evaluation_control`), each **capped by configuration**: "on" beyond `evaluation.enabled` / `may_request_stop` is refused `409`. | `server/composition/improvements.py` |
+| JDG-B5 | Improvement targets and application | The closed registry of 19 §9 (worker system-prompt guidance, tool descriptions, recovery thresholds within the config schema's ranges, Judge rubric, suggestion template). Approval re-validates the value; `config_versions` is append-only; rollback undoes a target's *current* version. Applied values reach the worker as delimited "operator guidance (it grants nothing)" text and as recovery bounds (only where `agent.recovery` is configured), and the Judge as its rubric. `suggestion.template` is versioned but has no consumer yet. | `server/evaluation/candidates.py`, `server/composition/improvements.py` |
+| DSH-B1 | Redaction | User content (task responses, evaluator notes, candidate text, applied values) appears as `{"redacted": true, "chars": n}`; secrets appear only as handles with `resolves` decided from metadata (a non-revoked `secret_references` row, an env var's presence); every other string is scrubbed with the repository's secret patterns. The DASH-006 view (`GET /admin/privileged/tasks/{id}?reason=`) is audited **before** it reads, and still scrubs secret-shaped text. | `server/dashboard/redaction.py` |
+| DSH-B2 | Memory counts | Facts per user are counted through the provider's owner-filtered listing inside the composition root; no content reaches the dashboard. Capped at 10 000 per user. | `server/composition/console.py` |
+
+**Recorded residuals (not fixed here, not claimed fixed):**
+
+- Evaluations and candidates store model-written notes about a user's task in
+  the application database, owner-private, in the same class as `agent_tasks.response`
+  (BR-T2 §3: reachable under application RCE — the OD-A1 (a) residual).
+- The gateway's error handler reports a routing `405` as `500 internal_error`
+  ("Method Not Allowed"). Pre-existing; a non-GET request to a console view
+  still reaches no handler.
+- The real-data gate (17 §5) is unchanged by Stage 5: the Judge and the console
+  add no release-blocking suite, and the gate stays closed.
+
+---
+
 ## 3. Genuinely unresolved owner decisions
 
 | ID | Question | Why it is the owner's |
@@ -279,12 +322,12 @@ found that needs a decision is listed here; everything else is in
 | OD-SCH-2 | Fire-time `suggest` task with a sessionless principal | Not implemented (docs/22 recommendation); would introduce a principal with no session. |
 | OD-VOI-1 | Whether any server STT provider is enabled at pilot | A cloud STT receives user audio; default is on-device only (§2E). |
 | VOI-B3 | Opt-in raw-audio retention (LIFE-002) | Not built; where retained audio would live and for how long is a privacy call. |
-| OD-JDG-1 | Ratify EvaluationProvider as separate from DecisionProvider | Built as recommended behind `evaluation.enabled` (§2F); not ratified. |
-| OD-JDG-2 | Judge budget scope | Own budget always; `budget_scope` default `own_and_global` (§2F); not ratified. |
+| OD-JDG-1 | Ratify EvaluationProvider as separate from DecisionProvider | Built as recommended behind `evaluation.enabled` (§2G); not ratified. |
+| OD-JDG-2 | Judge budget scope | Own budget always; `budget_scope` default `own_and_global` (§2G); not ratified. |
 | OD-JDG-3 | Pilot Judge provider (model, cloud or local) | None chosen; the Judge is off by default. |
 | OD-JDG-4 | `usage.kind` extension vs `model_call` + attribution | `model_call` + `evaluator:` attribution; the locked enum is unchanged. |
 | OD-DASH-1 | Dashboard/control split vs amending DASH-002 | Split built as recommended; DASH-002 unchanged; not ratified. |
-| OD-DASH-2 | Console UI | Not built; JSON API only (§2F). |
+| OD-DASH-2 | Console UI | Not built; JSON API only (§2G). |
 
 ---
 

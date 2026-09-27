@@ -270,6 +270,15 @@ class AgentRuntime:
     def breaker(self) -> CircuitBreaker:
         return self._breaker
 
+    def attach_observer(self, observer: TaskObserver) -> None:
+        """Wire the Judge's observer (19) after construction — its breaker port
+        needs this runtime. Once only; with none attached (evaluation off)
+        nothing is recorded or copied for observation at all."""
+
+        if self._observer is not None:
+            raise RuntimeError("a task observer is already attached")
+        self._observer = observer
+
     # ── public API (02 §5) ──────────────────────────────────────────────
 
     async def submit(
@@ -1655,8 +1664,9 @@ class AgentRuntime:
 
     # ── observation (19 §4, §6) — the Judge's inputs, never its outputs ──
 
-    @staticmethod
-    def _trace(state: TaskState, name: str, **fields: Any) -> None:
+    def _trace(self, state: TaskState, name: str, **fields: Any) -> None:
+        if self._observer is None:
+            return
         state.trace_events.append(TraceEvent(
             position=max(0, len(state.messages) - 2),
             at=time.monotonic() - state.created_monotonic, name=name, **fields,

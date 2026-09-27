@@ -125,7 +125,7 @@ Deferred; not part of the current runtime. The only boundary documented is the *
 | 2 — `21` memory + vault | built | `server/memory/`, `server/vault/` |
 | 3 — `23` Android client | in progress (client through the presentation layer; `08` suite on a real device not run) | `android/`, `server/execution/device_hub.py` |
 | 4 — `22` scheduler, `27` voice | built | `server/scheduler/`, `server/voice/` |
-| 5 — `19` Judge, `28` console | built on the Stage 5 branch; owner items OD-JDG-1..4 and OD-DASH-1/2 **open** (`DECISION_REGISTER.md` §2F) | `server/evaluation/`, `server/dashboard/`, `server/composition/{evaluation,improvements,console}.py` |
+| 5 — `19` Judge, `28` console | built on the Stage 5 branch; owner items OD-JDG-1..4 and OD-DASH-1/2 **open** (`DECISION_REGISTER.md` §2G) | `server/evaluation/`, `server/dashboard/`, `server/composition/{evaluation,improvements,console}.py` |
 
 **Next:** the real-data gate (`17` §5) — run and evidence its full release-blocking
 set, including `08`'s suite on a real device and the BR-T2 re-runs — and only
