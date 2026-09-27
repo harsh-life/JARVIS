@@ -25,6 +25,31 @@ from shared.schemas.execution import ExecutionError, ExecutionErrorCode, Executi
 from server.fs import paths
 from server.fs.paths import SandboxPath
 
+
+def _open_leaf(name: str, flags: int, *, dir_fd: int) -> int:
+    """Open one entry relative to its already-verified parent, never through a
+    symlink (09 §3).
+
+    The caller checked the entry a moment ago; a symlink swapped in since then
+    (the race the check alone cannot close) is refused by `O_NOFOLLOW` here, in
+    the syscall that does the work — and surfaces as a typed `FORBIDDEN_PATH`,
+    as the write path already does, rather than a raw `OSError` that would fail
+    the whole task as an internal error.
+    """
+
+    try:
+        return os.open(name, flags | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except OSError as exc:
+        swapped = exc.errno == errno.ELOOP or (
+            exc.errno == errno.ENOTDIR and flags & os.O_DIRECTORY
+            and stat_module.S_ISLNK(os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_mode)
+        )
+        if swapped:
+            raise ExecutionError(
+                ExecutionErrorCode.FORBIDDEN_PATH, "a symlink inside the sandbox is never followed"
+            ) from exc
+        raise
+
 def _read_capped(fileobj: BinaryIO, cap: int) -> bytes:
     """Read at most `cap` bytes, raising rather than allocating unbounded
     memory for a stream whose declared size undersells what it decompresses
@@ -182,7 +207,7 @@ class FilesystemSandbox:
                     ExecutionErrorCode.RESOURCE_EXHAUSTED,
                     f"file exceeds the {self.max_file_bytes}-byte read cap",
                 )
-            fd = os.open(target.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=target.parent_fd)
+            fd = _open_leaf(target.name, os.O_RDONLY, dir_fd=target.parent_fd)
             try:
                 with os.fdopen(fd, "rb", closefd=True) as handle:
                     data = handle.read(self.max_file_bytes + 1)
@@ -233,7 +258,7 @@ class FilesystemSandbox:
                     ) from exc
                 if not stat_module.S_ISDIR(st.st_mode):
                     raise ExecutionError(ExecutionErrorCode.INVALID_ARGUMENTS, "not a directory")
-                fd = os.open(target.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=target.parent_fd)
+                fd = _open_leaf(target.name, os.O_RDONLY | os.O_DIRECTORY, dir_fd=target.parent_fd)
                 try:
                     entries = self._scan(fd)
                 finally:
@@ -375,7 +400,7 @@ class FilesystemSandbox:
         if not stat_module.S_ISDIR(st.st_mode):
             raise ExecutionError(ExecutionErrorCode.FORBIDDEN_PATH, "refusing to remove a non-regular entry")
         count = 0
-        sub_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+        sub_fd = _open_leaf(name, os.O_RDONLY | os.O_DIRECTORY, dir_fd=dir_fd)
         try:
             for entry in os.listdir(sub_fd):
                 count += self._remove_tree(sub_fd, entry, depth=depth + 1)
@@ -388,7 +413,7 @@ class FilesystemSandbox:
 
     def extract_zip(self, root_real: str, archive_path: str, dest_relative: str) -> ExecutionResult:
         with paths.resolve(root_real, archive_path) as archive:
-            fd = os.open(archive.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=archive.parent_fd)
+            fd = _open_leaf(archive.name, os.O_RDONLY, dir_fd=archive.parent_fd)
             try:
                 with os.fdopen(fd, "rb", closefd=True) as handle:
                     return self._extract_zip_from(handle, root_real, dest_relative)
@@ -426,7 +451,7 @@ class FilesystemSandbox:
 
     def extract_tar(self, root_real: str, archive_path: str, dest_relative: str) -> ExecutionResult:
         with paths.resolve(root_real, archive_path) as archive:
-            fd = os.open(archive.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=archive.parent_fd)
+            fd = _open_leaf(archive.name, os.O_RDONLY, dir_fd=archive.parent_fd)
             with os.fdopen(fd, "rb", closefd=True) as handle:
                 try:
                     with tarfile.open(fileobj=handle) as tar:

@@ -133,8 +133,9 @@ async def test_ss_t2_agent_requester_is_refused_unconditionally(store, db, audit
         == TEST_SECRET_VALUE
     )
 
-    # ...and never for the agent.
-    with pytest.raises(SecretDenied):
+    # ...and never for the agent — refused by the unconditional first check
+    # (who is asking), not incidentally by a scope mismatch further down.
+    with pytest.raises(SecretDenied, match="only by handle"):
         await store.get(db, secret_ref, SecretRequester.agent(), audit)
 
 

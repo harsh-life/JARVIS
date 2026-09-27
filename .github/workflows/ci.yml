@@ -96,6 +96,9 @@ jobs:
           alembic upgrade head
           alembic downgrade base
           alembic upgrade head
+          # The ORM models and the migrated schema agree (no drift a later
+          # autogenerate would silently "fix").
+          alembic check
 
       - name: BR-T2 blast-radius measurement (14 §4)
         # Re-measured on every run, with the table in the log. 14 §4's

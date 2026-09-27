@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat as stat_module
+import sys
 import tarfile
 import uuid
 import zipfile
@@ -460,3 +461,82 @@ def test_the_storage_quota_covers_every_label_a_principal_names(tmp_path):
     # Another principal's usage is not charged to this one.
     other = sandbox.root_for(user_id=uuid.uuid4(), graph_id=None, label="a")
     sandbox.create_file(other, "three.txt", "z" * 700)
+
+
+# ── Phase H: the symlink swapped in *inside* the race window (FS-T9) ─────
+#
+# The test above swaps before the call, where the earlier checks already see
+# it. These inject the swap between the last check and the open — the window
+# only `O_NOFOLLOW` in the opening syscall can close — by wrapping the file-type
+# predicate the code consults immediately before opening.
+
+
+@pytest.fixture
+def racing_swap(monkeypatch):
+    """`arm(entry, target, within)`: when the operation `within` (a sandbox
+    method) next checks an entry's type, the check passes on the real entry —
+    and then an attacker replaces `entry` with a symlink to `target` before the
+    open. Keyed on the calling method, so a type check made elsewhere (the
+    quota walk, path resolution) never fires the swap early."""
+
+    armed: dict = {}
+
+    def arm(entry: str, target: Path, within: str) -> None:
+        armed.update(entry=entry, target=target, within=within)
+
+    def wrap(real):
+        def predicate(mode):
+            result = real(mode)
+            if armed and sys._getframe(1).f_code.co_name == armed["within"]:
+                entry, target = armed.pop("entry"), armed.pop("target")
+                armed.clear()
+                if os.path.isdir(entry) and not os.path.islink(entry):
+                    shutil.rmtree(entry)
+                else:
+                    os.unlink(entry)
+                os.symlink(target, entry)
+            return result
+        return predicate
+
+    monkeypatch.setattr(stat_module, "S_ISREG", wrap(stat_module.S_ISREG))
+    monkeypatch.setattr(stat_module, "S_ISDIR", wrap(stat_module.S_ISDIR))
+    return arm
+
+
+def test_a_read_never_follows_a_symlink_swapped_in_after_the_check(user_root, racing_swap):
+    sandbox, root, _ = user_root
+    entry = os.path.join(root, "raced.txt")
+    Path(entry).write_text("originally fine")
+    outside = Path(root).parent / "outside_raced.txt"
+    outside.write_text("HOST SECRET via race")
+    racing_swap(entry, outside, "read_file")
+    with pytest.raises(ExecutionError) as excinfo:
+        sandbox.read_file(root, "raced.txt")
+    assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
+    assert os.path.islink(entry)  # the swap really happened inside the window
+
+
+def test_a_listing_never_follows_a_directory_swapped_for_a_symlink(user_root, racing_swap):
+    sandbox, root, _ = user_root
+    entry = os.path.join(root, "raced_dir")
+    os.mkdir(entry)
+    outside = Path(root).parent / "outside_raced_dir"
+    outside.mkdir()
+    (outside / "host_file").write_text("HOST SECRET")
+    racing_swap(entry, outside, "list_directory")
+    with pytest.raises(ExecutionError) as excinfo:
+        sandbox.list_directory(root, "raced_dir")
+    assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
+
+
+def test_a_write_never_follows_a_symlink_swapped_in_after_the_check(user_root, racing_swap):
+    sandbox, root, _ = user_root
+    entry = os.path.join(root, "raced_write.txt")
+    Path(entry).write_text("originally fine")
+    outside = Path(root).parent / "outside_raced_write.txt"
+    outside.write_text("host file")
+    racing_swap(entry, outside, "_write")
+    with pytest.raises(ExecutionError) as excinfo:
+        sandbox.write_file(root, "raced_write.txt", "overwritten?")
+    assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
+    assert outside.read_text() == "host file"
