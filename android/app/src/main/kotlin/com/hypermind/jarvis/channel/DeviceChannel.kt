@@ -86,6 +86,16 @@ class DeviceChannel(
     private var reconnectJob: Job? = null
     private var reauthJob: Job? = null
     private val inFlight = mutableMapOf<String, Pair<String, Job>>() // opId → (taskId, job)
+    private val runningKinds = mutableMapOf<String, RunningOperation>()
+    private val _operations = MutableStateFlow<List<RunningOperation>>(emptyList())
+
+    /** What this phone is running right now — kinds only, for the status display (docs/23 §7). */
+    val operations: StateFlow<List<RunningOperation>> = _operations.asStateFlow()
+
+    private fun publishRunning() {
+        runningKinds.keys.retainAll(inFlight.keys)
+        _operations.value = runningKinds.values.toList()
+    }
 
     @Synchronized
     fun start() {
@@ -259,9 +269,13 @@ class DeviceChannel(
                     if (inFlight.remove(envelope.opId) != null && webSocket === socket) {
                         webSocket.send(result.encode())
                     }
+                    publishRunning()
                 }
             }
         inFlight[envelope.opId] = envelope.taskId to job
+        runningKinds[envelope.opId] =
+            RunningOperation(envelope.taskId, envelope.capability, envelope.operation, envelope.primitive)
+        publishRunning()
         job.start()
     }
 
@@ -276,11 +290,13 @@ class DeviceChannel(
             inFlight.remove(id)
             entry.second.cancel()
         }
+        publishRunning()
     }
 
     private fun cancelAllOperations() {
         inFlight.values.forEach { it.second.cancel() }
         inFlight.clear()
+        publishRunning()
     }
 
     @Synchronized
@@ -315,28 +331,32 @@ class DeviceChannel(
         scope.launch {
             try {
                 credentials.accessToken(forceRefresh = true)
-                synchronized(this@DeviceChannel) { backoff("re-authenticating") }
+                synchronized(this@DeviceChannel) { backoff("re-authenticating", ReconnectCause.AUTHENTICATION_EXPIRED) }
             } catch (ignored: EnrollmentLost) {
                 revoked()
             } catch (ignored: IOException) {
-                synchronized(this@DeviceChannel) { backoff("server unreachable") }
+                synchronized(this@DeviceChannel) { backoff("server unreachable", ReconnectCause.SERVER_UNREACHABLE) }
             }
         }
     }
 
-    private fun backoff(reason: String) {
+    private fun backoff(
+        reason: String,
+        cause: ReconnectCause = ReconnectCause.CONNECTION_LOST,
+    ) {
         attempt += 1
         val base = (BASE_DELAY_MILLIS shl (attempt - 1).coerceAtMost(MAX_SHIFT)).coerceAtMost(MAX_DELAY_MILLIS)
         val jitter = (base * JITTER * (random.nextDouble() * 2 - 1)).toLong()
-        scheduleReconnect(base + jitter, reason)
+        scheduleReconnect(base + jitter, reason, cause)
     }
 
     private fun scheduleReconnect(
         delayMillis: Long,
         reason: String,
+        cause: ReconnectCause = ReconnectCause.CONNECTION_LOST,
     ) {
         if (_state.value !is ChannelState.Disabled) {
-            _state.value = ChannelState.Reconnecting(attempt, delayMillis, reason)
+            _state.value = ChannelState.Reconnecting(attempt, delayMillis, reason, cause)
         }
         reconnectJob?.cancel()
         reconnectJob =
@@ -358,7 +378,7 @@ class DeviceChannel(
     }
 
     private fun fail(reason: String) {
-        backoff(reason)
+        backoff(reason, ReconnectCause.NOT_CONFIGURED)
     }
 
     private companion object {

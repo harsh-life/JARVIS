@@ -36,6 +36,8 @@ class ScreenPerception(
     private val screen: ScreenSource,
     private val ocr: ScreenOcr?,
     private val extractor: TreeExtractor = TreeExtractor(),
+    /** Which rung a read is on, for the status display only (docs/23 §7) — never its content. */
+    private val onRung: (PerceptionLevel) -> Unit = {},
 ) {
     val readTree = Primitive { envelope, spec -> readTree(envelope, spec) }
     val readElement = Primitive { envelope, spec -> readElement(envelope, spec) }
@@ -77,6 +79,7 @@ class ScreenPerception(
                 is Front.Ok -> front.window
             }
         val app = metadata(window)
+        onRung(PerceptionLevel.ACCESSIBILITY)
         val tree = window.root?.let(extractor::extract) ?: TreeExtractor.Extracted(emptyList(), false, emptyList())
         if (tree.informative) {
             return fitted(
@@ -86,6 +89,7 @@ class ScreenPerception(
                 PerceptionLevel.ACCESSIBILITY,
             )
         }
+        if (ocr != null) onRung(PerceptionLevel.OCR)
         val blocks = ocr?.readScreen()?.let { ocrBlocks(it, tree.passwordBounds) }.orEmpty()
         // The frame was taken after the tree: if another app came to the front
         // in between, its text is not this operation's to return.

@@ -21,6 +21,7 @@ import com.hypermind.jarvis.channel.DeviceChannel
 import com.hypermind.jarvis.contract.DeviceGuard
 import com.hypermind.jarvis.contract.DeviceLocalState
 import com.hypermind.jarvis.contract.MappingState
+import com.hypermind.jarvis.overlay.OverlaySettings
 import com.hypermind.jarvis.perception.AccessibilityScreenCapture
 import com.hypermind.jarvis.perception.BatteryPrimitive
 import com.hypermind.jarvis.perception.DeviceActions
@@ -36,6 +37,13 @@ import com.hypermind.jarvis.perception.UiActions
 import com.hypermind.jarvis.permissions.AppPolicyStore
 import com.hypermind.jarvis.permissions.GridStore
 import com.hypermind.jarvis.permissions.GridSync
+import com.hypermind.jarvis.presentation.PerceptionRung
+import com.hypermind.jarvis.presentation.PresentationInputs
+import com.hypermind.jarvis.presentation.PresentationState
+import com.hypermind.jarvis.presentation.PresentationStream
+import com.hypermind.jarvis.presentation.Presenter
+import com.hypermind.jarvis.presentation.PushStatus
+import com.hypermind.jarvis.presentation.VoiceActivity
 import com.hypermind.jarvis.privileged.ForceStopPrimitive
 import com.hypermind.jarvis.privileged.RikkaShizukuGateway
 import com.hypermind.jarvis.privileged.ShizukuGateway
@@ -50,10 +58,16 @@ import com.hypermind.jarvis.reminders.ReminderInbox
 import com.hypermind.jarvis.reminders.ReminderNotifier
 import com.hypermind.jarvis.reminders.SharedPrefsReminderDrafts
 import com.hypermind.jarvis.tasks.TaskController
+import com.hypermind.jarvis.tasks.TaskMemory
+import com.hypermind.jarvis.tasks.TaskTracker
 import com.hypermind.jarvis.voice.VoiceSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.io.IOException
@@ -202,7 +216,10 @@ class AppGraph(
                 // docs/23 §4: push wake follows the server's offer and the
                 // user's choice; a rotated token is re-bound here too.
                 push.sync()
+                pushState.value = pushStatus()
                 reportPlatforms()
+                // A task the phone was following (e.g. before a restart) is asked about again.
+                taskTracker.reattach()
             },
         )
 
@@ -261,7 +278,9 @@ class AppGraph(
     }
 
     private fun reportPlatforms() {
-        channel.reportPlatforms(platforms.snapshot())
+        val snapshot = platforms.snapshot()
+        platformState.value = snapshot
+        channel.reportPlatforms(snapshot)
     }
 
     init {
@@ -278,6 +297,66 @@ class AppGraph(
 
     val enrolled: Boolean get() = store.deviceId != null && key() != null
 
+    // ── docs/23 §7 presentation: one stream, derived from canonical state ──
+
+    /** The current task, at app scope: the server's last answer, never a local runtime. */
+    val taskTracker =
+        TaskTracker(tasks, TaskMemory(context.getSharedPreferences(TASK_PREFS, Context.MODE_PRIVATE)), scope)
+
+    private val platformState = MutableStateFlow(platforms.snapshot())
+    private val enrolledState = MutableStateFlow(enrolled)
+    private val pushState = MutableStateFlow(pushStatus())
+    private val voiceState = MutableStateFlow(VoiceActivity.NONE)
+
+    private fun pushStatus(): PushStatus =
+        when {
+            pushSettings.serverProvider != com.hypermind.jarvis.contract.PushProviderKind.FCM -> PushStatus.NOT_OFFERED
+            !pushSettings.optedIn -> PushStatus.OFF
+            push.status is PushRegistrar.Status.Unavailable -> PushStatus.UNAVAILABLE
+            else -> PushStatus.ON
+        }
+
+    /**
+     * What every surface shows — the task panel, the overlay, a future
+     * character — from one deterministic mapping ([Presenter]).
+     */
+    val presentation: StateFlow<PresentationState> =
+        PresentationStream
+            .of(
+                channel.state,
+                taskTracker.snapshot,
+                channel.operations,
+                PerceptionRung.level,
+                enrolledState,
+                platformState,
+                pushState,
+                voiceState,
+            ).stateIn(scope, SharingStarted.Eagerly, Presenter.of(PresentationInputs(enrolled, channel.state.value)))
+
+    /** Re-read the inputs that have no callbacks of their own (on returning to the app). */
+    fun refreshPresentation() {
+        enrolledState.value = enrolled
+        platformState.value = platforms.snapshot()
+        pushState.value = pushStatus()
+    }
+
+    /** Push-to-talk's state, for the status only (docs/27): never read as an approval or a command. */
+    fun reportVoice(activity: VoiceActivity) {
+        voiceState.value = activity
+    }
+
+    /** The floating status overlay: off until the user turns it on. */
+    val overlaySettings = OverlaySettings(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
+
+    /** The user's push-wake choice, reflected in the presentation at once. */
+    fun setPushOptedIn(on: Boolean): PushRegistrar.Status = push.setOptedIn(on).also { pushState.value = pushStatus() }
+
+    init {
+        revocation.onWipe(taskTracker::wipe)
+        revocation.onWipe { overlaySettings.set(false) }
+        revocation.onWipe { enrolledState.value = false }
+    }
+
     fun forgetKey() {
         cachedKey = null
     }
@@ -287,6 +366,7 @@ class AppGraph(
         const val GRID_PREFS = "jarvis_grid"
         const val REMINDER_PREFS = "jarvis_reminders"
         const val PUSH_PREFS = "jarvis_push"
+        const val TASK_PREFS = "jarvis_task"
 
         /**
          * The primitives this client implements, keyed by the mapping's
@@ -301,6 +381,7 @@ class AppGraph(
                 ScreenPerception(
                     screen = JarvisAccessibilityService.screen,
                     ocr = MlKitScreenOcr { JarvisAccessibilityService.instance },
+                    onRung = PerceptionRung::report,
                 )
             val ui =
                 UiActions(

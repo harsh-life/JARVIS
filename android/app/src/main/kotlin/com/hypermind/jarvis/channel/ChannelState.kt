@@ -16,6 +16,7 @@ sealed interface ChannelState {
         val attempt: Int,
         val delayMillis: Long,
         val reason: String,
+        val cause: ReconnectCause = ReconnectCause.CONNECTION_LOST,
     ) : ChannelState
 
     /** The server revoked this device, or its credential stopped working. */
@@ -44,3 +45,19 @@ enum class WakeResult {
     /** Stopped until the app is updated (mapping mismatch): a wake cannot help. */
     BLOCKED,
 }
+
+/** Why the channel is reconnecting — typed, so the UI never parses [ChannelState.Reconnecting.reason]. */
+enum class ReconnectCause {
+    CONNECTION_LOST,
+    AUTHENTICATION_EXPIRED,
+    SERVER_UNREACHABLE,
+    NOT_CONFIGURED,
+}
+
+/** One operation running on this phone: its kind, never its arguments or result. */
+data class RunningOperation(
+    val taskId: String,
+    val capability: String,
+    val operation: String,
+    val primitive: String,
+)

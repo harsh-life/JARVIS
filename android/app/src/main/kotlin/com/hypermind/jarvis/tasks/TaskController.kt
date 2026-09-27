@@ -23,7 +23,7 @@ class TaskController(
     private val api: () -> ApiClient,
     private val accessToken: () -> String,
     private val stepUp: Reattestation,
-) {
+) : TaskOperations {
     /** Why an approval did not go ahead. */
     sealed interface Outcome {
         data class Shown(
@@ -38,10 +38,19 @@ class TaskController(
         data object Unreachable : Outcome
     }
 
-    suspend fun submit(input: String): Outcome =
-        call { api().submitTask(accessToken(), input) }
+    override suspend fun submit(
+        input: String,
+        idempotencyKey: String,
+        onSent: () -> Unit,
+    ): Outcome = call { api().submitTask(accessToken(), input, idempotencyKey, onSent) }
 
-    suspend fun decline(
+    /** The server's current view of a task (owner-only). */
+    override suspend fun refresh(taskId: String): Outcome = call { api().getTask(accessToken(), taskId) }
+
+    /** Ask the server to cancel a live task. */
+    override suspend fun cancel(taskId: String): Outcome = call { api().cancelTask(accessToken(), taskId) }
+
+    override suspend fun decline(
         taskId: String,
         pending: PendingAction,
     ): Outcome {
@@ -49,7 +58,7 @@ class TaskController(
         return call { api().confirmTask(accessToken(), taskId, token, approve = false) }
     }
 
-    suspend fun approve(
+    override suspend fun approve(
         taskId: String,
         pending: PendingAction,
         presence: UserPresence,
@@ -77,5 +86,35 @@ class TaskController(
             Outcome.Shown(withContext(Dispatchers.IO) { block() })
         } catch (ignored: IOException) {
             Outcome.Unreachable
+        } catch (ignored: com.hypermind.jarvis.auth.EnrollmentLost) {
+            // The device can no longer authenticate; the channel reports it as revoked.
+            Outcome.Unreachable
         }
+}
+
+/** The server's task API as the tracker uses it (the tracker never decides anything itself). */
+interface TaskOperations {
+    suspend fun submit(
+        input: String,
+        idempotencyKey: String =
+            java.util.UUID
+                .randomUUID()
+                .toString(),
+        onSent: () -> Unit = {},
+    ): TaskController.Outcome
+
+    suspend fun refresh(taskId: String): TaskController.Outcome
+
+    suspend fun cancel(taskId: String): TaskController.Outcome
+
+    suspend fun approve(
+        taskId: String,
+        pending: PendingAction,
+        presence: UserPresence,
+    ): TaskController.Outcome
+
+    suspend fun decline(
+        taskId: String,
+        pending: PendingAction,
+    ): TaskController.Outcome
 }

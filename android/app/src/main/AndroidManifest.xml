@@ -12,6 +12,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- So that foreground-service notification is actually shown (API 33+). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- docs/23 §7: the optional floating status overlay. The user grants it on
+         the system's own settings screen; the overlay shows state, never
+         content, never takes focus, and never approves anything. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- docs/27: push-to-talk task input, recognized on this phone. Asked for
          only when the user first taps Speak; never used in the background. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />

@@ -15,12 +15,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,12 +33,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
 import com.hypermind.jarvis.auth.ApiClient
 import com.hypermind.jarvis.auth.BiometricPresence
 import com.hypermind.jarvis.channel.ChannelService
@@ -42,13 +48,23 @@ import com.hypermind.jarvis.channel.ChannelState
 import com.hypermind.jarvis.contract.MappingState
 import com.hypermind.jarvis.contract.VoiceConfigView
 import com.hypermind.jarvis.contract.VoicePlacement
+import com.hypermind.jarvis.overlay.AppForeground
+import com.hypermind.jarvis.overlay.OverlayController
 import com.hypermind.jarvis.permissions.GridSync
+import com.hypermind.jarvis.presentation.PresentationText
+import com.hypermind.jarvis.presentation.VoiceActivity
 import com.hypermind.jarvis.push.PushRegistrar
+import com.hypermind.jarvis.tasks.TaskTracker
 import com.hypermind.jarvis.ui.AppGrid
+import com.hypermind.jarvis.ui.DeviceStatusPanel
 import com.hypermind.jarvis.ui.GridRows
 import com.hypermind.jarvis.ui.InstalledApps
+import com.hypermind.jarvis.ui.PanelContent
+import com.hypermind.jarvis.ui.SecureTouch
+import com.hypermind.jarvis.ui.StatusHeader
 import com.hypermind.jarvis.ui.TaskPanel
-import com.hypermind.jarvis.ui.TaskPanelState
+import com.hypermind.jarvis.ui.TaskPanelActions
+import com.hypermind.jarvis.ui.UserActionIntents
 import com.hypermind.jarvis.ui.VoiceControls
 import com.hypermind.jarvis.ui.theme.JarvisTheme
 import com.hypermind.jarvis.voice.AndroidOnDeviceRecognizer
@@ -57,6 +73,7 @@ import com.hypermind.jarvis.voice.RecognizerError
 import com.hypermind.jarvis.voice.Speaker
 import com.hypermind.jarvis.voice.SpeechInput
 import com.hypermind.jarvis.voice.VoiceMessages
+import com.hypermind.jarvis.voice.VoicePresence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -92,6 +109,7 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onDestroy() {
+        (application as JarvisApplication).graph.reportVoice(VoiceActivity.NONE)
         speech?.release()
         speaker?.shutdown()
         super.onDestroy()
@@ -110,11 +128,15 @@ class MainActivity : FragmentActivity() {
                 enabled = { app.graph.voiceSettings.speakResults },
                 maxChars = VoiceConfigView.DEFAULT.maxTtsChars,
             )
+        // The status line shows while the microphone is open or recognizing (display only).
+        speech?.let { input ->
+            lifecycleScope.launch { input.state.collect { app.graph.reportVoice(VoicePresence.of(it)) } }
+        }
         setContent {
             JarvisTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
                     Column(
-                        modifier = Modifier.padding(padding).padding(20.dp),
+                        modifier = Modifier.padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         Text("JARVIS", style = MaterialTheme.typography.headlineSmall)
@@ -131,6 +153,31 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+    }
+
+    override fun onContentChanged() {
+        super.onContentChanged()
+        // Approvals are made here: refuse touches while another app's window
+        // obscures this one (tapjacking), so a pending action cannot be
+        // approved through an overlay drawn on top of the confirmation card.
+        SecureTouch.protect(findViewById(android.R.id.content))
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // The overlay steps aside while JARVIS's own screen is in front.
+        AppForeground.started()
+    }
+
+    override fun onStop() {
+        AppForeground.stopped()
+        super.onStop()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Inputs without callbacks (platform availability, enrollment, push) are re-read on return.
+        (application as JarvisApplication).graph.refreshPresentation()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -200,30 +247,53 @@ class MainActivity : FragmentActivity() {
             return
         }
 
-        Text("Server: ${graph.store.serverUrl}", style = MaterialTheme.typography.bodySmall)
-        Text(describe(state), style = MaterialTheme.typography.bodyMedium)
-        when (state) {
-            is ChannelState.Stopped, is ChannelState.UpdateRequired, is ChannelState.Revoked ->
-                Button(onClick = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                    graph.connection.wanted = true
-                    ChannelService.start(this)
-                }) { Text("Connect") }
-            else ->
-                OutlinedButton(onClick = {
-                    graph.connection.wanted = false
-                    ChannelService.stop(this)
-                }) { Text("Disconnect") }
+        val presentation by graph.presentation.collectAsState()
+        var tab by rememberSaveable { mutableStateOf(0) }
+        // The one status line, on every tab (docs/23 §7).
+        StatusHeader(presentation) { action -> onUserAction(graph, action) }
+        TabRow(selectedTabIndex = tab) {
+            TABS.forEachIndexed { index, title ->
+                Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
+            }
         }
-        if (state is ChannelState.Connected) ConnectedPanel(app)
-        if (graph.pushOffered) PushToggle(app)
-        var showGrid by remember { mutableStateOf(false) }
-        OutlinedButton(
-            onClick = { showGrid = !showGrid },
-        ) { Text(if (showGrid) "Hide app permissions" else "App permissions") }
-        if (showGrid) Grid(app)
+        when (tab) {
+            TAB_TASKS -> TaskSurface(app)
+            TAB_PHONE -> {
+                Text("Server: ${graph.store.serverUrl}", style = MaterialTheme.typography.bodySmall)
+                when (state) {
+                    is ChannelState.Stopped, is ChannelState.UpdateRequired, is ChannelState.Revoked ->
+                        Button(onClick = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            graph.connection.wanted = true
+                            ChannelService.start(this)
+                        }) { Text("Connect") }
+                    else ->
+                        OutlinedButton(onClick = {
+                            graph.connection.wanted = false
+                            ChannelService.stop(this)
+                        }) { Text("Disconnect") }
+                }
+                DeviceStatusPanel(presentation.deviceContext) { action -> onUserAction(graph, action) }
+            }
+            TAB_PERMISSIONS -> Grid(app)
+            else -> {
+                if (graph.pushOffered) PushToggle(app)
+                OverlayToggle(app)
+                RemovePhone(app) { enrolled = false }
+            }
+        }
+    }
+
+    /** "Remove this phone": revoke server-side (best effort) and wipe everything here. */
+    @Composable
+    private fun RemovePhone(
+        app: JarvisApplication,
+        onRemoved: () -> Unit,
+    ) {
+        val graph = app.graph
+        val scope = rememberCoroutineScope()
         OutlinedButton(onClick = {
             scope.launch {
                 withContext(Dispatchers.IO) {
@@ -240,10 +310,105 @@ class MainActivity : FragmentActivity() {
                 ChannelService.stop(this@MainActivity)
                 graph.forgetKey()
                 graph.revocation.wipe()
-                enrolled = false
+                onRemoved()
                 notice.value = "This phone was removed."
             }
         }) { Text("Remove this phone") }
+    }
+
+    /**
+     * docs/23 §7: the status header and the task panel, both reading the app's
+     * one presentation stream and the task tracker (the server's answers).
+     * Every action goes to the tracker, i.e. to the server.
+     */
+    @Composable
+    private fun TaskSurface(app: JarvisApplication) {
+        val graph = app.graph
+        val presentation by graph.presentation.collectAsState()
+        val snapshot by graph.taskTracker.snapshot.collectAsState()
+        val busy by graph.taskTracker.busy.collectAsState()
+        // docs/27: where speech runs is the server's choice; asked again on each connect.
+        val channelState by graph.channel.state.collectAsState()
+        val connected = channelState is ChannelState.Connected
+        var voiceView by remember { mutableStateOf(VoiceConfigView.DEFAULT) }
+        LaunchedEffect(connected) {
+            if (!connected) return@LaunchedEffect
+            voiceView =
+                withContext(Dispatchers.IO) {
+                    try {
+                        graph.api().voiceConfig(graph.sessions.accessToken().first)
+                    } catch (ignored: IOException) {
+                        VoiceConfigView.DEFAULT
+                    } catch (ignored: com.hypermind.jarvis.auth.EnrollmentLost) {
+                        VoiceConfigView.DEFAULT
+                    }
+                }
+        }
+        val heard = speech?.state?.collectAsState()
+        // Read the server's answer aloud only if the user turned it on (off by default).
+        val answer = (PanelContent.of(snapshot, presentation) as? PanelContent.Answer)?.text
+        LaunchedEffect(answer) {
+            if (answer != null && voiceView.tts == VoicePlacement.DEVICE) speaker?.speak(answer)
+        }
+        val presence =
+            BiometricPresence(
+                this,
+                title = getString(R.string.step_up_title),
+                subtitle = getString(R.string.step_up_subtitle),
+                cancel = getString(R.string.step_up_cancel),
+            )
+        TaskPanel(
+            state = presentation,
+            snapshot = snapshot,
+            busy = busy,
+            canSubmit = TaskTracker.terminal(snapshot),
+            actions =
+                TaskPanelActions(
+                    submit = { text -> graph.taskTracker.submit(text) },
+                    approve = { taskId, pending -> graph.taskTracker.approve(taskId, pending, presence) },
+                    decline = { taskId, pending -> graph.taskTracker.decline(taskId, pending) },
+                    cancel = { graph.taskTracker.cancel() },
+                    retry = { graph.taskTracker.retry() },
+                    dismiss = { graph.taskTracker.dismiss() },
+                ),
+            draft = draft.value,
+            voice =
+                heard?.value?.takeIf { voiceView.stt == VoicePlacement.DEVICE }?.let { current ->
+                    VoiceControls(
+                        state = current,
+                        onListen = { listen() },
+                        onStop = { speech?.stopListening() },
+                    )
+                },
+        )
+        if (voiceView.tts == VoicePlacement.DEVICE) SpeakResultsToggle(app)
+    }
+
+    /** Where a status's suggested action leads. Navigation only — none of it approves or grants anything. */
+    private fun onUserAction(
+        graph: AppGraph,
+        action: PresentationText.UserAction,
+    ) {
+        when (action) {
+            PresentationText.UserAction.CONNECT -> {
+                graph.connection.wanted = true
+                ChannelService.start(this)
+            }
+            PresentationText.UserAction.TRY_AGAIN -> graph.taskTracker.retry()
+            PresentationText.UserAction.OPEN_SHIZUKU -> {
+                // Running but JARVIS not allowed yet: Shizuku's own prompt. Otherwise open Shizuku.
+                graph.requestShizukuPermission()
+                UserActionIntents.of(this, action)?.let(::startActivity)
+                    ?: run { notice.value = "Install and start Shizuku, then allow JARVIS in it." }
+            }
+            PresentationText.UserAction.OPEN_ACCESSIBILITY_SETTINGS,
+            PresentationText.UserAction.OPEN_NOTIFICATION_ACCESS_SETTINGS,
+            -> UserActionIntents.of(this, action)?.let(::startActivity)
+            PresentationText.UserAction.SIGN_IN_AGAIN -> notice.value = "Sign in again to use this phone with JARVIS."
+            PresentationText.UserAction.UPDATE_APP ->
+                notice.value = "Install the JARVIS app version that matches your server."
+            PresentationText.UserAction.OPEN_APP_TO_APPROVE -> Unit
+        }
     }
 
     /**
@@ -267,7 +432,7 @@ class MainActivity : FragmentActivity() {
             Switch(checked = on, onCheckedChange = { wanted ->
                 on = wanted
                 scope.launch {
-                    val status = withContext(Dispatchers.IO) { graph.push.setOptedIn(wanted) }
+                    val status = withContext(Dispatchers.IO) { graph.setPushOptedIn(wanted) }
                     note =
                         when (status) {
                             is PushRegistrar.Status.Unavailable -> "Push is not available on this phone."
@@ -280,61 +445,28 @@ class MainActivity : FragmentActivity() {
         note?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     }
 
-    /** The task box, its confirmation card, and push-to-talk (docs/23 §5.4, docs/27). */
+    /**
+     * docs/23 §7: the floating status overlay — off until turned on here, and
+     * shown only once the system's "display over other apps" is granted. It
+     * shows state only and never approves anything.
+     */
     @Composable
-    private fun ConnectedPanel(app: JarvisApplication) {
+    private fun OverlayToggle(app: JarvisApplication) {
         val graph = app.graph
-        val scope = rememberCoroutineScope()
-        var panel by remember { mutableStateOf<TaskPanelState>(TaskPanelState.Idle) }
-        var voiceView by remember { mutableStateOf(VoiceConfigView.DEFAULT) }
-        LaunchedEffect(Unit) {
-            voiceView =
-                withContext(Dispatchers.IO) {
-                    try {
-                        graph.api().voiceConfig(graph.sessions.accessToken().first)
-                    } catch (ignored: IOException) {
-                        VoiceConfigView.DEFAULT
-                    } catch (ignored: com.hypermind.jarvis.auth.EnrollmentLost) {
-                        VoiceConfigView.DEFAULT
-                    }
+        val on by graph.overlaySettings.enabled.collectAsState()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Floating status over other apps", style = MaterialTheme.typography.bodyMedium)
+            Switch(checked = on, onCheckedChange = { wanted ->
+                if (wanted && !OverlayController.canDraw(this@MainActivity)) {
+                    startActivity(OverlayController.permissionIntent(this@MainActivity))
                 }
+                graph.overlaySettings.set(wanted)
+            })
         }
-        val heard = speech?.state?.collectAsState()
-        // Read the answer aloud only if the user turned it on (off by default).
-        LaunchedEffect(panel) {
-            val answer = panel as? TaskPanelState.Answer
-            if (answer != null && voiceView.tts == VoicePlacement.DEVICE) speaker?.speak(answer.text)
-        }
-        val presence =
-            BiometricPresence(
-                this,
-                title = getString(R.string.step_up_title),
-                subtitle = getString(R.string.step_up_subtitle),
-                cancel = getString(R.string.step_up_cancel),
-            )
-        TaskPanel(
-            state = panel,
-            onSubmit = { text ->
-                panel = TaskPanelState.Working
-                scope.launch { panel = TaskPanelState.of(graph.tasks.submit(text)) }
-            },
-            onApprove = { taskId, pending ->
-                scope.launch { panel = TaskPanelState.of(graph.tasks.approve(taskId, pending, presence)) }
-            },
-            onDecline = { taskId, pending ->
-                scope.launch { panel = TaskPanelState.of(graph.tasks.decline(taskId, pending)) }
-            },
-            draft = draft.value,
-            voice =
-                heard?.value?.takeIf { voiceView.stt == VoicePlacement.DEVICE }?.let { current ->
-                    VoiceControls(
-                        state = current,
-                        onListen = { listen() },
-                        onStop = { speech?.stopListening() },
-                    )
-                },
-        )
-        if (voiceView.tts == VoicePlacement.DEVICE) SpeakResultsToggle(app)
     }
 
     @Composable
@@ -382,18 +514,11 @@ class MainActivity : FragmentActivity() {
         )
     }
 
-    private fun describe(state: ChannelState): String =
-        when (state) {
-            is ChannelState.Stopped -> "Not connected."
-            is ChannelState.Connecting -> "Connecting…"
-            is ChannelState.Connected -> "Connected."
-            is ChannelState.Reconnecting -> "Reconnecting: ${state.reason}."
-            is ChannelState.Revoked -> "This phone was removed from your account. Sign in again to re-enroll."
-            is ChannelState.UpdateRequired -> "Update the app: it no longer matches your server."
-            is ChannelState.Disabled -> "Your server has the device channel turned off."
-        }
-
     companion object {
+        private val TABS = listOf("Tasks", "This phone", "App permissions", "Settings")
+        private const val TAB_TASKS = 0
+        private const val TAB_PHONE = 1
+        private const val TAB_PERMISSIONS = 2
         const val EXTRA_NOTICE = "notice"
         const val EXTRA_REMINDER_DELIVERY = "reminder_delivery"
         private const val MAX_DRAFT_CHARS = 8000
