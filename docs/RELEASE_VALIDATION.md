@@ -59,7 +59,7 @@ authority, and why it is not one:
 | Android | The phone is a second *refusing* layer, never a granting one. It holds no server secret (APK scan, repo scan). Identity is server-derived; a platform report cannot carry a `device_id`. Mutation M24–M26 prove the device guard's refusals are tested. |
 | Voice | A transcript only fills the task box. `SpeakerContext.is_authorization_signal` is `Literal[False]` plus a DB CHECK. No voice field on submit or confirm (strict bodies). Mutation M22. |
 | Scheduler | Cannot import runtime, tools, devices, authority, secrets, memory or judge (two import contracts). Firing delivers a message only. Mutation M23. |
-| Judge | Not built. The import contract "The Judge is never an authority" already holds (`server/evaluation` is empty). |
+| Judge | J1–J2 only (PR #23, merged during Phase H): contract, TaskTrace, providers, metering and target registry; `evaluation.enabled: false` by default; **not wired** into the runtime or the composition root. The import contracts "The Judge is never an authority", "The runtime never depends on the Judge" and "The Judge opens no process or socket" hold. Phase H audited its boundary only; the Judge's behaviour is its own phase's work. |
 | Memory | Hydrated facts are data in context; memory cannot import control or device code. Hydration re-checks `readable()` (mutation M19). |
 | Push receipt | The payload is exactly `{"type":"wake"}` (ANDC-T9, mutation M21). A wake resumes nothing; only an authenticated channel connect does (`test_a_failed_authentication_resumes_nothing`). |
 | Client / local UI state | The server re-derives the principal on every request (AUTH-T7). Presentation code cannot import privileged, execution or credential code (`PresentationBoundaryTest`). The overlay has no approve path. |
@@ -233,7 +233,7 @@ decision ratified".
 | OD-EXEC-2 / OD-BG-1 | Break-glass (task-bound form); transcribe into the register | code implements the ratified form | **OWNER-RATIFIED** (docs/20); transcription **OPEN** (owner to authorize) |
 | OD-BG-2 / OD-BG-3 | Disposable-host dev switch · break-glass beyond `system.restricted` | neither built | **OPEN** |
 | OD-SUP-1 / OD-SUP-3 | Emergency-stop split · escalate to a paid worker | implemented recommendation · default no | **OPEN** |
-| OD-JDG-1..4 | Judge: abstraction, budget, provider, usage kind | Judge not built | **OPEN** |
+| OD-JDG-1..4 | Judge: abstraction, budget, provider, usage kind | J1–J2 contract merged (PR #23), off, not wired | **OPEN** |
 | OD-DASH-1 | Read-only dashboard + separate control endpoints | control endpoints exist; dashboard not built | **OPEN** |
 | OD-DP-9 | Ratify DecisionProvider | not built | **OPEN** |
 | OD-MEM-A / OD-MEM-B | PRD §41 reading · extraction mechanism (a) | implemented recommendation | **OPEN** |

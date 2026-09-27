@@ -243,7 +243,10 @@ detachable.*
 **Still not built** (each is a later, separate subsystem; nothing in the
 runtime depends on it): the operator **dashboard** (`/admin/*` views, docs/28;
 the superuser control endpoints `/admin/control/*` do exist), the **Judge**
-(docs/19; `server/evaluation` is empty), **Darwin**, a real
+beyond its contract (docs/19: J1–J2 — the evaluation contract, TaskTrace,
+providers, metering and the improvement-target registry — arrived in PR #23;
+`evaluation.enabled` is `false` by default and nothing in the runtime or the
+composition root calls it yet), **Darwin**, a real
 **IntelligenceProvider** (only `GET /intelligence/status` → `{enabled: false}`),
 account deletion (`DELETE /account`, 02 §3), and `PUT /config/agent` (02 §6).
 Absent means absent: no capability, route or code path pretends otherwise.
