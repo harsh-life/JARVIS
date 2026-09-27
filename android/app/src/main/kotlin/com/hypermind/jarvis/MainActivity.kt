@@ -40,12 +40,16 @@ import com.hypermind.jarvis.contract.MappingState
 import com.hypermind.jarvis.overlay.AppForeground
 import com.hypermind.jarvis.overlay.OverlayController
 import com.hypermind.jarvis.permissions.GridSync
+import com.hypermind.jarvis.presentation.PresentationText
 import com.hypermind.jarvis.push.PushRegistrar
+import com.hypermind.jarvis.tasks.TaskTracker
 import com.hypermind.jarvis.ui.AppGrid
 import com.hypermind.jarvis.ui.GridRows
 import com.hypermind.jarvis.ui.InstalledApps
+import com.hypermind.jarvis.ui.SecureTouch
+import com.hypermind.jarvis.ui.StatusHeader
 import com.hypermind.jarvis.ui.TaskPanel
-import com.hypermind.jarvis.ui.TaskPanelState
+import com.hypermind.jarvis.ui.TaskPanelActions
 import com.hypermind.jarvis.ui.theme.JarvisTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -86,6 +90,14 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+    }
+
+    override fun onContentChanged() {
+        super.onContentChanged()
+        // Approvals are made here: refuse touches while another app's window
+        // obscures this one (tapjacking), so a pending action cannot be
+        // approved through an overlay drawn on top of the confirmation card.
+        SecureTouch.protect(findViewById(android.R.id.content))
     }
 
     override fun onStart() {
@@ -178,30 +190,7 @@ class MainActivity : FragmentActivity() {
                     ChannelService.stop(this)
                 }) { Text("Disconnect") }
         }
-        if (state is ChannelState.Connected) {
-            var panel by remember { mutableStateOf<TaskPanelState>(TaskPanelState.Idle) }
-            val presence =
-                BiometricPresence(
-                    this,
-                    title = getString(R.string.step_up_title),
-                    subtitle = getString(R.string.step_up_subtitle),
-                    cancel = getString(R.string.step_up_cancel),
-                )
-            TaskPanel(
-                state = panel,
-                onSubmit = { text ->
-                    panel = TaskPanelState.Working
-                    scope.launch { panel = TaskPanelState.of(graph.tasks.submit(text)) }
-                },
-                onApprove = { taskId, pending ->
-                    scope.launch { panel = TaskPanelState.of(graph.tasks.approve(taskId, pending, presence)) }
-                },
-                onDecline = { taskId, pending ->
-                    scope.launch { panel = TaskPanelState.of(graph.tasks.decline(taskId, pending)) }
-                },
-                draft = draft.value,
-            )
-        }
+        TaskSurface(app)
         if (graph.pushOffered) PushToggle(app)
         OverlayToggle(app)
         var showGrid by remember { mutableStateOf(false) }
@@ -229,6 +218,58 @@ class MainActivity : FragmentActivity() {
                 notice.value = "This phone was removed."
             }
         }) { Text("Remove this phone") }
+    }
+
+    /**
+     * docs/23 §7: the status header and the task panel, both reading the app's
+     * one presentation stream and the task tracker (the server's answers).
+     * Every action goes to the tracker, i.e. to the server.
+     */
+    @Composable
+    private fun TaskSurface(app: JarvisApplication) {
+        val graph = app.graph
+        val presentation by graph.presentation.collectAsState()
+        val snapshot by graph.taskTracker.snapshot.collectAsState()
+        val busy by graph.taskTracker.busy.collectAsState()
+        val presence =
+            BiometricPresence(
+                this,
+                title = getString(R.string.step_up_title),
+                subtitle = getString(R.string.step_up_subtitle),
+                cancel = getString(R.string.step_up_cancel),
+            )
+        StatusHeader(presentation) { action -> onUserAction(graph, action) }
+        TaskPanel(
+            state = presentation,
+            snapshot = snapshot,
+            busy = busy,
+            canSubmit = TaskTracker.terminal(snapshot),
+            actions =
+                TaskPanelActions(
+                    submit = { text -> graph.taskTracker.submit(text) },
+                    approve = { taskId, pending -> graph.taskTracker.approve(taskId, pending, presence) },
+                    decline = { taskId, pending -> graph.taskTracker.decline(taskId, pending) },
+                    cancel = { graph.taskTracker.cancel() },
+                    retry = { graph.taskTracker.retry() },
+                    dismiss = { graph.taskTracker.dismiss() },
+                ),
+            draft = draft.value,
+        )
+    }
+
+    /** Where a status's suggested action leads. Navigation only — none of it approves or grants anything. */
+    private fun onUserAction(
+        graph: AppGraph,
+        action: PresentationText.UserAction,
+    ) {
+        when (action) {
+            PresentationText.UserAction.CONNECT -> {
+                graph.connection.wanted = true
+                ChannelService.start(this)
+            }
+            PresentationText.UserAction.TRY_AGAIN -> graph.taskTracker.retry()
+            else -> Unit
+        }
     }
 
     /**
