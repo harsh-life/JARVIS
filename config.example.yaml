@@ -111,7 +111,7 @@ evaluation:
     enabled: false
   may_request_stop: false
   budget: 0.0               # the Judge's own daily budget; 0.0 refuses a paid Judge call
-  budget_scope: own_and_global   # OD-JDG-2 is open; see docs/DECISION_REGISTER.md §2F
+  budget_scope: own_and_global   # OD-JDG-2 is open; see docs/DECISION_REGISTER.md §2G
 
 # Reminders tied to a task the user asked for (docs/22). A firing reminder delivers a message to the
 # owner's own devices; it never executes anything. Starting a task from it is

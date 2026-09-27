@@ -310,14 +310,12 @@ def build_application(
     # an approved change keeps applying after the Judge is switched off.
     tuning = TuningCache(storage)
     switchboard = EvaluationSwitchboard(config.evaluation)
-    observer = _LateObserver()
     runtime = AgentRuntime(
         bounds=bounds_from_config(config),
         concurrency=ConcurrencyGate(concurrency_from_config(config)),
         tools=tools,
         breaker_limits=breaker_limits_from_config(config),
         recovery=recovery_from_config(config),
-        observer=observer,
     )
     facade = AgentTaskFacade(
         runtime=runtime,
@@ -345,7 +343,8 @@ def build_application(
     )
     evaluation_jobs = None
     if evaluation is not None:
-        observer.target, evaluation_jobs = evaluation
+        observer, evaluation_jobs = evaluation
+        runtime.attach_observer(observer)
         background.append(evaluation_jobs.queue)
     app = create_app(
         config=config,
@@ -383,22 +382,6 @@ def build_application(
     # docs/23 §4: the optional push wake — nothing at all unless configured.
     attach_push_wake(config, app, device_hub)
     return app
-
-
-class _LateObserver:
-    """The runtime's `TaskObserver`, bound after construction: the Judge's
-    breaker port needs the runtime, and the runtime needs the observer. With
-    no target (evaluation disabled) every notification is a no-op."""
-
-    target = None
-
-    def step_completed(self, task_id, tool_calls, snapshot) -> None:
-        if self.target is not None:
-            self.target.step_completed(task_id, tool_calls, snapshot)
-
-    def task_ended(self, snapshot) -> None:
-        if self.target is not None:
-            self.target.task_ended(snapshot)
 
 
 def _open_memory_provider(config: AppConfig) -> MemoryProvider:

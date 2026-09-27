@@ -35,7 +35,7 @@ SU = {"Authorization": f"Superuser {TOKEN}"}
 ADMIN = "/api/v1/admin"
 VIEWS = ["banner", "health", "tasks", "recovery", "break-glass", "evaluations", "usage", "memory", "devices",
          "audit", "configuration"]
-SECRET = "sk-proj-PLANTEDsecretVALUE0123456789abcd"
+SECRET = "sk-proj-PLANTEDsecretVALUE0123456789abcd"  # TEST-ONLY fixture
 PRIVATE_TEXT = "my private medical appointment is on tuesday"
 
 
@@ -209,7 +209,7 @@ async def test_configuration_shows_handles_and_whether_they_resolve(console):
 async def test_a_credential_inside_an_ordinary_setting_is_masked(make_harness, monkeypatch):
     monkeypatch.setenv(SUPERUSER_TOKEN_ENV, TOKEN)
     h = await make_harness()
-    h.config.__dict__["database_url"] = "postgresql+asyncpg://jarvis:hunter2-db-password@db.internal/jarvis"
+    h.config.__dict__["database_url"] = "postgresql+asyncpg://jarvis:hunter2-db-password@db.internal/jarvis"  # TEST-ONLY fixture
     blob = json.dumps((await h.client.get(f"{ADMIN}/configuration", headers=SU)).json())
     assert "hunter2-db-password" not in blob
 
