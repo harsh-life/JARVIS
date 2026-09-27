@@ -7,8 +7,9 @@
   canRetrieveWindowContent: the tree (ladder rung 1).
   canTakeScreenshot: the on-device OCR rung (the frame never leaves the
   device) and, as its own operation, capture_screenshot.
-  Gestures are not requested in this build: UI actions arrive with their own
-  primitives (docs/23 §5.3).
+  No gesture capability: UI actions are typed Accessibility actions (click,
+  directional scroll, set text) on the node a selector found in the named
+  app, never a gesture at raw coordinates (08 §7, docs/23 §5.3).
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"

@@ -18,6 +18,7 @@ import com.hypermind.jarvis.contract.DeviceLocalState
 import com.hypermind.jarvis.contract.MappingState
 import com.hypermind.jarvis.perception.AccessibilityScreenCapture
 import com.hypermind.jarvis.perception.BatteryPrimitive
+import com.hypermind.jarvis.perception.DeviceActions
 import com.hypermind.jarvis.perception.JarvisAccessibilityService
 import com.hypermind.jarvis.perception.JarvisNotificationListener
 import com.hypermind.jarvis.perception.MlKitScreenOcr
@@ -25,6 +26,7 @@ import com.hypermind.jarvis.perception.NotificationPrimitive
 import com.hypermind.jarvis.perception.Platforms
 import com.hypermind.jarvis.perception.ScreenPerception
 import com.hypermind.jarvis.perception.ScreenshotPrimitive
+import com.hypermind.jarvis.perception.UiActions
 import com.hypermind.jarvis.permissions.AppPolicyStore
 import com.hypermind.jarvis.permissions.GridStore
 import kotlinx.coroutines.CoroutineScope
@@ -167,7 +169,23 @@ class AppGraph(
                     screen = JarvisAccessibilityService.screen,
                     ocr = MlKitScreenOcr { JarvisAccessibilityService.instance },
                 )
+            val ui =
+                UiActions(
+                    JarvisAccessibilityService.screen,
+                    object : DeviceActions {
+                        override fun globalAction(name: String) =
+                            JarvisAccessibilityService.instance?.globalAction(name) ?: false
+
+                        override fun launch(packageName: String) =
+                            JarvisAccessibilityService.instance?.launch(packageName) ?: false
+                    },
+                )
             return mapOf(
+                "accessibility.tap" to ui.tap,
+                "accessibility.swipe" to ui.swipe,
+                "accessibility.input_text" to ui.inputText,
+                "accessibility.global_action" to ui.globalAction,
+                "android.intent.launch_activity" to ui.launch,
                 "accessibility.read_tree" to screen.readTree,
                 "accessibility.read_element" to screen.readElement,
                 "android.api.battery_state" to BatteryPrimitive(BatteryPrimitive.reader(context.applicationContext)),

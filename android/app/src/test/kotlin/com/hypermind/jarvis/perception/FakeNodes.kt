@@ -16,11 +16,20 @@ data class FakeNode(
     override val selected: Boolean = false,
     override val password: Boolean = false,
     override val visible: Boolean = true,
+    override val focused: Boolean = false,
     val children: List<FakeNode> = emptyList(),
+    val accepts: Boolean = true,
 ) : A11yNode {
+    val performed = mutableListOf<NodeAction>()
+
     override val childCount: Int get() = children.size
 
     override fun child(index: Int): A11yNode? = children.getOrNull(index)
+
+    override fun perform(action: NodeAction): Boolean {
+        performed += action
+        return accepts
+    }
 }
 
 fun layout(vararg children: FakeNode) = FakeNode(className = "android.widget.FrameLayout", children = children.toList())
