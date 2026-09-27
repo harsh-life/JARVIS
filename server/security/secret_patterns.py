@@ -80,4 +80,32 @@ def find_secret(text: str) -> str | None:
     return None
 
 
-__all__ = ["find_secret"]
+REDACTION_MARK = "[redacted:{name}]"
+
+
+def redact_secrets(text: str) -> tuple[str, list[str]]:
+    """`text` with every secret-shaped span replaced, and the pattern names hit.
+
+    For text that must leave the process for *evaluation* (19 §4, JDG-T6) —
+    not for persistence, where `find_secret`'s reject-don't-redact rule holds.
+    The same patterns and the same entropy test as `find_secret`, so anything
+    `find_secret` would flag is gone afterwards. Only names are returned."""
+
+    hits: list[str] = []
+    for name, pattern in _PATTERNS:
+        text, count = pattern.subn(REDACTION_MARK.format(name=name), text)
+        if count:
+            hits.append(name)
+
+    def _token(match: re.Match[str]) -> str:
+        if _looks_random(match.group(0)):
+            if "high_entropy_token" not in hits:
+                hits.append("high_entropy_token")
+            return REDACTION_MARK.format(name="high_entropy_token")
+        return match.group(0)
+
+    text = _TOKEN_RE.sub(_token, text)
+    return text, hits
+
+
+__all__ = ["REDACTION_MARK", "find_secret", "redact_secrets"]
