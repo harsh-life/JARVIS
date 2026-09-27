@@ -20,10 +20,10 @@ Three rules this module exists to hold (18 §0, §5.2):
   done by the runtime (`AgentRuntime._emergency_stop`), because they need the
   request's transaction.
 
-Scope of this build unit (U1): task-scoped trips from the three in-task
-triggers. Operator stops at user/device/global scope and the global latch
-(18 §5.4) and the evaluator trigger (19 §6) are later units; they will call the
-same `trip()`.
+Every trigger calls the same `trip()`: the three in-task counters here, the
+operator's stops and the global latch (18 §5.4, `server/composition/
+supervisor.py`), and the evaluator's stop request (19 §6, `server/composition/
+evaluation.py`) — the last only if the operator opted in.
 """
 
 from __future__ import annotations
@@ -52,6 +52,10 @@ class TripSource(str, Enum):
     # itself clear).
     OPERATOR = "operator"
     GLOBAL_LATCH = "global_latch"
+    # 19 §6: an EvaluationProvider's stop request, handed to `trip()` by the
+    # composition root — and only when the operator opted in
+    # (`evaluation.may_request_stop`). One trigger among many (18 §5.1).
+    EVALUATOR = "evaluator"
 
 
 # Refusals by an execution boundary (09 sandbox, 10 egress, the process

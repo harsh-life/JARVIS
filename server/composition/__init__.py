@@ -27,9 +27,13 @@ from server.agent.breaker import BreakerLimits
 from server.agent.recovery import RecoveryPolicy
 from server.composition.break_glass import BreakGlassRegistry
 from server.composition.execution_tools import build_execution_tools
+from server.composition.console import build_console
+from server.composition.evaluation import build_evaluation
 from server.composition.facade import AgentTaskFacade
+from server.composition.improvements import EvaluationControl, EvaluationSwitchboard, TuningCache
 from server.composition.latch import InProcessLatch
 from server.composition.supervisor import SupervisorControl
+from server.evaluation.provider import EvaluationProvider
 from server.execution.device_hub import DeviceHub
 from server.composition.models import ProviderFactory, spec_from_entry
 from server.composition.push import attach_push_wake
@@ -114,6 +118,7 @@ def usage_limits_from_config(config: AppConfig) -> UsageLimits:
         global_calls_per_minute=rates.global_requests_per_minute,
         per_user_daily_cost_limit=budgets.per_user_daily_cost_limit,
         global_daily_cost_limit=budgets.global_daily_cost_limit,
+        evaluation_counts_toward_global_budget=config.evaluation.budget_scope == "own_and_global",
     )
 
 
@@ -205,6 +210,7 @@ def build_application(
     vault_index: VaultIndex | None = None,
     scheduler_tool: bool | None = None,
     voice_transport: "httpx.AsyncBaseTransport | None" = None,
+    evaluation_provider: EvaluationProvider | None = None,
 ) -> FastAPI:
     """Assemble the full server: Security Core, runtime, tools, models, memory.
 
@@ -285,6 +291,7 @@ def build_application(
 
         storage = SQLAlchemyStorageBackend(config.database_url)
     reminder_firer: ReminderFirer | None = None
+    scheduler_runner = None
     background = []
     if scheduler_service is not None:
         reminder_firer = ReminderFirer(
@@ -293,16 +300,24 @@ def build_application(
             channel=HubReminderChannel(device_hub) if device_hub is not None else None,
             wake=HubWake(device_hub) if device_hub is not None else None,
         )
-        background.append(SchedulerRunner(reminder_firer, poll_seconds=config.scheduler.poll_seconds))
+        scheduler_runner = SchedulerRunner(reminder_firer, poll_seconds=config.scheduler.poll_seconds)
+        background.append(scheduler_runner)
 
     usage_policy = UsagePolicy(limits=usage_limits_from_config(config))
     latch = InProcessLatch()
+    # 19 §9: approved configuration versions, and the Judge's switches (each
+    # capped by `evaluation.*`). Both exist whether or not the Judge is on, so
+    # an approved change keeps applying after the Judge is switched off.
+    tuning = TuningCache(storage)
+    switchboard = EvaluationSwitchboard(config.evaluation)
+    observer = _LateObserver()
     runtime = AgentRuntime(
         bounds=bounds_from_config(config),
         concurrency=ConcurrencyGate(concurrency_from_config(config)),
         tools=tools,
         breaker_limits=breaker_limits_from_config(config),
         recovery=recovery_from_config(config),
+        observer=observer,
     )
     facade = AgentTaskFacade(
         runtime=runtime,
@@ -320,7 +335,18 @@ def build_application(
         break_glass=break_glass,
         memory=memory_facade,
         vault=vault_facade,
+        tuning=tuning,
     )
+    # 19: the Judge — nothing at all unless `evaluation.enabled`.
+    evaluation = build_evaluation(
+        config, runtime=runtime, storage=storage, factory=factory, tuning=tuning, switches=switchboard,
+        environment=facade.environment, break_glass=break_glass, secret_store=core.secret_store,
+        judge=evaluation_provider,
+    )
+    evaluation_jobs = None
+    if evaluation is not None:
+        observer.target, evaluation_jobs = evaluation
+        background.append(evaluation_jobs.queue)
     app = create_app(
         config=config,
         storage=storage,
@@ -343,10 +369,36 @@ def build_application(
         # docs/27: voice is detachable — the facade exists either way, and a
         # direction placed on the device or off simply has no server provider.
         voice_port=build_voice(config, core=core, usage=usage_policy, transport=voice_transport),
+        # 19 §9 / 28 §1: the Judge's control path — superuser only, owned here,
+        # not by the dashboard.
+        evaluation_control=EvaluationControl(switchboard=switchboard, tuning=tuning, storage=storage),
+        # 28: the operator console — read-only views over snapshots.
+        operator_console=build_console(
+            config, runtime=runtime, latch=latch, break_glass=break_glass, core=core, factory=factory,
+            memory=memory_facade, provider=provider, vault=vault_facade, device_hub=device_hub,
+            scheduler_runner=scheduler_runner, switchboard=switchboard, jobs=evaluation_jobs, storage=storage,
+        ),
     )
+    app.state.evaluation = evaluation_jobs
     # docs/23 §4: the optional push wake — nothing at all unless configured.
     attach_push_wake(config, app, device_hub)
     return app
+
+
+class _LateObserver:
+    """The runtime's `TaskObserver`, bound after construction: the Judge's
+    breaker port needs the runtime, and the runtime needs the observer. With
+    no target (evaluation disabled) every notification is a no-op."""
+
+    target = None
+
+    def step_completed(self, task_id, tool_calls, snapshot) -> None:
+        if self.target is not None:
+            self.target.step_completed(task_id, tool_calls, snapshot)
+
+    def task_ended(self, snapshot) -> None:
+        if self.target is not None:
+            self.target.task_ended(snapshot)
 
 
 def _open_memory_provider(config: AppConfig) -> MemoryProvider:

@@ -6,12 +6,14 @@ runtime's observer only *enqueues* — a synchronous, non-blocking call — so a
 evaluation can never delay, fail or alter the task it is about. A full queue
 drops the job (the drop is counted and logged, never retried into the task's
 path). The worker starts on first use, so it runs wherever the app's event
-loop runs; it is also a lifespan service so shutdown cancels it cleanly.
+loop runs, in a fresh `contextvars.Context`; it is also a lifespan service so
+shutdown cancels it cleanly.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 from typing import Awaitable, Callable
 
@@ -43,7 +45,12 @@ class EvaluationQueue:
 
     def _ensure_worker(self) -> None:
         if self._worker is None or self._worker.done():
-            self._worker = asyncio.get_running_loop().create_task(self._loop(), name="evaluation-runner")
+            # A fresh context: nothing request-scoped (a secret resolver bound
+            # to a request's transaction, a request id) is inherited by the
+            # Judge's worker from whichever request happened to start it.
+            self._worker = asyncio.get_running_loop().create_task(
+                self._loop(), name="evaluation-runner", context=contextvars.Context()
+            )
 
     async def _loop(self) -> None:
         while True:
