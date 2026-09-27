@@ -122,6 +122,13 @@ integration-hardening pass through U6, not bugs to work around:
   first and write only after the stopped task has released the lock. Serving
   concurrent users smoothly needs a multi-writer store (`database_url` is a
   config change; see `server/storage`), which is out of scope for this build.
+  *Phase H measured this at pilot size (ten users, one shared graph —
+  `tests/memory/test_pilot_concurrency.py`): isolation and the per-principal
+  caps hold under concurrency, but while one user's task runs another user's
+  write is refused `503 storage`, so PRD #32 (fairness under ~10-device load)
+  is **not met** on SQLite. No PostgreSQL (or other multi-writer) driver is
+  declared or tested, so "a config change" is unvalidated. The decision is
+  `docs/DECISION_REGISTER.md` §2F H-1.*
 - **A restart fails what it interrupted, closed.** The transcript and any
   paused action are volatile (MEM-001). At startup, before the first request,
   every task left non-terminal is closed — `confirmation_state_lost` if it was

@@ -119,7 +119,7 @@ names remain `[PROPOSED]` until the owner signs them.
 | (new) | Step-up for approving `high_irreversible` actions (03 §5.5, docs/23 §3) | **Re-attestation, not token age.** The device refreshes its access token in the background with its proof, so token freshness proves nobody is present. The confirm path now requires a signature over a single-use, 60 s server challenge by the device's **step-up key** — ECDSA P-256 in the Android Keystore, usable only after the user's biometric or device credential — within 5 minutes. The key may be registered only in the 15-minute window after the device was enrolled through the interactive login (or replaced after re-attesting with the old one), so a stolen device credential alone cannot plant one. A device without a step-up key (no secure lock screen) cannot approve tier-4 actions until re-enrolled. Other step-up uses (credential rotation) keep 03's token-freshness rule. | `server/auth/step_up.py`, migration `…_device_step_up_key` |
 | (new) | Waiting for an on-device dependency (docs/23 §5.3) | Task status `waiting_for_platform`: a device operation refused `platform_unavailable` (e.g. Shizuku after a reboot) pauses the **task**, never the operation — nothing is queued on the device. Bounded: `max_platform_waits` 2 per task, `max_platform_wait_seconds` 600 each; expiry fails the task `platform_unavailable`. Resumed only when **that** device reports **that** dependency available; the call is then proposed again through every check and the engine (a revoked grant is honoured; a consequential action needs a **new** confirmation), and a fresh operation is built. Volatile like a paused confirmation: a restart fails it closed. | `server/agent/runtime.py`, migration `…_agent_task_waiting_for_platform` |
 | (new) | The per-app grid's server side (PRD §13, docs/23 §5.2) | Each ON toggle is backed by a **device-scoped** `CapabilityGrant` narrowed to exactly `{package_name}`, created through the existing `POST /capabilities` (the server checks the scope id is the caller's own device). The capabilities come from the shared mapping (`screen_read` → `device.read` + `app.interact`; `ui_interaction` → `app.interact` + `device.ui_control`; `screenshot` → `device.read`), and are requested only where the cached classification would allow the operation at all. Turning a toggle **off** refuses locally first and then revokes. Turning one **on** authorizes nothing until the server records it. A failed sync is retried on the next connection. The grid revokes only its own grants: this device, one app, a mapped capability. It leaves user-wide or dashboard-made grants alone, and the device-side grid still refuses under them. **`device_state` (battery) is never synced:** `read_battery` takes no app, so its grant would be an unscoped `device.read` covering every app's screen at the server layer. That grant stays a deliberate owner action from the dashboard. A capability grant covers all its operations, so e.g. `app.interact` for reading also covers `tap` server-side; the per-toggle split is enforced by the device guard (two layers, 08 §4). | `android/.../permissions/GridSync.kt`, `contract/Grants.kt`, `shared/android/grant_samples.json` |
-| (new) | Push wake (docs/23 §4, OD-AND-5 stays open) | **Optional and off by default** (`android.push.provider: none`). The only payload is `shared/schemas/push.py`'s `fcm_wake_message`: an FCM *data* message `{"type": "wake"}` plus fixed routing (high priority, 600 s TTL, one collapse key) — no task, operation, user content, id, token or authorization (ANDC-T9, tested at the model and at the HTTP transport). The phone binds its **own** registration token over its authenticated session (`PUT /devices/me/push-token`; one token → one device; another user's token cannot be taken over; revocation clears it). When an operation is sent to an offline device that can be woken, the operation **still fails at once** (`device_unavailable`, never queued — ANDC-T2) and a coalesced wake is sent; the *task* may wait in the existing bounded `waiting_for_platform` state (dependency `device_channel`) and resumes only when that device's channel re-authenticates — re-authorized from scratch, a fresh operation. The push itself resumes nothing and authorizes nothing. The server's sending credential is a Google service-account key, resolved per use from the SecretStore (server-owned, class `oauth_token` only) or an env var; its assertion goes only to Google's fixed token endpoint. On the phone the Firebase SDK is linked but never initialized unless the server offers FCM **and** the user opts in: its init provider is removed, auto-registration is off, and both the library receiver and our handler ship disabled. A wake only (re)connects the channel, never overrides the user's Disconnect, and is ignored by a revoked phone. Not connected to the scheduler (none exists); a future reminder may use the same wake. | `shared/schemas/push.py`, `server/execution/device_wake.py`, `server/auth/push_tokens.py`, migration `…_device_push_token`, `android/…/push/` |
+| (new) | Push wake (docs/23 §4, OD-AND-5 stays open) | **Optional and off by default** (`android.push.provider: none`). The only payload is `shared/schemas/push.py`'s `fcm_wake_message`: an FCM *data* message `{"type": "wake"}` plus fixed routing (high priority, 600 s TTL, one collapse key) — no task, operation, user content, id, token or authorization (ANDC-T9, tested at the model and at the HTTP transport). The phone binds its **own** registration token over its authenticated session (`PUT /devices/me/push-token`; one token → one device; another user's token cannot be taken over; revocation clears it). When an operation is sent to an offline device that can be woken, the operation **still fails at once** (`device_unavailable`, never queued — ANDC-T2) and a coalesced wake is sent; the *task* may wait in the existing bounded `waiting_for_platform` state (dependency `device_channel`) and resumes only when that device's channel re-authenticates — re-authorized from scratch, a fresh operation. The push itself resumes nothing and authorizes nothing. The server's sending credential is a Google service-account key, resolved per use from the SecretStore (server-owned, class `oauth_token` only) or an env var; its assertion goes only to Google's fixed token endpoint. On the phone the Firebase SDK is linked but never initialized unless the server offers FCM **and** the user opts in: its init provider is removed, auto-registration is off, and both the library receiver and our handler ship disabled. A wake only (re)connects the channel, never overrides the user's Disconnect, and is ignored by a revoked phone. *(Phase H: the scheduler build merged after this row and now uses the same waker for a reminder owed to an offline device — the same fixed wake; `tests/scheduler/test_firing.py::test_offline_wake_goes_through_the_configured_push_waker`.)* | `shared/schemas/push.py`, `server/execution/device_wake.py`, `server/auth/push_tokens.py`, migration `…_device_push_token`, `android/…/push/` |
 | (new) | Android presentation layer (docs/23 §7, Phase G) | **Presentation shows; it never decides.** One content-free `PresentationState` (task status, pending risk tier, step-up needed, what a task waits for, device context incl. perception rung and push/platform state, break-glass, error kind, cancel/retry affordances) derived by one pure mapping from the server's task answers and the device's own state; precedence revoked > server task answer > connection; unknown server values never map to success. The current task lives in an app-scope tracker holding only the server's last answer: one task at a time (no duplicate submission), a retry only of an unanswered submission with the same Idempotency-Key, live tasks re-read every 3 s (the server resumes them — nothing is re-run client-side), only the task id persisted for re-attach. A waiting task is described as paused, never queued. **Overlay:** optional (off by default, `SYSTEM_ALERT_WINDOW` granted by the user), attached by the existing channel foreground service, never focusable, shows state only, hidden while JARVIS is in front; its actions are open app / cancel task / hide — **it never approves** (a floating approval could be tapjacked). Approval happens only on the in-app canonical confirmation card (unchanged: built from the server's pending action), which now states risk tier, step-up and expiry and drops touches while obscured (`filterTouchesWhenObscured`). Push-to-talk (docs/27) shows as *listening* / *recognizing* only while no task phase outranks it — display only, never read as an approval or a command. The final character is deferred: `StatusIndicator` reads signals only and is the one component it replaces (boundary tested on the source). | `android/app/.../presentation/`, `.../overlay/`, `.../tasks/TaskTracker.kt`, `.../ui/` |
 
 ---
@@ -137,7 +137,7 @@ names remain `[PROPOSED]` until the owner signs them.
 | (new) | `build_application`'s default tool set | `extra_tools=None` (production's default) now builds the real execution tools from `ExecutionConfig` rather than none at all — `file.read`/`file.write` become immediately usable once granted; `net.request`/`system.shell` register but stay inert (empty destination/executable allow-lists); the Android tools use `UnavailableDeviceTransport`. An explicit `extra_tools` list, as every test passes, still fully substitutes. | `server/composition/__init__.py`, `server/composition/execution_tools.py` |
 | (new) | `execution` module-boundary layer | Inserted between `graph \| capabilities` and `net \| fs` in the layering contract; `server.tools`/`server.modeltools`/`server.agent` are additionally barred from importing `subprocess`/`socket` directly (direct-import check only — `allow_indirect_imports = true`, since the legitimate dependency on `server.net`/`server.execution.process` necessarily uses them transitively). | `pyproject.toml`'s `[tool.importlinter]` |
 
-**OD-A1 note.** The owner's `docs/OD_A1_BR_T2.md` decision already anticipated this: "BR-T2 is re-run when `09`/`11` land." `09` has now landed; `11` (Mem0) has not. Re-running BR-T2 against the real filesystem sandbox, and any adjudication of a newly-reachable row outside the previously accepted class, is separate follow-up work this branch does not itself perform — OD-A1's pilot-acceptance decision (§1 above) is unchanged by this branch, not reopened by it.
+**OD-A1 note.** The owner's `docs/OD_A1_BR_T2.md` decision already anticipated this: "BR-T2 is re-run when `09`/`11` land." `09` has now landed; `11` (Mem0) has not *(Phase H: both have, and so has the Android client — BR-T2 §3b, §3c, §3d)*. Re-running BR-T2 against the real filesystem sandbox, and any adjudication of a newly-reachable row outside the previously accepted class, is separate follow-up work this branch does not itself perform — OD-A1's pilot-acceptance decision (§1 above) is unchanged by this branch, not reopened by it.
 
 ---
 
@@ -151,7 +151,7 @@ ratification. None of it reopens OD-A1 or OD-D1.
 | ID | Decision | Value | Where |
 |---|---|---|---|
 | OD-EXEC-1 | Kernel confinement for `system.restricted` | **Default `landlock`**: Landlock filesystem + TCP rules (read-only system dirs, read-write task temp root without EXECUTE, no TCP bind/connect, signal/abstract-socket scoping on ABI ≥ 6), a seccomp filter denying `socket()`, `io_uring_setup` and foreign/x32 syscall ABIs, `no_new_privs`, and `RLIMIT_FSIZE`. **Fails closed** (`PLATFORM_UNSUPPORTED`) where Landlock is unavailable — including every macOS host. This is a kernel boundary around one child process; it is not a container, and it is not process isolation for the server itself. | `server/execution/confinement.py`, `execution.process.confinement_mode` |
-| OD-EXEC-2 | `confinement_mode: unconfined` opt-out | **Owner decision needed.** Proposed: permitted only for disposable-data development on hosts without Landlock; logged as a warning at startup; never with real data. BR-T2 §3b row 17 shows it makes another user's files reachable to an *authorized* command. | same |
+| OD-EXEC-2 | `confinement_mode: unconfined` opt-out | **Owner decision needed.** Proposed: permitted only for disposable-data development on hosts without Landlock; logged as a warning at startup; never with real data. BR-T2 §3b row 17 shows it makes another user's files reachable to an *authorized* command. *(Phase H status: `docs/20` records the owner's ratified task-bound break-glass form (2026-09-24); the code implements that form and the global switch no longer exists (BG-T2). Transcribing the ratified wording here is OD-BG-1, which waits for the owner's authorization — this row is left as written until then.)* | same |
 | OD-EXEC-3 | Allow-listed executable identity | A bare allow-list name is resolved once at construction and exec'd by absolute path; model-supplied `PATH` cannot swap it. `LD_*`, `DYLD_*`, `GCONV_PATH` overrides are refused. | `server/execution/process.py` |
 | OD-GRAPH-1 | `approve_member` semantics | The owner can admit only a user with a **pending access request** to a **shared** graph; a private graph is not joinable and an owner cannot enrol a user who never asked. Consumes OD-E1 (owner/member only); no new role. | `server/graph/service.py` |
 | OD-IDEM-1 | Idempotency-key namespace | Client keys are namespaced by the authenticated user id (max 200 chars), so one user's key can never replay another's cached response. | `server/gateway/routers/graphs.py` |
@@ -176,9 +176,11 @@ ratification. None of it reopens OD-A1 or OD-D1.
   (OD-FS-1, OD-NET-1): application-level for in-process code. BR-T2 §3b rows 13
   and 14 are inside OD-A1 (a); `mount_isolated` and `netns_filtered` stay future
   hardening (§4).
-- The Android device client (`08`) does not exist; its BR-T2 rows and
-  release-blocking suite are pending. (Mem0 now exists — see §2C.) The real-data gate (17 §5) stays
-  closed: **disposable or test data only**.
+- ~~The Android device client (`08`) does not exist; its BR-T2 rows and
+  release-blocking suite are pending.~~ *(Phase H: the client exists (docs/23,
+  Phases B–G); its suites run in CI and its BR-T2 rows are measured —
+  `docs/OD_A1_BR_T2.md` §3d.)* The real-data gate (17 §5) stays closed for the
+  reasons in `docs/RELEASE_VALIDATION.md` §11: **disposable or test data only**.
 
 ## 2C. Memory-build proposals (`[PROPOSED]`, pending ratification)
 
@@ -198,7 +200,8 @@ implemented; each stands until the owner confirms or changes it.
 | OD-MB-4 | Memory at rest (BR-T2 §3c rows 27–28) | **Owner decision needed.** Store is plaintext with 0700 permissions; deletion removes text from every store file, but deleted facts' embedding vectors remain in Chroma's HNSW file until an index rebuild. Accept for the pilot, or require encryption / rebuild first. | `docs/OD_A1_BR_T2.md` §3c/§5 |
 
 The real-data gate (17 §5) stays closed: the memory suites now run on a real
-Mem0 store, but the Android suite does not exist yet and OD-MB-4 is open.
+Mem0 store, but ~~the Android suite does not exist yet and~~ OD-MB-4 is open.
+*(Phase H: the Android suites exist; see `docs/RELEASE_VALIDATION.md` §11.)*
 
 ---
 
@@ -224,7 +227,7 @@ implemented.
 | SCH-B7 | Quota | `max_active_jobs_per_user` 50 and `scheduler_creations_per_hour` 20, counted over the `scheduled_jobs` rows (never deleted, so create+cancel does not reset it); `LimitExceeded` → `429`; fail-closed. | `server/security/usage.py` |
 | SCH-B8 | Bounds | Recurring reminders at most every 5 min; first fire within 730 days; reason ≤ 1000 chars. | `server/config/schema.py` |
 | SCH-B9 | Misfires | Within `misfire_grace_minutes` (60): delivered, flagged `late`. Beyond: one `missed` firing row (folding every missed occurrence of a recurring job, `coalesced`), audited, reported in `GET /jobs` `last_firing`; no late notification hours after the fact. | `server/scheduler/firing.py` |
-| SCH-B10 | Offline devices | Reminders queue per owner device (`reminder_deliveries`), re-checked at send time, re-sent until acknowledged, expired after 72 h. The wake payload is fixed to `{"type":"wake"}`; no push provider is wired (OD-AND-5). | `server/scheduler/firing.py` |
+| SCH-B10 | Offline devices | Reminders queue per owner device (`reminder_deliveries`), re-checked at send time, re-sent until acknowledged, expired after 72 h. The wake payload is fixed to `{"type":"wake"}`. *(Phase H: when `android.push.provider: fcm` is configured, the reminder wake goes through the push waker; it is off by default and OD-AND-5 stays open.)* | `server/scheduler/firing.py` |
 | SCH-B11 | Channel compatibility | Reminder frames go only to sockets whose `hello` declared `features: ["reminders"]`, so an older client never receives a frame it would reject. | `shared/schemas/device_channel.py` |
 
 ---
@@ -252,52 +255,23 @@ the TTS wrapper here is new code against Android's `TextToSpeech`.
 
 ---
 
-## 2F. Stage 5 — Judge and operator console (`[PROPOSED]`, pending ratification)
+## 2F. Phase H — final hardening findings (2026-09-27)
 
-The Stage 5 build (`docs/19_JUDGE_EVALUATION.md`, `docs/28_DASHBOARD_OPERATOR_CONSOLE.md`;
-operator guides `docs/RUNNING_EVALUATION.md`, `docs/RUNNING_CONSOLE.md`) keeps
-19 §0 — *the Judge observes and scores; it never authorizes, never executes, and
-never kills on its own authority* — and 28 §0 — *the dashboard shows; controls
-live elsewhere*. Each row is the value implemented where a document leaves a
-choice. **None of the `[OPEN — OWNER]` items below is ratified by being
-implemented**: each was built behind configuration, off by default or in its
-more restrictive reading, so the owner's decision changes a setting or a
-document, not the architecture.
+Phase H audited and validated the integrated tree; it added no feature. What it
+found that needs a decision is listed here; everything else is in
+`docs/RELEASE_VALIDATION.md`.
 
-| ID | Decision | Value implemented | Where |
+| ID | Finding | What the code does now | Status |
 |---|---|---|---|
-| OD-JDG-1 | EvaluationProvider separate from DecisionProvider (19 §2) | **`[OPEN — OWNER]`.** Built as the recommended separate `EvaluationProvider` Protocol; no DecisionProvider exists (OD-DP-9 unchanged). | `server/evaluation/provider.py` |
-| OD-JDG-2 | Judge budget scope (own / per-user / global) | **`[OPEN — OWNER]`.** Judge spend is always checked against its own `evaluation.budget` (daily, default `0.0` → a paid Judge call is refused) and is **never** charged to the evaluated task or to the user's own budget or rate limits (19 §8). Whether it also counts toward the global daily budget is `evaluation.budget_scope`, default `own_and_global` (the more restrictive reading, as recommended). | `server/evaluation/service.py`, `server/security/usage.py` |
-| OD-JDG-3 | Pilot Judge provider | **`[OPEN — OWNER]`.** None chosen: `evaluation.enabled: false` and `provider: null` by default; enabling the LLM Judge requires naming a provider (a non-local one logs that redacted traces are sent to it, 19 §4). `evaluator: rules` needs no model. | `server/config/schema.py` |
-| OD-JDG-4 | `usage.kind: evaluation_call` vs `model_call` + attribution | **`[OPEN — OWNER]`.** `01` §1.2 is locked, so no enum was added: Judge calls are `model_call` rows attributed by `tool_id = "evaluator:<id>"`. Extending the enum later is a registry edit plus a data migration of those rows. | `shared/schemas/evaluation.py` |
-| OD-DASH-1 | Read-only dashboard + separate control endpoints vs amending DASH-002 | **`[OPEN — OWNER]`.** Built as the recommended split: `GET /api/v1/admin/*` views (read-only, asserted at import and by an import contract) and `/api/v1/admin/control/*` owned by 18 (stop/latch), 20 (break-glass) and 19 (Judge switches, review queue). DASH-002 is not amended. | `server/gateway/routers/admin.py`, `server/dashboard/` |
-| OD-DASH-2 | Console UI technology | `[IMPL]`, **not built**: the console is the JSON API only. A browser page would need either a public shell route (`02` §12: `/health` is the only data-free public endpoint besides OIDC start/callback) or an in-page superuser credential — an owner call. | — |
-| JDG-B1 | Where the Judge's trace comes from | The runtime mirrors the events it already audits (plus each authorization's decision and tier, and each metered call's units and cost) in the task's volatile state, and hands a copy to an observer port. A live window must be evaluated while the task's own request still holds its uncommitted audit rows, so the trace cannot be read back from the store. The trace is never persisted. | `server/agent/runtime.py`, `server/agent/ports.py` |
-| JDG-B2 | Stop-request gating | Only `live_window` evaluations may request a stop, only with `may_request_stop: true` (without it the Judge holds no breaker handle at all), and only through `trip()` with source `evaluator`. A paused task that is tripped is enforced by the runtime's own emergency-stop sequence. Post-hoc stop requests are recorded, never acted on. | `server/composition/evaluation.py` |
-| JDG-B3 | Stop alert | More than `stop_alert_threshold` honoured evaluator stops in `stop_alert_window_minutes` → one `evaluation.stop_alert` audit row per window and a warning log; the operator may switch the Judge off (`/admin/control/evaluation/switches`). | `server/evaluation/service.py` |
-| JDG-B4 | Operator switches | Runtime on/off for the Judge and for its stop requests, persisted (`evaluation_control`), each **capped by configuration**: "on" beyond `evaluation.enabled` / `may_request_stop` is refused `409`. | `server/composition/improvements.py` |
-| JDG-B5 | Improvement targets and application | The closed registry of 19 §9 (worker system-prompt guidance, tool descriptions, recovery thresholds within the config schema's ranges, Judge rubric, suggestion template). Approval re-validates the value; `config_versions` is append-only; rollback undoes a target's *current* version. Applied values reach the worker as delimited "operator guidance (it grants nothing)" text and as recovery bounds (only where `agent.recovery` is configured), and the Judge as its rubric. `suggestion.template` is versioned but has no consumer yet. | `server/evaluation/candidates.py`, `server/composition/improvements.py` |
-| DSH-B1 | Redaction | User content (task responses, evaluator notes, candidate text, applied values) appears as `{"redacted": true, "chars": n}`; secrets appear only as handles with `resolves` decided from metadata (a non-revoked `secret_references` row, an env var's presence); every other string is scrubbed with the repository's secret patterns. The DASH-006 view (`GET /admin/privileged/tasks/{id}?reason=`) is audited **before** it reads, and still scrubs secret-shaped text. | `server/dashboard/redaction.py` |
-| DSH-B2 | Memory counts | Facts per user are counted through the provider's owner-filtered listing inside the composition root; no content reaches the dashboard. Capped at 10 000 per user. | `server/composition/console.py` |
-
-**Recorded residuals (not fixed here, not claimed fixed):**
-
-- Evaluations and candidates store model-written notes about a user's task in
-  the application database, owner-private, in the same class as `agent_tasks.response`
-  (BR-T2 §3: reachable under application RCE — the OD-A1 (a) residual).
-- The gateway's error handler reports a routing `405` as `500 internal_error`
-  ("Method Not Allowed"). Pre-existing; a non-GET request to a console view
-  still reaches no handler.
-- The real-data gate (17 §5) is unchanged by Stage 5: the Judge and the console
-  add no release-blocking suite, and the gate stays closed.
-
----
+| H-1 | **PRD #32 (per-principal fairness under ~10-device load) is not met on SQLite.** A task's request holds the single write lock for the whole task, so while one user's task runs, another user's write is refused `503 storage` (explicit, retryable, nothing persisted). Already documented as a deployment limit (`RUNNING_RUNTIME.md` §4a); Phase H measured it at pilot size (`tests/memory/test_pilot_concurrency.py`). | Unchanged — the documented limitation. Per-principal concurrency caps hold; isolation under concurrency holds. | **OPEN — owner/engineering**: a multi-writer store (no PostgreSQL driver is declared or tested today, so "a config change" is not validated) or shorter write transactions in the runtime (changes FAIL-001's retry semantics; needs design) |
+| H-2 | Push registration token stored in plaintext (BR-T2 §3d row 36, at rest). Usable only with the server's separate FCM credential, and only for the content-free wake. | Plaintext column; cleared on revocation. | **OPEN — owner** (low severity): accept for the pilot, or encrypt the column |
+| H-3 | A symlink swapped in at a sandbox leaf between the last check and the open escaped as a raw `OSError` (task failed as an internal error) instead of a typed `FORBIDDEN_PATH`. Containment itself held (`O_NOFOLLOW`). | **Fixed** (`server/fs/sandbox.py::_open_leaf`), race tests added. | IMPLEMENTED (defect fix, not a decision) |
 
 ## 3. Genuinely unresolved owner decisions
 
 | ID | Question | Why it is the owner's |
 |---|---|---|
-| (matrix §5.1) | Sensitive-app classification for UI primitives | A tap can complete a payment. Which apps are "sensitive" and how far their tiers rise is a product-risk call. Needed before `08` ships device control. |
+| (matrix §5.1) | Sensitive-app classification for UI primitives | A tap can complete a payment. Which apps are "sensitive" and how far their tiers rise is a product-risk call. Needed before `08` ships device control. *(Phase H: the mechanism is implemented (`android.app_classification`, server gate + device guard) and the lists ship **empty**, so no app is UI-controllable until the owner classifies one. The lists themselves are still the owner's.)* |
 | OD-TOOL-3 | Which MCP servers (if any) are enabled at pilot | Default none; unchanged. |
 | OD-DP-9 | Ratify DecisionProvider at all | Unchanged; nothing in the runtime depends on it. |
 | OD-MT-2 | Any cloud primary by default | Default local (ollama); unchanged. |
@@ -313,6 +287,13 @@ document, not the architecture.
 | OD-DASH-2 | Console UI | Not built; JSON API only (§2F). |
 
 ---
+
+**Phase H consolidation.** Every decision still open anywhere in the package —
+this table, the `[OPEN — OWNER]` items of docs 18–28, the proposals of §2–§2E
+that are implemented but not ratified, and the Phase H findings of §2F — is
+listed in one place, with its status in code, in `docs/RELEASE_VALIDATION.md`
+§10. Implementing a recommendation there is labelled *implemented
+recommendation*, never *owner decision ratified*.
 
 ## 4. Future hardening (recorded, not in scope)
 

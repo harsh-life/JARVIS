@@ -255,4 +255,9 @@ secrets:
   store: "encrypted_local"
   kek_source: "env:HYPERMIND_KEK"   # the KEK *source*, never the KEK itself
 
+# SQLite is single-writer: while one user's task runs, another user's write is
+# refused with a retryable 503 (docs/RUNNING_RUNTIME.md §4a). That is fine for
+# development and a small trial on disposable data, but PRD #32 (fairness under
+# ~10-device load) is not met on it. No multi-writer store has been validated
+# (docs/DECISION_REGISTER.md §2F H-1).
 database_url: "sqlite+aiosqlite:///./data/hypermind.db"
