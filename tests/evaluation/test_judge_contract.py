@@ -31,10 +31,10 @@ from server.security.secret_patterns import find_secret, redact_secrets
 from shared.schemas.evaluation import Anomaly, EvaluationKind, ImprovementCandidate, JudgeVerdict
 
 PLANTED = {
-    "openai": "sk-proj-AbCdEfGhIjKlMnOpQrStUv123456",
-    "aws": "AKIAABCDEFGHIJKLMNOP",
-    "github": "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
-    "pem": "-----BEGIN RSA PRIVATE KEY-----",
+    "openai": "sk-proj-AbCdEfGhIjKlMnOpQrStUv123456",  # TEST-ONLY fixture
+    "aws": "AKIAABCDEFGHIJKLMNOP",  # TEST-ONLY fixture
+    "github": "ghp_abcdefghijklmnopqrstuvwxyz0123456789",  # TEST-ONLY fixture
+    "pem": "-----BEGIN RSA PRIVATE KEY-----",  # TEST-ONLY fixture
     "assignment": "password is correct-horse-battery",
     "handle": "secretstore:model-key-7",
     "entropy": "Zx9Qw7Er5Ty3Ui1OpAs8Df6Gh4Jk2Lz",
@@ -315,7 +315,7 @@ def test_allowed_targets_are_accepted_with_their_typed_value(target, value, expe
     ("recovery.max_worker_switches", "-1", "bad_value"),
     ("recovery.loop_repeat_limit", "two", "bad_value"),
     ("worker.system_prompt", "x" * 1501, "bad_value"),
-    ("worker.system_prompt", "Use api_key = sk-proj-AbCdEfGhIjKlMnOpQrSt", "secret_in_value"),
+    ("worker.system_prompt", "Use api_key = sk-proj-AbCdEfGhIjKlMnOpQrSt", "secret_in_value"),  # TEST-ONLY fixture
     ("worker.tool_description", "no subject", "bad_subject"),
     ("worker.system_prompt:extra", "subject where none belongs", "bad_subject"),
 ])
