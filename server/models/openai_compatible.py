@@ -60,7 +60,7 @@ class OpenAICompatibleProvider:
         headers = await self._headers()
         payload = {
             "model": self.spec.model,
-            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "messages": [_message(m) for m in messages],
             **dict(self.spec.generation_policy),
         }
         try:
@@ -90,3 +90,21 @@ class OpenAICompatibleProvider:
 
     async def health(self) -> bool:
         return True
+
+
+def _message(message: ChatMessage) -> dict:
+    if not message.images:
+        return {"role": message.role, "content": message.content}
+    # The OpenAI-compatible content-parts form; the image travels inline as a
+    # data URL, never as a link the provider would fetch.
+    return {
+        "role": message.role,
+        "content": [
+            {"type": "text", "text": message.content},
+            *(
+                {"type": "image_url", "image_url": {"url": f"data:{image.media_type};base64,{image.base64()}"}}
+                for image in message.images
+            ),
+        ],
+    }
+

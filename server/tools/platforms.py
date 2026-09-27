@@ -33,14 +33,17 @@ from typing import Mapping
 from uuid import UUID
 
 from server.execution.android import DeviceTransport, UnavailableDeviceTransport, build_operation
+from server.execution.device_observations import render_vision_observation
 from server.execution.process import ConstrainedProcessExecutor
 from server.fs import FilesystemSandbox
 from server.net import EgressClient
+from server.tools.device_vision import ScreenshotVision
 from server.tools.registry import ToolDefinition
 from shared.schemas.agent import ExecutionPlatform, OperationSpec, ToolInvocation, ToolOutput
 from shared.schemas.agent_config import ToolContract
 from shared.schemas.authorization import Operation, ResourceType
-from shared.schemas.enums import RiskCategory
+from shared.schemas.device_channel import ScreenshotResult
+from shared.schemas.enums import RiskCategory, UsageKind
 from shared.schemas.execution import EgressPolicy, ExecutionError, ExecutionErrorCode, ExecutionRequest, ExecutionResult
 
 _ACTION = ResourceType.TOOL_ACTION.value
@@ -298,10 +301,18 @@ class AndroidDeviceAdapter:
     which capability it was constructed for, since `build_operation` already
     encodes the enumerated operation→primitive mapping per capability."""
 
-    def __init__(self, capability: str, transport: DeviceTransport, *, operation_ttl_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        capability: str,
+        transport: DeviceTransport,
+        *,
+        operation_ttl_seconds: int = 30,
+        vision: ScreenshotVision | None = None,
+    ) -> None:
         self._capability = capability
         self._transport = transport
         self._ttl = timedelta(seconds=operation_ttl_seconds)
+        self._vision = vision
 
     def release_task(self, task_id: UUID) -> None:
         """The task ended: any operation of it still on a device is cancelled
@@ -324,7 +335,34 @@ class AndroidDeviceAdapter:
             result = await self._transport.send(operation)
         except ExecutionError as exc:
             return _failed(exc)
+        screenshot = result.metadata.get("screenshot")
+        if isinstance(screenshot, ScreenshotResult):
+            return await self._see(screenshot)
         return _ok(result)
+
+    async def _see(self, screenshot: ScreenshotResult) -> ToolOutput:
+        """docs/23 §6 level 4: describe the image and let it go. The worker
+        gets the description only; the image is never returned, stored or
+        logged, and a failure never keeps it for a retry."""
+
+        if self._vision is None:
+            return _failed(ExecutionError(ExecutionErrorCode.VISION_NOT_CONFIGURED, "no vision model configured"))
+        try:
+            reading = await self._vision.describe(screenshot)
+        except ExecutionError as exc:
+            return ToolOutput(
+                ok=False, error=exc.code.value, usage_kind=UsageKind.MODEL_CALL, units=0,
+                provider=self._vision.provider_name, model=self._vision.model_name,
+            )
+        return ToolOutput(
+            ok=True,
+            content=render_vision_observation(screenshot.app, reading.description),
+            usage_kind=UsageKind.MODEL_CALL,
+            units=reading.prompt_tokens + reading.completion_tokens,
+            estimated_cost=reading.estimated_cost,
+            provider=reading.provider,
+            model=reading.model,
+        )
 
 
 def _device_transport_or_default(transport: DeviceTransport | None) -> DeviceTransport:
@@ -349,10 +387,14 @@ def android_app_interact_tool(
 
 
 def android_device_read_tool(
-    transport: DeviceTransport | None = None, *, operation_ttl_seconds: int = 30
+    transport: DeviceTransport | None = None,
+    *,
+    operation_ttl_seconds: int = 30,
+    vision: ScreenshotVision | None = None,
 ) -> ToolDefinition:
     adapter = AndroidDeviceAdapter(
-        "device.read", _device_transport_or_default(transport), operation_ttl_seconds=operation_ttl_seconds
+        "device.read", _device_transport_or_default(transport), operation_ttl_seconds=operation_ttl_seconds,
+        vision=vision,
     )
     contract = _contract(
         "device.read", "device.read", RiskCategory.LOW_READ, False,
@@ -360,8 +402,11 @@ def android_device_read_tool(
     )
     return ToolDefinition(
         contract=contract,
-        operations=_tool_action("read_screen", "read_battery", "read_notification"),
+        operations=_tool_action("read_screen", "read_battery", "read_notification", "capture_screenshot"),
         adapters={ExecutionPlatform.ANDROID: adapter},
+        # 13 §3: the budget precheck runs before any device.read, covering the
+        # vision call a screenshot may need (an upper bound for the others).
+        projected_cost_per_call=vision.projected_cost if vision is not None else 0.0,
     )
 
 

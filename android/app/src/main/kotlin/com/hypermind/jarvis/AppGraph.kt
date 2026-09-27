@@ -16,6 +16,7 @@ import com.hypermind.jarvis.channel.DeviceChannel
 import com.hypermind.jarvis.contract.DeviceGuard
 import com.hypermind.jarvis.contract.DeviceLocalState
 import com.hypermind.jarvis.contract.MappingState
+import com.hypermind.jarvis.perception.AccessibilityScreenCapture
 import com.hypermind.jarvis.perception.BatteryPrimitive
 import com.hypermind.jarvis.perception.JarvisAccessibilityService
 import com.hypermind.jarvis.perception.JarvisNotificationListener
@@ -23,6 +24,7 @@ import com.hypermind.jarvis.perception.MlKitScreenOcr
 import com.hypermind.jarvis.perception.NotificationPrimitive
 import com.hypermind.jarvis.perception.Platforms
 import com.hypermind.jarvis.perception.ScreenPerception
+import com.hypermind.jarvis.perception.ScreenshotPrimitive
 import com.hypermind.jarvis.permissions.AppPolicyStore
 import com.hypermind.jarvis.permissions.GridStore
 import kotlinx.coroutines.CoroutineScope
@@ -170,6 +172,11 @@ class AppGraph(
                 "accessibility.read_element" to screen.readElement,
                 "android.api.battery_state" to BatteryPrimitive(BatteryPrimitive.reader(context.applicationContext)),
                 "android.api.notification_query" to NotificationPrimitive(JarvisNotificationListener::active),
+                "accessibility.screenshot" to
+                    ScreenshotPrimitive(
+                        JarvisAccessibilityService.screen,
+                        AccessibilityScreenCapture { JarvisAccessibilityService.instance },
+                    ),
             )
         }
     }

@@ -67,6 +67,11 @@ class ExecutionErrorCode(str, Enum):
     PLATFORM_UNAVAILABLE = "platform_unavailable"
     # Allowed and attempted, and it did not work (08 §7: e.g. target absent).
     DEVICE_ACTION_FAILED = "device_action_failed"
+    # docs/23 §6 level 4: a screenshot was taken but no vision model is
+    # configured, or the configured one could not be reached. The image is
+    # dropped either way; it is never kept for a later attempt.
+    VISION_NOT_CONFIGURED = "vision_not_configured"
+    VISION_UNAVAILABLE = "vision_unavailable"
     TIMEOUT = "timeout"
     CANCELLED = "cancelled"
     RESOURCE_EXHAUSTED = "resource_exhausted"

@@ -19,7 +19,9 @@ class MlKitScreenOcr(
     private val client by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
     override suspend fun readScreen(): List<OcrText>? {
-        val bitmap = service()?.capture() ?: return null
+        // A secure window (or any failed capture) leaves this rung empty.
+        val frame = service()?.capture() as? JarvisAccessibilityService.Capture.Frame ?: return null
+        val bitmap = frame.bitmap
         return try {
             suspendCancellableCoroutine { cont ->
                 client

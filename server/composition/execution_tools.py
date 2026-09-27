@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from server.config.schema import AppConfig
 from server.execution.android import DeviceTransport
+from server.tools.device_vision import ScreenshotVision
 from server.execution.break_glass import BreakGlassLookup
 from server.execution.process import ConstrainedProcessExecutor
 from server.fs import FilesystemSandbox
@@ -33,6 +34,7 @@ def build_execution_tools(
     *,
     break_glass: BreakGlassLookup | None = None,
     device_transport: DeviceTransport | None = None,
+    screenshot_vision: ScreenshotVision | None = None,
 ) -> list[ToolDefinition]:
     """`file.read`/`file.write` are always real and immediately usable
     (sandboxed, quota-capped) once a principal is granted the capability —
@@ -97,7 +99,9 @@ def build_execution_tools(
         net_request_tool(egress_client, egress_policy=default_policy),
         shell_command_tool(executor, sandbox=sandbox),
         android_app_interact_tool(device_transport, operation_ttl_seconds=config.android.operation_ttl_seconds),
-        android_device_read_tool(device_transport, operation_ttl_seconds=config.android.operation_ttl_seconds),
+        android_device_read_tool(
+            device_transport, operation_ttl_seconds=config.android.operation_ttl_seconds, vision=screenshot_vision
+        ),
     ]
 
 

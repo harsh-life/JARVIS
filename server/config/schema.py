@@ -472,6 +472,11 @@ class AndroidConfig(StrictModel):
     app_classification: AndroidAppClassificationConfig = Field(
         default_factory=AndroidAppClassificationConfig
     )
+    # docs/23 §6 level 4 (OD-AND-4): the vision-capable model that describes a
+    # `capture_screenshot` image server-side. Absent (the default) means no
+    # vision rung: a screenshot is dropped unread (`vision_not_configured`).
+    # A paid provider must be priced, like every other model entry (13 §3).
+    vision: ModelEntryConfig | None = None
 
 
 class OIDCConfig(StrictModel):
