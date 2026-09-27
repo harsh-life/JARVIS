@@ -30,6 +30,7 @@ from server.composition.latch import InProcessLatch
 from server.composition.supervisor import SupervisorControl
 from server.execution.device_hub import DeviceHub
 from server.composition.models import ProviderFactory, spec_from_entry
+from server.composition.push import attach_push_wake
 from server.composition.secret_context import key_provider_for
 from server.config.errors import ConfigError
 from server.config.schema import AppConfig
@@ -258,7 +259,7 @@ def build_application(
         memory=memory_facade,
         vault=vault_facade,
     )
-    return create_app(
+    app = create_app(
         config=config,
         storage=storage,
         security=core,
@@ -273,6 +274,9 @@ def build_application(
         vault_port=vault_facade,
         device_hub=device_hub,
     )
+    # docs/23 §4: the optional push wake — nothing at all unless configured.
+    attach_push_wake(config, app, device_hub)
+    return app
 
 
 def _open_memory_provider(config: AppConfig) -> MemoryProvider:

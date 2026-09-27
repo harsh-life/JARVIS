@@ -92,6 +92,22 @@ class DeviceChannel(
         _state.value = ChannelState.Stopped
     }
 
+    /**
+     * A push wake arrived (docs/23 §4). Idempotent: with a socket already
+     * open or opening it does nothing; while backing off it connects now.
+     * The connect is the ordinary one — a fresh access token and device proof
+     * in the first frame — so a wake grants nothing and skips no check.
+     */
+    @Synchronized
+    fun wake(): WakeResult {
+        if (_state.value is ChannelState.UpdateRequired) return WakeResult.BLOCKED
+        if (!running) return WakeResult.NOT_RUNNING
+        if (socket != null) return WakeResult.ALREADY_CONNECTED
+        reconnectJob?.cancel()
+        connect()
+        return WakeResult.RECONNECTING
+    }
+
     /** The network came back: retry now instead of waiting out the backoff. */
     @Synchronized
     fun networkAvailable() {

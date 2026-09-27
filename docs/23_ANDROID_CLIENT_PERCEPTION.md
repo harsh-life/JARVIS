@@ -62,7 +62,7 @@ Anything else is rewritten against this contract. `[OPEN]` the donor repository'
 
 - Connect: TLS to the gateway hostname; authenticate with a current access token **and** a fresh device proof. The server binds the socket to exactly one `(user_id, device_id)`.
 - `[LOCKED]` (OD-DEV-1) `send(operation)` delivers to **exactly `operation.device_id`**, never "any connected device of this user."
-- `[PROPOSED]` push payloads carry **no operation data and no user content** — only "reconnect." Everything substantive travels over the authenticated socket.
+- `[PROPOSED]` push payloads carry **no operation data and no user content** — only "reconnect." Everything substantive travels over the authenticated socket. *Implemented (F3d), optional and off by default:* `android.push.provider: none | fcm`; the one payload is `{"type": "wake"}` (`shared/schemas/push.py`, ANDC-T9); a phone binds only its own token; an offline device's operation still fails `device_unavailable` at once, and only the task waits for the channel (DECISION_REGISTER).
 
 **Message envelope** (server → device):
 ```

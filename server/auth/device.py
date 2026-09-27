@@ -529,6 +529,10 @@ class DeviceService:
         if not device.revoked:
             device.revoked = True
             device.revoked_at = utcnow()
+        # docs/23 §4: a revoked device is never woken again.
+        device.push_provider = None
+        device.push_token = None
+        device.push_token_registered_at = None
 
         # 03 §4.4: "invalidates the credential in the SecretStore".
         try:
