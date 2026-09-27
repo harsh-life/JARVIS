@@ -295,6 +295,18 @@ forbidden_modules = [
     # The executor reaches them through `server.execution.break_glass`'s
     # claim-only Protocol, the runtime through `SecurityPort.settle_break_glass`.
     "server.composition.break_glass",
+    # 19 §9 / 28 §1: the Judge's control switches, the improvement review queue
+    # (approve / reject / roll back) and the operator console are superuser
+    # surfaces too. Nothing that could act for a user, a model, a tool, a
+    # device, a worker — or the Judge itself — can reach them, so no evaluator
+    # can approve its own candidate or turn its own stop ability on.
+    "server.gateway.evaluation_control_port",
+    "server.gateway.routers.evaluation_control",
+    "server.gateway.console_port",
+    "server.gateway.routers.admin",
+    "server.composition.improvements",
+    "server.composition.evaluation",
+    "server.composition.console",
 ]
 
 # 19 (JDG-T2): the Judge scores and recommends; it never authorizes, executes,
@@ -314,6 +326,83 @@ forbidden_modules = [
     "server.fs",
     "server.net",
     "server.tools",
+    # Stage 5 additions: the Judge reaches no identity/step-up code, no
+    # runtime (its only runtime-facing handle is the breaker's trip port,
+    # injected by the composition root), no store it could write to directly,
+    # no gateway, and no operator surface. Its audit rows, usage rows and
+    # stored evaluations all go through ports the composition root satisfies.
+    "server.auth",
+    "server.agent",
+    "server.modeltools",
+    "server.memory",
+    "server.vault",
+    "server.scheduler",
+    "server.voice",
+    "server.dashboard",
+    "server.intelligence",
+    "server.gateway",
+    "server.composition",
+    "server.security.audit",
+    "server.security.superuser",
+]
+
+# 19 §3 (JDG-T2): "server/agent must not import server/evaluation — the runtime
+# never depends on the Judge". The layers contract already keeps the two
+# application-band siblings apart; this names the rule so a layering edit can
+# never silently drop it (same shape as INTEL-003).
+[[tool.importlinter.contracts]]
+name = "The runtime never depends on the Judge (19, JDG-T2)"
+type = "forbidden"
+source_modules = ["server.agent", "server.tools", "server.modeltools", "server.memory", "server.vault"]
+forbidden_modules = ["server.evaluation"]
+
+# REPO-T5 for the Judge: no raw process or socket of its own. Its model calls
+# go through `server.models`' adapters (their HTTP client's socket use is
+# indirect).
+[[tool.importlinter.contracts]]
+name = "The Judge opens no process or socket (19, REPO-T5)"
+type = "forbidden"
+source_modules = ["server.evaluation"]
+forbidden_modules = ["subprocess", "socket"]
+allow_indirect_imports = true
+
+# 28 §0 / DASH-002 / DSH-T1: "the dashboard shows; controls live elsewhere".
+# `server.dashboard` builds read-only views and reaches nothing that mutates or
+# acts: not the runtime, a tool, a model, an execution primitive, the
+# authorization engine or grant/confirmation services, identity, memory, the
+# vault, the scheduler, voice, the Judge's service, the gateway or the
+# composition root — and not the audit or usage *writers*. It reads rows
+# through the storage models and live state through read-only Protocols it
+# declares (`server/dashboard/ports.py`), which the composition root satisfies.
+# Secret resolution and superuser authority are closed by the contracts above.
+[[tool.importlinter.contracts]]
+name = "The dashboard is read-only: no mutation or control path (28, DASH-002, DSH-T1)"
+type = "forbidden"
+source_modules = ["server.dashboard"]
+forbidden_modules = [
+    "server.agent",
+    "server.tools",
+    "server.modeltools",
+    "server.models",
+    "server.execution",
+    "server.fs",
+    "server.net",
+    "server.capabilities",
+    "server.graph",
+    "server.auth",
+    "server.memory",
+    "server.vault",
+    "server.scheduler",
+    "server.voice",
+    "server.evaluation",
+    "server.intelligence",
+    "server.gateway",
+    "server.composition",
+    "server.security.audit",
+    "server.security.usage",
+    "server.storage.idempotency",
+    "subprocess",
+    "socket",
 ]
 
 # 09 §8 / 10 §3 (NET-005): the sandbox/egress boundary is worthless if an
