@@ -61,6 +61,9 @@ _FAILURE_CODES: dict[AgentFailureCode, ErrorCode] = {
     # 18 §4: the task's workers failed it — a dependency failure, like an outage.
     AgentFailureCode.STALLED: ErrorCode.DEPENDENCY_UNAVAILABLE,
     AgentFailureCode.WORKER_CHAIN_EXHAUSTED: ErrorCode.DEPENDENCY_UNAVAILABLE,
+    # docs/23 §5.3: an on-device dependency (e.g. Shizuku) did not come back
+    # within the task's bounded wait.
+    AgentFailureCode.PLATFORM_UNAVAILABLE: ErrorCode.DEPENDENCY_UNAVAILABLE,
 }
 
 
@@ -110,7 +113,9 @@ def render(result: AgentResult, request_id: uuid.UUID | str) -> tuple[int, dict]
         message = result.failure.message
         details = {"task_id": body["task_id"], "failure_code": result.failure.code.value}
         if code is ErrorCode.DEPENDENCY_UNAVAILABLE:
-            details["dependency"] = "model"
+            details["dependency"] = (
+                "device_platform" if result.failure.code is AgentFailureCode.PLATFORM_UNAVAILABLE else "model"
+            )
         if code is ErrorCode.RATE_LIMITED:
             details["retry_after"] = 60
     else:

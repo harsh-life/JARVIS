@@ -67,7 +67,7 @@ from server.agent.records import (
     non_terminal_task_ids,
     update_task_row,
 )
-from server.agent.state import Activation, PendingStep, TaskState, TaskStateRegistry
+from server.agent.state import Activation, PendingStep, PlatformWaitStep, TaskState, TaskStateRegistry
 from server.models.provider import ModelProvider, ModelUnavailable
 from shared.schemas.agent import (
     AgentFailure,
@@ -76,6 +76,7 @@ from shared.schemas.agent import (
     AgentTaskStatus,
     ExecutionPlatform,
     PendingAction,
+    PlatformWait,
     TaskCounters,
     TaskMode,
     TERMINAL_STATUSES,
@@ -110,6 +111,10 @@ _FAILURE_MESSAGES: dict[AgentFailureCode, str] = {
     AgentFailureCode.WORKER_CHAIN_EXHAUSTED: (
         "The task stopped: every available worker failed or could not resolve it. Nothing further "
         "was performed."
+    ),
+    AgentFailureCode.PLATFORM_UNAVAILABLE: (
+        "The task stopped: it needed something on your phone (such as Shizuku) that did not "
+        "become available in time. Nothing further was performed."
     ),
     AgentFailureCode.EMERGENCY_STOP: (
         "The task was stopped by a safety control; nothing further was performed and it will "
@@ -415,7 +420,86 @@ class AgentRuntime:
                 raise
             except Exception as exc:  # noqa: BLE001 — see _internal_failure
                 return await self._internal_failure(env, state, exc)
+            if state.platform_wait is not None:
+                return await self._pause_for_platform(env, state)
             return await self._drive(env, state)
+
+    async def resume_after_platform(
+        self, env: TaskEnvironment, *, device_id: uuid.UUID, dependency: str
+    ) -> list[AgentResult]:
+        """docs/23 §5.3: the device reports `dependency` available again. Every
+        task waiting for exactly that dependency on exactly that device
+        proposes its call again — through the same checks and the same engine
+        as any new proposal, so a grant revoked, a membership left or a mode
+        ceiling in the meantime is honoured, and a consequential action asks
+        for a *new* confirmation. The operation then sent is a fresh one."""
+
+        results: list[AgentResult] = []
+        for state in self._states.live():
+            wait = state.platform_wait
+            if wait is None or wait.device_id != device_id or wait.dependency != dependency:
+                continue
+            results.append(await self._resume_platform_wait(env, state))
+        return results
+
+    async def _resume_platform_wait(self, env: TaskEnvironment, state: TaskState) -> AgentResult:
+        wait = state.platform_wait
+        assert wait is not None
+        if state.tripped is not None:
+            return await self._emergency_stop(env, state)
+        if wait.expired():
+            state.platform_wait = None
+            return await self._fail(env, state, AgentFailureCode.PLATFORM_UNAVAILABLE)
+        async with self._concurrency.slot(state.principal):
+            # Claimed before the first `await`: a concurrent cancel then sees a
+            # running task, and a second availability report finds nothing.
+            state.platform_wait = None
+            try:
+                await self._set_status(env, state, AgentTaskStatus.RUNNING)
+            except Exception:
+                state.platform_wait = wait
+                raise
+            try:
+                if state.tripped is not None:
+                    return await self._emergency_stop(env, state)
+                if state.cancelled:
+                    return await self._finish(env, state, AgentTaskStatus.CANCELLED)
+                if not await env.security.principal_active(state.principal):
+                    raise _Stop(AgentFailureCode.PRINCIPAL_REVOKED)
+                await self._event(env, state, AgentEvent.TASK_RESUMED, AuditResult.SUCCESS,
+                                  resource=f"platform_wait:{wait.dependency}")
+                state.messages.append(ctx.observation(
+                    f"The device reports '{wait.dependency}' is available again. The earlier "
+                    f"{wait.tool}.{wait.operation} call is being authorized again and retried as a new "
+                    "operation.",
+                    limit=self._bounds.max_observation_chars,
+                ))
+                remaining_seconds = self._bounds.wall_clock_timeout_seconds - state.run_seconds_used
+                call = ToolCall(type="tool_call", tool=wait.tool, operation=wait.operation,
+                                arguments=wait.arguments, resource_ref=wait.resource_ref,
+                                platform=wait.platform, scope=wait.scope)
+                paused = await self._tool_call(env, state, call, lambda: remaining_seconds)
+                if paused is not None:
+                    return paused
+                if state.platform_wait is not None:
+                    return await self._pause_for_platform(env, state)
+            except _Stop as stop:
+                return await self._fail(env, state, stop.code)
+            except Exception as exc:  # noqa: BLE001 — see _internal_failure
+                return await self._internal_failure(env, state, exc)
+            return await self._drive(env, state)
+
+    async def _end_platform_wait(self, env: TaskEnvironment, row, state: TaskState | None) -> AgentResult:
+        """A wait that ran out (or whose live state is gone): the task fails
+        `platform_unavailable`; the call is never retried."""
+
+        if state is not None:
+            state.platform_wait = None
+            return await self._fail(env, state, AgentFailureCode.PLATFORM_UNAVAILABLE)
+        updated, _ = await self._close_from_row(env, row, AgentTaskStatus.FAILED,
+                                                AgentFailureCode.PLATFORM_UNAVAILABLE,
+                                                event=AgentEvent.TASK_ABANDONED)
+        return self._result_from_row(updated)
 
     async def cancel(
         self, env: TaskEnvironment, *, caller: Principal, task_id: uuid.UUID
@@ -427,7 +511,7 @@ class AgentRuntime:
             return self._result_from_row(row)
 
         state = self._states.get(task_id)
-        if state is not None and state.pending is None:
+        if state is not None and state.pending is None and state.platform_wait is None:
             # Live in another request. Decided from the in-process state, not
             # the row: the request driving the task holds its status change in
             # an uncommitted transaction, so the row can still read "awaiting"
@@ -444,6 +528,7 @@ class AgentRuntime:
             return self._result_from_row(updated)
 
         state.pending = None  # the paused action is dropped, never performed
+        state.platform_wait = None  # and a waited-for call is never retried
         state.cancelled = True
         state.cancel_event.set()
         return await self._finish(env, state, AgentTaskStatus.CANCELLED)
@@ -483,7 +568,7 @@ class AgentRuntime:
         state = self._states.get(task_id)
         if state is not None:
             self._breaker.trip(BreakerScope.TASK, task_id, reason=reason, source=source)
-            if state.pending is not None and not state.stop_enforced:
+            if (state.pending is not None or state.platform_wait is not None) and not state.stop_enforced:
                 await self._emergency_stop(env, state)
                 return StopOutcome.STOPPED
             return StopOutcome.SIGNALLED
@@ -515,6 +600,10 @@ class AgentRuntime:
         state = self._states.get(task_id)
         if state is not None and row.status == AgentTaskStatus.AWAITING_CONFIRMATION.value:
             return self._result_from_state(state, AgentTaskStatus.AWAITING_CONFIRMATION)
+        if row.status == AgentTaskStatus.WAITING_FOR_PLATFORM.value:
+            if state is not None and state.platform_wait is not None and not state.platform_wait.expired():
+                return self._result_from_state(state, AgentTaskStatus.WAITING_FOR_PLATFORM)
+            return await self._end_platform_wait(env, row, state)
         result = self._result_from_row(row)
         if row.status == AgentTaskStatus.AWAITING_CONFIRMATION.value and state is None:
             result.notes.append("The paused action is no longer available and cannot be confirmed.")
@@ -611,6 +700,8 @@ class AgentRuntime:
                     paused = await self._tool_call(env, state, proposal, remaining, models)
                 if paused is not None:
                     return paused
+                if state.platform_wait is not None:
+                    return await self._pause_for_platform(env, state)
                 if self._recovery is not None and state.tripped is None:
                     await self._check_progress(env, state, models)
         except _Stop as stop:
@@ -1018,7 +1109,7 @@ class AgentRuntime:
                 risk_category=verdict.risk_category, token=issued.token, expires_at=issued.expires_at,
                 tool_id=handle.tool_id, operation=call.operation, arguments=dict(call.arguments),
                 resource_ref=resource_ref, platform=platform, resource_scope=scope,
-                resource_type=resource_type, resource_operation=operation,
+                resource_type=resource_type, resource_operation=operation, requested_scope=call.scope,
             )
             return await self._pause(env, state)
         if not verdict.allowed:
@@ -1034,8 +1125,11 @@ class AgentRuntime:
             self._breaker.record_denial(state)
             return None
 
-        await self._execute(env, state, handle, call.operation, platform, dict(call.arguments),
-                            resource_ref, scope, remaining)
+        output = await self._execute(env, state, handle, call.operation, platform, dict(call.arguments),
+                                     resource_ref, scope, remaining)
+        self._maybe_wait_for_platform(state, output, tool=handle.tool_id, operation=call.operation,
+                                      arguments=dict(call.arguments), platform=platform,
+                                      resource_ref=call.resource_ref, scope=call.scope)
         return None
 
     async def _approve_tool_operation(
@@ -1090,15 +1184,19 @@ class AgentRuntime:
         await self._event(env, state, AgentEvent.CONFIRMATION_ACCEPTED, AuditResult.SUCCESS,
                           resource=self._pending_resource(pending), decision=verdict.decision)
         remaining_seconds = self._bounds.wall_clock_timeout_seconds - state.run_seconds_used
-        await self._execute(env, state, handle, pending.operation or "",
-                            pending.platform or ExecutionPlatform.SERVER, pending.arguments,
-                            pending.resource_ref, pending.resource_scope, lambda: remaining_seconds)
+        platform = pending.platform or ExecutionPlatform.SERVER
+        output = await self._execute(env, state, handle, pending.operation or "", platform,
+                                     pending.arguments, pending.resource_ref, pending.resource_scope,
+                                     lambda: remaining_seconds)
+        self._maybe_wait_for_platform(state, output, tool=handle.tool_id, operation=pending.operation or "",
+                                      arguments=dict(pending.arguments), platform=platform,
+                                      resource_ref=pending.resource_ref, scope=pending.requested_scope)
 
     async def _execute(
         self, env: TaskEnvironment, state: TaskState, handle: ToolHandle, operation: str,
         platform: ExecutionPlatform, arguments: dict, resource_ref: str | None,
         scope: dict[str, str] | None, remaining,
-    ) -> None:
+    ) -> ToolOutput:
         if remaining() <= 0:
             raise _Stop(AgentFailureCode.TIMEOUT)
         await self._precheck(env, state, handle.projected_cost_per_call)
@@ -1148,6 +1246,34 @@ class AgentRuntime:
         self._breaker.record_tool_outcome(state, ok=output.ok, error=output.error)
         if output.ok:
             state.progressed = True
+        return output
+
+    def _maybe_wait_for_platform(
+        self, state: TaskState, output: ToolOutput, *, tool: str, operation: str, arguments: dict,
+        platform: ExecutionPlatform, resource_ref: str | None, scope: dict[str, str] | None,
+    ) -> None:
+        """docs/23 §5.3: a device operation refused because an on-device
+        dependency is unavailable puts the *task* into a bounded wait — at most
+        `max_platform_waits` times, each for at most `max_platform_wait_seconds`.
+        Only the call's description is kept; nothing is queued on the device,
+        and the refused operation itself is never re-sent."""
+
+        if (
+            output.ok
+            or output.error != "platform_unavailable"
+            or not output.required_platform
+            or platform is not ExecutionPlatform.ANDROID
+            or state.principal.device_id is None
+            or state.platform_waits >= self._bounds.max_platform_waits
+        ):
+            return
+        state.platform_waits += 1
+        state.platform_wait = PlatformWaitStep(
+            tool=tool, operation=operation, arguments=arguments, platform=platform,
+            resource_ref=resource_ref, scope=scope, dependency=output.required_platform,
+            device_id=state.principal.device_id,
+            expires_at=datetime.now(timezone.utc) + timedelta(seconds=self._bounds.max_platform_wait_seconds),
+        )
 
     async def _run_cancellable(
         self, state: TaskState, tool_id: str, platform: ExecutionPlatform,
@@ -1231,6 +1357,16 @@ class AgentRuntime:
                           decision=PermissionDecisionValue.REQUIRE_CONFIRMATION)
         await self._event(env, state, AgentEvent.TASK_PAUSED, AuditResult.SUCCESS)
         return self._result_from_state(state, AgentTaskStatus.AWAITING_CONFIRMATION)
+
+    async def _pause_for_platform(self, env: TaskEnvironment, state: TaskState) -> AgentResult:
+        if state.tripped is not None:
+            state.platform_wait = None
+            return await self._emergency_stop(env, state)
+        assert state.platform_wait is not None
+        await self._set_status(env, state, AgentTaskStatus.WAITING_FOR_PLATFORM)
+        await self._event(env, state, AgentEvent.TASK_PAUSED, AuditResult.SUCCESS,
+                          resource=f"platform_wait:{state.platform_wait.dependency}")
+        return self._result_from_state(state, AgentTaskStatus.WAITING_FOR_PLATFORM)
 
     async def _set_status(self, env: TaskEnvironment, state: TaskState, status: AgentTaskStatus) -> None:
         await update_task_row(
@@ -1443,6 +1579,8 @@ class AgentRuntime:
                 continue
             code = (AgentFailureCode.CONFIRMATION_STATE_LOST
                     if row.status == AgentTaskStatus.AWAITING_CONFIRMATION.value
+                    else AgentFailureCode.PLATFORM_UNAVAILABLE
+                    if row.status == AgentTaskStatus.WAITING_FOR_PLATFORM.value
                     else AgentFailureCode.INTERNAL_ERROR)
             _, did = await self._close_from_row(env, row, AgentTaskStatus.FAILED, code,
                                                 event=AgentEvent.TASK_ABANDONED)
@@ -1477,8 +1615,12 @@ class AgentRuntime:
                 requires_step_up=p.risk_category is RiskCategory.HIGH_IRREVERSIBLE,
                 confirmation_token=p.token, expires_at=p.expires_at,
             )
+        waiting_for = None
+        if state.platform_wait is not None and status is AgentTaskStatus.WAITING_FOR_PLATFORM:
+            w = state.platform_wait
+            waiting_for = PlatformWait(dependency=w.dependency, device_id=w.device_id, expires_at=w.expires_at)
         return AgentResult(
-            task_id=state.task_id, status=status, mode=state.mode, pending=pending,
+            task_id=state.task_id, status=status, mode=state.mode, pending=pending, waiting_for=waiting_for,
             active_capabilities=state.active_capability_names(), notes=list(state.notes),
             counters=TaskCounters(iterations=state.iterations, model_calls=state.model_calls,
                                   tool_calls=state.tool_calls, worker_switches=state.worker_switches),

@@ -239,6 +239,15 @@ class AgentTaskFacade:
         except TaskNotFound:
             raise AppError(ErrorCode.NOT_FOUND, "not found") from None
 
+    async def resume_after_platform(
+        self, session: AsyncSession, *, device_id: uuid.UUID, dependency: str, audit: AuditLogger
+    ) -> list[AgentResult]:
+        with self._secret_scope(session, audit):
+            results = await self._runtime.resume_after_platform(
+                self.environment(session, audit), device_id=device_id, dependency=dependency
+            )
+        return [self._observe(r) for r in results]
+
     async def reconcile_after_restart(self, session: AsyncSession, *, audit: AuditLogger) -> list[uuid.UUID]:
         return await self._runtime.reconcile_after_restart(self.environment(session, audit))
 

@@ -25,6 +25,7 @@ from server.gateway.routers import device_channel as channel_module
 from server.gateway.security import build_security_core
 from server.secrets.kek import resolve_kek
 from server.storage.models import AccessToken
+from shared.schemas.device_channel import DevicePlatformDependency
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode
 from tests.device_channel_support import AsgiWebSocket
 from tests.security_core.conftest import TEST_KEK_ENV_VAR, Api, LocalOIDCProvider, make_test_config
@@ -329,3 +330,45 @@ async def test_revocation_is_committed_before_the_socket_is_closed(channel):
     resp = await channel.api.client.delete(f"{API_V1_PREFIX}/devices/{phone.device_id}", headers=phone.auth)
     assert resp.status_code == 204
     assert seen == [True]
+
+
+# ── docs/23 §5.3: a dependency coming back resumes only this device's waits ─
+
+
+class RecordingAgentTasks:
+    def __init__(self) -> None:
+        self.resumed: list[tuple[uuid.UUID, str]] = []
+        self.done = asyncio.Event()
+
+    async def resume_after_platform(self, session, *, device_id, dependency, audit):
+        self.resumed.append((device_id, dependency))
+        self.done.set()
+        return []
+
+
+async def test_a_platform_report_resumes_only_this_devices_waits_for_what_came_back(channel):
+    agent_tasks = RecordingAgentTasks()
+    channel.app.state.agent_tasks = agent_tasks
+    phone = await channel.api.onboard("alice")
+    ws, _ = await _connected(channel, phone)
+
+    await ws.send_json({"type": "platform_status", "platforms": {"shizuku": False, "accessibility_service": False}})
+    await asyncio.sleep(0.05)
+    assert agent_tasks.resumed == []  # nothing came back
+
+    await ws.send_json({"type": "platform_status", "platforms": {"shizuku": True, "notification_access": False}})
+    await asyncio.wait_for(agent_tasks.done.wait(), 5)
+    # Exactly the reporting socket's own device — a report cannot name another.
+    assert agent_tasks.resumed == [(phone.device_id, "shizuku")]
+    assert channel.hub.platform_status(phone.device_id)[DevicePlatformDependency.SHIZUKU] is True
+    await ws.disconnect()
+
+
+async def test_a_platform_report_cannot_carry_a_device_id(channel):
+    agent_tasks = RecordingAgentTasks()
+    channel.app.state.agent_tasks = agent_tasks
+    phone = await channel.api.onboard("alice")
+    ws, _ = await _connected(channel, phone)
+    await ws.send_json({"type": "platform_status", "platforms": {"shizuku": True}, "device_id": str(uuid.uuid4())})
+    assert await ws.expect_close() == 4008
+    assert agent_tasks.resumed == []

@@ -82,6 +82,7 @@ class AuditAction(str, Enum):
     # ── agent runtime (05) ──────────────────────────────────────────────
     AGENT_TASK_SUBMITTED = "agent.task.submitted"
     AGENT_TASK_PAUSED = "agent.task.paused"
+    AGENT_TASK_RESUMED = "agent.task.resumed"
     AGENT_TASK_COMPLETED = "agent.task.completed"
     AGENT_TASK_FAILED = "agent.task.failed"
     AGENT_TASK_CANCELLED = "agent.task.cancelled"

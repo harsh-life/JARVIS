@@ -170,8 +170,13 @@ description; the call is budget-checked and metered as a model call. The UI
 execution primitives (tap, directional scroll, typing, launching the named
 app, back/home/recents/notifications) act only inside the app the operation
 names, on the node an Accessibility selector found — never at raw coordinates,
-and never typing into a password field. Not yet: the typed Shizuku call, the
-per-app grid UI and confirmation screen.
+and never typing into a password field. An operation refused because an
+on-device dependency is missing (Shizuku after a reboot, Accessibility turned
+off) puts the *task* into a bounded `waiting_for_platform` state — the
+operation is never queued; when that device reports the dependency back, the
+call is re-authorized from scratch (a consequential one asks for a new
+confirmation) and a fresh operation is sent. Not yet: the typed Shizuku call
+itself, the per-app grid UI and confirmation screen.
 
 **Still not built:** the scheduler, the dashboard, voice. Their capabilities (where any exist) are absent from the
 registry or, for Android, dispatch to a transport that refuses every call — the

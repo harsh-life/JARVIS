@@ -65,6 +65,12 @@ class AgentTaskStatus(str, Enum):
 
     RUNNING = "running"
     AWAITING_CONFIRMATION = "awaiting_confirmation"
+    # docs/23 §5.3: a device operation was refused because an on-device
+    # dependency (e.g. Shizuku after a reboot) is unavailable. The *task* waits,
+    # bounded; the *operation* does not — nothing is queued on the device, and
+    # when the dependency returns the call is re-authorized from scratch and a
+    # fresh operation is built.
+    WAITING_FOR_PLATFORM = "waiting_for_platform"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -101,6 +107,9 @@ class AgentFailureCode(str, Enum):
     # 18 §4.2/§4.4: recovery needed a switch, and the worker chain (or
     # `max_worker_switches`) was exhausted.
     WORKER_CHAIN_EXHAUSTED = "worker_chain_exhausted"
+    # docs/23 §5.3: the task waited for an on-device dependency and it did not
+    # come back within the bound (or the wait could not survive a restart).
+    PLATFORM_UNAVAILABLE = "platform_unavailable"
     INTERNAL_ERROR = "internal_error"
 
 
@@ -152,6 +161,9 @@ class ToolOutput:
     estimated_cost: float = 0.0
     provider: str | None = None
     model: str | None = None
+    # docs/23 §5.3: set only with `error == "platform_unavailable"` — which
+    # on-device dependency the operation needed (e.g. "shizuku").
+    required_platform: str | None = None
 
 
 # ── API shapes (02 §5/§6) ──────────────────────────────────────────────────
@@ -185,6 +197,18 @@ class PendingAction(BaseModel):
     expires_at: datetime
 
 
+class PlatformWait(BaseModel):
+    """What a `waiting_for_platform` task is waiting for (docs/23 §5.3): which
+    dependency, on which of the user's devices, until when. The user's device
+    shows the instruction ("turn Shizuku on"); nothing runs until it is back."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dependency: str
+    device_id: UUID
+    expires_at: datetime
+
+
 class AgentFailure(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -207,6 +231,7 @@ class AgentResult(BaseModel):
     unresolved: bool = False
     failure: AgentFailure | None = None
     pending: PendingAction | None = None
+    waiting_for: PlatformWait | None = None
     active_capabilities: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     counters: TaskCounters = Field(default_factory=TaskCounters)

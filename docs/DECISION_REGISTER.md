@@ -116,6 +116,7 @@ names remain `[PROPOSED]` until the owner signs them.
 | (new) | Resource-less tool operations | `ResourceType.TOOL_ACTION` + `Operation.CREATE`: authorized on capability, floor and tier alone; not loadable, so nothing can be read through it. Tools that touch a real resource (e.g. a `FileResource`) declare that resource type instead and get D3/D4. | `shared/schemas/authorization.py` |
 | (new) | Model pricing | A non-local provider must declare `pricing`; a paid provider without pricing is a config error, because an unknown cost cannot be checked against a budget. | `server/config/schema.py` |
 | (new) | Execution platforms | `server`, `linux`, `android` — engine vocabulary, not a `01` §1.2 registry value | `shared/schemas/agent.py` |
+| (new) | Waiting for an on-device dependency (docs/23 §5.3) | Task status `waiting_for_platform`: a device operation refused `platform_unavailable` (e.g. Shizuku after a reboot) pauses the **task**, never the operation — nothing is queued on the device. Bounded: `max_platform_waits` 2 per task, `max_platform_wait_seconds` 600 each; expiry fails the task `platform_unavailable`. Resumed only when **that** device reports **that** dependency available; the call is then proposed again through every check and the engine (a revoked grant is honoured; a consequential action needs a **new** confirmation), and a fresh operation is built. Volatile like a paused confirmation: a restart fails it closed. | `server/agent/runtime.py`, migration `…_agent_task_waiting_for_platform` |
 
 ---
 

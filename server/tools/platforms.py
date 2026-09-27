@@ -59,7 +59,7 @@ def _ok(result: ExecutionResult) -> ToolOutput:
 
 
 def _failed(exc: ExecutionError) -> ToolOutput:
-    return ToolOutput(ok=False, error=exc.code.value)
+    return ToolOutput(ok=False, error=exc.code.value, required_platform=exc.required_platform)
 
 
 def _string_argument(request: ExecutionRequest, key: str, *, default: str | None = None) -> str:

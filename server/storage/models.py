@@ -682,7 +682,7 @@ class AgentTask(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('running','awaiting_confirmation','completed','failed','cancelled')",
+            "status IN ('running','awaiting_confirmation','waiting_for_platform','completed','failed','cancelled')",
             name="ck_agent_tasks_status",
         ),
         CheckConstraint(

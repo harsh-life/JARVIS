@@ -193,7 +193,8 @@ class SupervisorControl:
                 # 20 §2.4: a trip ends the task's break-glass record at once,
                 # not when the stop is enforced.
                 self._break_glass.end_task(state.task_id, EndReason.BREAKER_TRIP)
-            (to_enforce if state.pending is not None else signalled).append(state.task_id)
+            paused = state.pending is not None or state.platform_wait is not None
+            (to_enforce if paused else signalled).append(state.task_id)
         return signalled, to_enforce
 
     async def _enforce(

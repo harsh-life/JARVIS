@@ -49,6 +49,13 @@ class AgentTaskPort(Protocol):
 
     def tool_summaries(self) -> list[ToolSummary]: ...
 
+    async def resume_after_platform(
+        self, session: AsyncSession, *, device_id: uuid.UUID, dependency: str, audit: AuditLogger
+    ) -> list[AgentResult]:
+        """docs/23 §5.3: resume the tasks waiting for `dependency` on exactly
+        this device, each re-authorized from scratch."""
+        ...
+
     async def reconcile_after_restart(self, session: AsyncSession, *, audit: AuditLogger) -> list[uuid.UUID]:
         """Close every task a previous server run left unfinished; startup only."""
         ...
