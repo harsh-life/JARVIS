@@ -154,3 +154,12 @@ def test_the_shared_grant_samples_are_current():
     from tests.tools.export_grant_samples import PATH, render_file
 
     assert PATH.read_text(encoding="ascii") == render_file()
+
+
+def test_the_shared_push_samples_are_current():
+    """ANDC-T9: the Android wake parser is held to these (PushSampleTest).
+    Regenerate: `python -m tests.tools.export_push_samples export`."""
+
+    from tests.tools.export_push_samples import PATH, render_file
+
+    assert PATH.read_text(encoding="ascii") == render_file()

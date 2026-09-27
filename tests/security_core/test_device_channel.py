@@ -336,11 +336,21 @@ async def test_revocation_is_committed_before_the_socket_is_closed(channel):
 
 
 class RecordingAgentTasks:
+    """Records resumes. `resumed` is what a platform report resumed; the
+    resume every authenticated connect makes for `device_channel` (docs/23 §4
+    push wake) is recorded separately in `reconnected`."""
+
     def __init__(self) -> None:
         self.resumed: list[tuple[uuid.UUID, str]] = []
+        self.reconnected: list[uuid.UUID] = []
         self.done = asyncio.Event()
+        self.reconnect_seen = asyncio.Event()
 
     async def resume_after_platform(self, session, *, device_id, dependency, audit):
+        if dependency == "device_channel":
+            self.reconnected.append(device_id)
+            self.reconnect_seen.set()
+            return []
         self.resumed.append((device_id, dependency))
         self.done.set()
         return []
@@ -372,3 +382,31 @@ async def test_a_platform_report_cannot_carry_a_device_id(channel):
     await ws.send_json({"type": "platform_status", "platforms": {"shizuku": True}, "device_id": str(uuid.uuid4())})
     assert await ws.expect_close() == 4008
     assert agent_tasks.resumed == []
+
+
+# ── docs/23 §4: only an authenticated reconnect resumes a task that waited for its device ─
+
+
+async def test_an_authenticated_connect_resumes_only_this_devices_channel_wait(channel):
+    agent_tasks = RecordingAgentTasks()
+    channel.app.state.agent_tasks = agent_tasks
+    phone = await channel.api.onboard("alice")
+    other = await channel.api.onboard("bob")
+    ws, _ = await _connected(channel, phone)
+    await asyncio.wait_for(agent_tasks.reconnect_seen.wait(), 5)
+    assert agent_tasks.reconnected == [phone.device_id]
+    assert other.device_id not in agent_tasks.reconnected
+    await ws.disconnect()
+
+
+async def test_a_failed_authentication_resumes_nothing(channel):
+    agent_tasks = RecordingAgentTasks()
+    channel.app.state.agent_tasks = agent_tasks
+    phone = await channel.api.onboard("alice")
+    ws = await channel.hello(phone, token="not-a-token")
+    assert await ws.expect_close() == 4001
+    other = await channel.api.onboard("bob")
+    ws = await channel.hello(phone, proof_device=other)
+    assert await ws.expect_close() == 4001
+    await asyncio.sleep(0.05)
+    assert agent_tasks.reconnected == [] and agent_tasks.resumed == []

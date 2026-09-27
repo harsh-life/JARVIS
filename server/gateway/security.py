@@ -27,6 +27,7 @@ from server.auth.device import DeviceService
 from server.auth.login import OIDCLoginFlow
 from server.auth.oidc import GoogleOIDCProvider, OIDCProvider
 from server.auth.repository import AuthRepository
+from server.auth.push_tokens import PushTokens
 from server.auth.step_up import StepUpService
 from server.auth.sessions import SessionService
 from server.capabilities.confirmation import ConfirmationService
@@ -60,6 +61,7 @@ class SecurityCore:
     devices: DeviceService
     sessions: SessionService
     step_up: StepUpService
+    push_tokens: PushTokens
     graphs: GraphService
     graph_repository: GraphRepository
     capability_grants: CapabilityGrantService
@@ -122,6 +124,7 @@ def build_security_core(
         ),
         devices=DeviceService(secret_store=secret_store, repository=auth_repository),
         step_up=StepUpService(),
+        push_tokens=PushTokens(),
         sessions=SessionService(repository=auth_repository),
         graphs=GraphService(repository=graph_repository),
         graph_repository=graph_repository,

@@ -4,6 +4,8 @@ import com.hypermind.jarvis.contract.AppPolicy
 import com.hypermind.jarvis.contract.ContractJson
 import com.hypermind.jarvis.contract.GrantList
 import com.hypermind.jarvis.contract.GrantRequest
+import com.hypermind.jarvis.contract.PushClientConfig
+import com.hypermind.jarvis.contract.PushTokenRegistration
 import com.hypermind.jarvis.contract.TaskView
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -236,6 +238,51 @@ class ApiClient(
         } catch (e: ApiException) {
             if (e.status != NOT_FOUND) throw e
         }
+    }
+
+    // ── push wake (docs/23 §4) — this device's own registration only ───
+
+    /** Whether the server wakes phones, and the public Firebase ids to do it. Strict. */
+    fun pushConfig(accessToken: String): PushClientConfig =
+        ContractJson.decodeFromJsonElement(
+            PushClientConfig.serializer(),
+            execute(
+                Request
+                    .Builder()
+                    .url(api("devices/push-config"))
+                    .header("Authorization", "Bearer $accessToken")
+                    .get()
+                    .build(),
+            ),
+        )
+
+    /** Bind this device's registration token (on first use and on every rotation). */
+    fun registerPushToken(
+        accessToken: String,
+        registration: PushTokenRegistration,
+    ) {
+        execute(
+            Request
+                .Builder()
+                .url(api("devices/me/push-token"))
+                .header("Authorization", "Bearer $accessToken")
+                .put(ContractJson.encodeToString(PushTokenRegistration.serializer(), registration).toRequestBody(JSON))
+                .build(),
+            expectBody = false,
+        )
+    }
+
+    /** The user turned push wake off here: the server forgets the token. */
+    fun clearPushToken(accessToken: String) {
+        execute(
+            Request
+                .Builder()
+                .url(api("devices/me/push-token"))
+                .header("Authorization", "Bearer $accessToken")
+                .delete()
+                .build(),
+            expectBody = false,
+        )
     }
 
     // ── agent tasks (02 §5) — responses parsed strictly by TaskView ──────

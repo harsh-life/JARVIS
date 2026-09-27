@@ -11,7 +11,11 @@ What it guarantees, each a direct docs/23 requirement:
 * **No queue.** A device that is not connected fails the operation at once
   with `device_unavailable` (ANDC-T2). Nothing is held for a reconnect —
   authority may not go stale in a queue. An operation already past its
-  `expires_at` is never sent.
+  `expires_at` is never sent. When push wake is configured (docs/23 §4) and
+  the device can be woken, a content-free wake is sent and the failure says
+  so (`required_platform: device_channel`): the *task* may then wait for the
+  channel and is re-authorized when the device is back — the failed
+  operation itself is gone.
 * **Bounded, untrusted results.** A result must arrive before the operation
   expires, on the connection it was sent to, within the primitive's size
   bound. A result for an unknown, finished or cancelled operation is dropped
@@ -96,13 +100,28 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# The dependency a task waits on when its device was woken (docs/23 §4).
+DEVICE_CHANNEL = "device_channel"
+
+
+class _Waker(Protocol):
+    async def wake(self, device_id: uuid.UUID, *, user_id: uuid.UUID) -> bool: ...
+
+
 class DeviceHub:
     def __init__(self, *, clock: Callable[[], datetime] = _utcnow) -> None:
         self._clock = clock
+        self._waker: _Waker | None = None
         self._sessions: dict[uuid.UUID, DeviceSession] = {}
         self._pending: dict[uuid.UUID, _Pending] = {}
         # Fire-and-forget sends (cancel frames) keep a reference until done.
         self._background: set[asyncio.Task] = set()
+
+    def attach_waker(self, waker: "_Waker") -> None:
+        """docs/23 §4: the optional push wake for devices that are not
+        connected. Wired at the composition root when configured."""
+
+        self._waker = waker
 
     # ── connection lifecycle (called by the gateway) ────────────────────
 
@@ -166,7 +185,21 @@ class DeviceHub:
         if now >= operation.expires_at:
             raise ExecutionError(ExecutionErrorCode.OPERATION_EXPIRED, "operation expired before dispatch")
         session = self._sessions.get(operation.device_id)
-        if session is None or session.user_id != operation.user_id:
+        if session is None:
+            # Never queued. A wake (if configured) only asks the device to
+            # reconnect; this operation fails now regardless.
+            woken = False
+            if self._waker is not None:
+                try:
+                    woken = await self._waker.wake(operation.device_id, user_id=operation.user_id)
+                except Exception:  # noqa: BLE001 — a failed wake is only a missed wake
+                    logger.warning("push wake for device %s failed", operation.device_id, exc_info=True)
+            raise ExecutionError(
+                ExecutionErrorCode.DEVICE_UNAVAILABLE,
+                "device is not connected; asked it to reconnect" if woken else "device is not connected",
+                required_platform=DEVICE_CHANNEL if woken else None,
+            )
+        if session.user_id != operation.user_id:
             # A socket bound to another user can never receive this
             # principal's operation, even if it claims the same device id.
             raise ExecutionError(ExecutionErrorCode.DEVICE_UNAVAILABLE, "device is not connected")

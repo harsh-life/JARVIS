@@ -132,6 +132,13 @@ dependencies {
     implementation(libs.androidx.biometric)
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
+    // docs/23 §4 push wake — optional and OFF by default. The SDK is linked
+    // but never initialized unless the user's server offers FCM *and* the
+    // user turns it on: no automatic initialization (the init provider is
+    // removed in the manifest), no auto-registration, and the receiving
+    // service is disabled until then. Only push/FirebasePushClient.kt and
+    // push/JarvisMessagingService.kt touch it.
+    implementation(libs.firebase.messaging)
 
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 

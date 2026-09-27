@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -18,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -26,6 +28,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.FragmentActivity
@@ -35,6 +38,7 @@ import com.hypermind.jarvis.channel.ChannelService
 import com.hypermind.jarvis.channel.ChannelState
 import com.hypermind.jarvis.contract.MappingState
 import com.hypermind.jarvis.permissions.GridSync
+import com.hypermind.jarvis.push.PushRegistrar
 import com.hypermind.jarvis.ui.AppGrid
 import com.hypermind.jarvis.ui.GridRows
 import com.hypermind.jarvis.ui.InstalledApps
@@ -135,9 +139,14 @@ class MainActivity : FragmentActivity() {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
+                    graph.connection.wanted = true
                     ChannelService.start(this)
                 }) { Text("Connect") }
-            else -> OutlinedButton(onClick = { ChannelService.stop(this) }) { Text("Disconnect") }
+            else ->
+                OutlinedButton(onClick = {
+                    graph.connection.wanted = false
+                    ChannelService.stop(this)
+                }) { Text("Disconnect") }
         }
         if (state is ChannelState.Connected) {
             var panel by remember { mutableStateOf<TaskPanelState>(TaskPanelState.Idle) }
@@ -162,6 +171,7 @@ class MainActivity : FragmentActivity() {
                 },
             )
         }
+        if (graph.pushOffered) PushToggle(app)
         var showGrid by remember { mutableStateOf(false) }
         OutlinedButton(
             onClick = { showGrid = !showGrid },
@@ -179,6 +189,7 @@ class MainActivity : FragmentActivity() {
                         // Already unusable server-side.
                     }
                 }
+                graph.connection.wanted = false
                 ChannelService.stop(this@MainActivity)
                 graph.forgetKey()
                 graph.revocation.wipe()
@@ -186,6 +197,40 @@ class MainActivity : FragmentActivity() {
                 notice.value = "This phone was removed."
             }
         }) { Text("Remove this phone") }
+    }
+
+    /**
+     * docs/23 §4: waking this phone through Google Firebase when your server
+     * needs it — offered only when the server has it configured, and off until
+     * the user turns it on. A wake only reconnects; it never carries or runs
+     * anything.
+     */
+    @Composable
+    private fun PushToggle(app: JarvisApplication) {
+        val graph = app.graph
+        val scope = rememberCoroutineScope()
+        var on by remember { mutableStateOf(graph.pushOptedIn) }
+        var note by remember { mutableStateOf<String?>(null) }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Wake this phone when needed (Google Firebase)", style = MaterialTheme.typography.bodyMedium)
+            Switch(checked = on, onCheckedChange = { wanted ->
+                on = wanted
+                scope.launch {
+                    val status = withContext(Dispatchers.IO) { graph.push.setOptedIn(wanted) }
+                    note =
+                        when (status) {
+                            is PushRegistrar.Status.Unavailable -> "Push is not available on this phone."
+                            is PushRegistrar.Status.Pending -> "Not yet saved on your server; it will retry."
+                            else -> null
+                        }
+                }
+            })
+        }
+        note?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     }
 
     /** The per-app grid (PRD §13): local refusal at once, the server's grants reconciled after. */

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- The Track B API and the authenticated device channel (docs/23 §4). -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -104,6 +105,47 @@
             android:exported="true"
             android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!-- docs/23 §4 push wake — OFF by default. Firebase is never
+             initialized automatically (its init provider is removed), never
+             registers on its own (auto-init off), and this receiver stays
+             disabled until the user turns push wake on for a server that
+             offers it. A push is only a request to reconnect the channel. -->
+        <service
+            android:name=".push.JarvisMessagingService"
+            android:enabled="false"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- The library's own push receiver (callable only by Google Play
+             services, c2dm SEND permission) ships disabled too: with push wake
+             off, nothing on this phone can receive a push at all. Its default
+             messaging service is never used — ours is the only handler. -->
+        <receiver
+            android:name="com.google.firebase.iid.FirebaseInstanceIdReceiver"
+            android:enabled="false" />
+
+        <service
+            android:name="com.google.firebase.messaging.FirebaseMessagingService"
+            android:enabled="false" />
+
+        <provider
+            android:name="com.google.firebase.provider.FirebaseInitProvider"
+            android:authorities="${applicationId}.firebaseinitprovider"
+            tools:node="remove" />
+
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_analytics_collection_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="delivery_metrics_exported_to_big_query_enabled"
+            android:value="false" />
 
         <service
             android:name=".channel.ChannelService"

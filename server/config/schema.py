@@ -22,6 +22,8 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
+from shared.schemas.push import FcmClientOptions, PushProvider
+
 # A secret reference names *where* to obtain a secret; it is never the
 # secret itself. Two forms are accepted:
 #   env:VAR_NAME          -> resolve from that environment variable at use
@@ -457,6 +459,41 @@ class AndroidAppClassificationConfig(StrictModel):
         return self
 
 
+class AndroidFcmConfig(StrictModel):
+    """docs/23 §4: Firebase Cloud Messaging as the wake provider.
+
+    `client` holds the public Firebase identifiers the phone uses to obtain a
+    registration token (served to enrolled devices by
+    `GET /devices/push-config`). `service_account_ref` names where the
+    server's *sending* credential lives — a Google service-account key (JSON)
+    in the SecretStore (class `oauth_token`, server-owned) or an environment
+    variable; never a literal. The phone never sees it."""
+
+    client: FcmClientOptions
+    service_account_ref: SecretRef
+    # Wakes to one device closer together than this are coalesced into one.
+    min_interval_seconds: int = Field(default=30, ge=5, le=600)
+
+
+class AndroidPushConfig(StrictModel):
+    """docs/23 §4 push wake — optional, and **off by default**.
+
+    `none` (the default): the server never sends a push and phones never
+    initialize a push SDK; a sleeping phone reconnects when the user opens the
+    app or the network returns. `fcm`: a content-free wake
+    (`shared/schemas/push.py`, ANDC-T9) asks a phone to reconnect its
+    authenticated channel. A push never carries or triggers anything else."""
+
+    provider: PushProvider = PushProvider.NONE
+    fcm: AndroidFcmConfig | None = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> "AndroidPushConfig":
+        if self.provider is PushProvider.FCM and self.fcm is None:
+            raise ValueError("android.push.provider 'fcm' needs an android.push.fcm section")
+        return self
+
+
 class AndroidConfig(StrictModel):
     """docs/23 — the Android client's server-side surface.
 
@@ -477,6 +514,8 @@ class AndroidConfig(StrictModel):
     # vision rung: a screenshot is dropped unread (`vision_not_configured`).
     # A paid provider must be priced, like every other model entry (13 §3).
     vision: ModelEntryConfig | None = None
+    # docs/23 §4: the optional push wake (FCM). Default `none`.
+    push: AndroidPushConfig = Field(default_factory=AndroidPushConfig)
 
 
 class OIDCConfig(StrictModel):

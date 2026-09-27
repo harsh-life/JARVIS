@@ -21,6 +21,21 @@ class TaskPanelStateTest {
     }
 
     @Test
+    fun `a task waiting for its device to reconnect says so plainly`() {
+        val state =
+            shown(
+                AgentResult(
+                    "t",
+                    TaskStatus.WAITING_FOR_PLATFORM,
+                    waitingFor = PlatformWait("device_channel", "d", "x"),
+                ),
+            )
+        val text = (state as TaskPanelState.Message).text
+        assertTrue(text.contains("reconnect"))
+        assertTrue(!text.contains("device_channel"))
+    }
+
+    @Test
     fun `a blocked step-up says plainly that nothing was approved`() {
         for (result in listOf(StepUpResult.Cancelled, StepUpResult.NoKey, StepUpResult.Failed)) {
             val state = TaskPanelState.of(TaskController.Outcome.StepUpBlocked(result))
