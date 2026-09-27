@@ -14,12 +14,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -27,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,12 +49,14 @@ import com.hypermind.jarvis.presentation.PresentationText
 import com.hypermind.jarvis.push.PushRegistrar
 import com.hypermind.jarvis.tasks.TaskTracker
 import com.hypermind.jarvis.ui.AppGrid
+import com.hypermind.jarvis.ui.DeviceStatusPanel
 import com.hypermind.jarvis.ui.GridRows
 import com.hypermind.jarvis.ui.InstalledApps
 import com.hypermind.jarvis.ui.SecureTouch
 import com.hypermind.jarvis.ui.StatusHeader
 import com.hypermind.jarvis.ui.TaskPanel
 import com.hypermind.jarvis.ui.TaskPanelActions
+import com.hypermind.jarvis.ui.UserActionIntents
 import com.hypermind.jarvis.ui.theme.JarvisTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -73,7 +80,7 @@ class MainActivity : FragmentActivity() {
             JarvisTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
                     Column(
-                        modifier = Modifier.padding(padding).padding(20.dp),
+                        modifier = Modifier.padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         Text("JARVIS", style = MaterialTheme.typography.headlineSmall)
@@ -173,31 +180,53 @@ class MainActivity : FragmentActivity() {
             return
         }
 
-        Text("Server: ${graph.store.serverUrl}", style = MaterialTheme.typography.bodySmall)
-        Text(describe(state), style = MaterialTheme.typography.bodyMedium)
-        when (state) {
-            is ChannelState.Stopped, is ChannelState.UpdateRequired, is ChannelState.Revoked ->
-                Button(onClick = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    }
-                    graph.connection.wanted = true
-                    ChannelService.start(this)
-                }) { Text("Connect") }
-            else ->
-                OutlinedButton(onClick = {
-                    graph.connection.wanted = false
-                    ChannelService.stop(this)
-                }) { Text("Disconnect") }
+        val presentation by graph.presentation.collectAsState()
+        var tab by rememberSaveable { mutableStateOf(0) }
+        // The one status line, on every tab (docs/23 §7).
+        StatusHeader(presentation) { action -> onUserAction(graph, action) }
+        TabRow(selectedTabIndex = tab) {
+            TABS.forEachIndexed { index, title ->
+                Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
+            }
         }
-        TaskSurface(app)
-        if (graph.pushOffered) PushToggle(app)
-        OverlayToggle(app)
-        var showGrid by remember { mutableStateOf(false) }
-        OutlinedButton(
-            onClick = { showGrid = !showGrid },
-        ) { Text(if (showGrid) "Hide app permissions" else "App permissions") }
-        if (showGrid) Grid(app)
+        when (tab) {
+            TAB_TASKS -> TaskSurface(app)
+            TAB_PHONE -> {
+                Text("Server: ${graph.store.serverUrl}", style = MaterialTheme.typography.bodySmall)
+                when (state) {
+                    is ChannelState.Stopped, is ChannelState.UpdateRequired, is ChannelState.Revoked ->
+                        Button(onClick = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            graph.connection.wanted = true
+                            ChannelService.start(this)
+                        }) { Text("Connect") }
+                    else ->
+                        OutlinedButton(onClick = {
+                            graph.connection.wanted = false
+                            ChannelService.stop(this)
+                        }) { Text("Disconnect") }
+                }
+                DeviceStatusPanel(presentation.deviceContext) { action -> onUserAction(graph, action) }
+            }
+            TAB_PERMISSIONS -> Grid(app)
+            else -> {
+                if (graph.pushOffered) PushToggle(app)
+                OverlayToggle(app)
+                RemovePhone(app) { enrolled = false }
+            }
+        }
+    }
+
+    /** "Remove this phone": revoke server-side (best effort) and wipe everything here. */
+    @Composable
+    private fun RemovePhone(
+        app: JarvisApplication,
+        onRemoved: () -> Unit,
+    ) {
+        val graph = app.graph
+        val scope = rememberCoroutineScope()
         OutlinedButton(onClick = {
             scope.launch {
                 withContext(Dispatchers.IO) {
@@ -214,7 +243,7 @@ class MainActivity : FragmentActivity() {
                 ChannelService.stop(this@MainActivity)
                 graph.forgetKey()
                 graph.revocation.wipe()
-                enrolled = false
+                onRemoved()
                 notice.value = "This phone was removed."
             }
         }) { Text("Remove this phone") }
@@ -238,7 +267,6 @@ class MainActivity : FragmentActivity() {
                 subtitle = getString(R.string.step_up_subtitle),
                 cancel = getString(R.string.step_up_cancel),
             )
-        StatusHeader(presentation) { action -> onUserAction(graph, action) }
         TaskPanel(
             state = presentation,
             snapshot = snapshot,
@@ -268,7 +296,19 @@ class MainActivity : FragmentActivity() {
                 ChannelService.start(this)
             }
             PresentationText.UserAction.TRY_AGAIN -> graph.taskTracker.retry()
-            else -> Unit
+            PresentationText.UserAction.OPEN_SHIZUKU -> {
+                // Running but JARVIS not allowed yet: Shizuku's own prompt. Otherwise open Shizuku.
+                graph.requestShizukuPermission()
+                UserActionIntents.of(this, action)?.let(::startActivity)
+                    ?: run { notice.value = "Install and start Shizuku, then allow JARVIS in it." }
+            }
+            PresentationText.UserAction.OPEN_ACCESSIBILITY_SETTINGS,
+            PresentationText.UserAction.OPEN_NOTIFICATION_ACCESS_SETTINGS,
+            -> UserActionIntents.of(this, action)?.let(::startActivity)
+            PresentationText.UserAction.SIGN_IN_AGAIN -> notice.value = "Sign in again to use this phone with JARVIS."
+            PresentationText.UserAction.UPDATE_APP ->
+                notice.value = "Install the JARVIS app version that matches your server."
+            PresentationText.UserAction.OPEN_APP_TO_APPROVE -> Unit
         }
     }
 
@@ -362,18 +402,11 @@ class MainActivity : FragmentActivity() {
         )
     }
 
-    private fun describe(state: ChannelState): String =
-        when (state) {
-            is ChannelState.Stopped -> "Not connected."
-            is ChannelState.Connecting -> "Connecting…"
-            is ChannelState.Connected -> "Connected."
-            is ChannelState.Reconnecting -> "Reconnecting: ${state.reason}."
-            is ChannelState.Revoked -> "This phone was removed from your account. Sign in again to re-enroll."
-            is ChannelState.UpdateRequired -> "Update the app: it no longer matches your server."
-            is ChannelState.Disabled -> "Your server has the device channel turned off."
-        }
-
     companion object {
+        private val TABS = listOf("Tasks", "This phone", "App permissions", "Settings")
+        private const val TAB_TASKS = 0
+        private const val TAB_PHONE = 1
+        private const val TAB_PERMISSIONS = 2
         const val EXTRA_NOTICE = "notice"
         const val EXTRA_TASK_DRAFT = "task_draft"
         private const val MAX_DRAFT_CHARS = 8000
