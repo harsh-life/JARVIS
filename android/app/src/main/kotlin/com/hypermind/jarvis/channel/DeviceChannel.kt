@@ -315,28 +315,32 @@ class DeviceChannel(
         scope.launch {
             try {
                 credentials.accessToken(forceRefresh = true)
-                synchronized(this@DeviceChannel) { backoff("re-authenticating") }
+                synchronized(this@DeviceChannel) { backoff("re-authenticating", ReconnectCause.AUTHENTICATION_EXPIRED) }
             } catch (ignored: EnrollmentLost) {
                 revoked()
             } catch (ignored: IOException) {
-                synchronized(this@DeviceChannel) { backoff("server unreachable") }
+                synchronized(this@DeviceChannel) { backoff("server unreachable", ReconnectCause.SERVER_UNREACHABLE) }
             }
         }
     }
 
-    private fun backoff(reason: String) {
+    private fun backoff(
+        reason: String,
+        cause: ReconnectCause = ReconnectCause.CONNECTION_LOST,
+    ) {
         attempt += 1
         val base = (BASE_DELAY_MILLIS shl (attempt - 1).coerceAtMost(MAX_SHIFT)).coerceAtMost(MAX_DELAY_MILLIS)
         val jitter = (base * JITTER * (random.nextDouble() * 2 - 1)).toLong()
-        scheduleReconnect(base + jitter, reason)
+        scheduleReconnect(base + jitter, reason, cause)
     }
 
     private fun scheduleReconnect(
         delayMillis: Long,
         reason: String,
+        cause: ReconnectCause = ReconnectCause.CONNECTION_LOST,
     ) {
         if (_state.value !is ChannelState.Disabled) {
-            _state.value = ChannelState.Reconnecting(attempt, delayMillis, reason)
+            _state.value = ChannelState.Reconnecting(attempt, delayMillis, reason, cause)
         }
         reconnectJob?.cancel()
         reconnectJob =
@@ -358,7 +362,7 @@ class DeviceChannel(
     }
 
     private fun fail(reason: String) {
-        backoff(reason)
+        backoff(reason, ReconnectCause.NOT_CONFIGURED)
     }
 
     private companion object {
