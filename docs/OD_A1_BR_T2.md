@@ -4,7 +4,7 @@
 **Previously:** `[OPEN — OWNER]` — superseded by the decision recorded in §6 and `docs/DECISION_REGISTER.md`
 **Experiment:** `tests/security_core/test_od_a1_br_t2.py`
 **Authority:** `14_SECURITY_BLAST_RADIUS.md` §4, `17_TEST_ACCEPTANCE_VALIDATION.md` §4
-**Branch that produced this measurement:** `security-core` (re-verified unchanged by `runtime`)
+**Branch that produced this measurement:** `security-core` (re-verified unchanged by `runtime`); execution rows §3b by `integration-hardening`; memory rows §3c by the memory build; Android rows §3d by Phase H (final hardening)
 
 > Accepting the residual is **not** a claim of isolation. The rows marked
 > REACHABLE below are exactly what the owner accepted, and the experiment keeps
@@ -164,12 +164,49 @@ No *authorized* row is reachable. Row 23 is inside the accepted class. Rows 27
 and 28 are **outside OD-A1's class** (they need no running process) and are listed
 in §5 as owner actions; they are one reason the real-data gate stays closed.
 
+### 3d. The Android device (Phase H re-run, docs/23 §9)
+
+§4 left the Android dimension PENDING "until the device client exists". It
+exists now (docs/23, Phases B–G). The re-run lives in
+`tests/integration/test_br_t2_android_rows.py`, runs in CI with `-s` in the
+BR-T2 step, and asserts every row in both directions. It runs on the production
+composition root and the real device hub. The phone is a fake device running
+the **reference guard**, the Python twin of the Kotlin `DeviceGuard`. The two
+are held together by the shared conformance vectors, and the Kotlin guard's own
+refusals are mutation-tested (docs/RELEASE_VALIDATION.md §6). It is **not** a
+physical phone (see §4 and docs/RELEASE_VALIDATION.md §9).
+
+What this dimension adds is a **second enforcement point the server process
+does not own**. An in-process attacker can put any envelope on the victim's
+socket, but the victim's own phone still refuses what its user's grid or
+cached classification does not allow.
+
+| # | Attempt | Model | Result | Why |
+|---|---|---|---|---|
+| 29 | A's agent task reaches B's connected phone | authorized | contained | Every operation carries the authorizing principal's own `device_id` (OD-DEV-1), and the hub delivers to exactly that device (ANDC-T1; mutation-tested, M08) |
+| 30 | In-process code has B's phone tap in an app B allows | app-RCE | **REACHABLE** | The hub is in-process. Bypassing the engine, the attacker reaches whatever B's own grid and cached classification already allow. Inside OD-A1 (a) |
+| 31 | In-process code has B's phone tap in an app B toggled off | app-RCE | contained | B's phone refuses on its own per-app grid (`device_refused`). The device guard is not the server's to disable (08 §4) |
+| 32 | In-process code has B's phone tap in an app B enabled but nobody classified | app-RCE | contained | B's phone refuses from its cached classification, even with B's toggle on (docs/23 §5.5) |
+| 33 | Forge B's step-up (biometric) attestation from anything the server holds | app-RCE | contained | Only B's step-up *public* key is stored; the private half is in B's Keystore behind B's biometric. (In-process code need not attest to call a tool directly. That is row 2's class, not forged presence) |
+| 34 | Send B's phone a push using B's stored registration token | app-RCE | **REACHABLE** | Token and sending credential are both in process. The only possible content is the fixed `{"type": "wake"}`: it reconnects the phone and carries, authorizes and runs nothing (ANDC-T9) |
+| 35 | Recover B's device credential or step-up private key from the store | at-rest | contained | Public verifiers only (Ed25519 device key, P-256 step-up key) |
+| 36 | Read B's push registration token from the store | at-rest | **REACHABLE** | Plaintext column. It identifies B's app installation to Google; only the holder of the server's separate FCM credential can use it, and only to send row 34's content-free wake |
+| 37 | Recover B's screen content from the server's disk after B's own task | at-rest | contained | Screen results are transient task context: validated, shown to the model as untrusted data, never persisted or written to memory (08 §8) |
+
+No *authorized* row is reachable. Rows 30 and 34 are inside the accepted class:
+a compromised live process reaches what that process can reach. Row 30 is
+additionally bounded by the victim's own phone. Row 36 is **outside OD-A1's
+class** because it needs no running process. Its impact is a content-free wake
+at most, and only together with the FCM credential. It is listed in §5 as an
+owner action rather than accepted here.
+
 ---
 
-## 4. Dimensions still PENDING — not measured, not claimed
+## 4. Dimensions — measured, and what is still not measured
 
-14 §4's experiment covers "user B's memory, files, and secrets". One of those
-three still cannot be measured, because the subsystem does not exist:
+14 §4's experiment covers "user B's memory, files, and secrets". Every
+dimension that exists in software is now measured. What remains unmeasured is
+hardware (below):
 
 | Dimension | Status | Why |
 |---|---|---|
@@ -177,7 +214,8 @@ three still cannot be measured, because the subsystem does not exist:
 | **Mem0 / memory store** (`11`) | **MEASURED** — §3c rows 18–28 | Authorized reach contained; in-process reach REACHABLE (accepted class); at-rest reach REACHABLE (owner action, §5) |
 | Filesystem sandbox (`09`) | **MEASURED** — §3b rows 12, 13, 15, 17 | In-process reach is REACHABLE (accepted class); authorized reach is contained |
 | Network egress exfiltration (`10`) | **MEASURED** — §3b row 14 (in-process); `system.restricted` sockets denied by Landlock TCP rules + seccomp `socket()` filter | In-process reach is REACHABLE (accepted class) |
-| Android device (`08`) | **PENDING** | No device client exists; `UnavailableDeviceTransport` refuses every call |
+| Android device (`08`, docs/23) | **MEASURED** — §3d rows 29–37 | Authorized reach contained. In-process reach into a phone is bounded by that phone's own guard (rows 30–32). At-rest: push token plaintext (row 36, owner action) |
+| Android device on **physical hardware** | **NOT MEASURED** | No phone or emulator was available. §3d runs the reference guard against the real hub; the Kotlin guard is unit- and mutation-tested on the JVM. A physical-device re-run of rows 30–32 remains outstanding (docs/RELEASE_VALIDATION.md §9) |
 
 `[LOCKED]` these rows are **pending, not passing**. They are measured on the same
 basis when `09` and `11` exist. The owner's acceptance (§6) covers the *class* of
@@ -205,6 +243,8 @@ the measured radius.
 | Filesystem / egress reach under **app** RCE | `mediated` fs and `mediated_proxy` egress are application code (§3b rows 13, 14) | Authorized paths contained; `system.restricted` kernel-confined by default (§3b rows 15, 16) | **Accepted for pilot — option (a)**; `mount_isolated`/`netns_filtered` remain future hardening |
 | `system.restricted` under an active break-glass record | Owner-ratified OD-EXEC-2: deliberate, for recovery (§3b rows 17c/17d) | Off by default; superuser-only, per task, per executable, ≤ `max_invocations`, ≤ 15 min and never past the task; every activation/invocation/end audited; still needs confirmation + step-up | Treat each activation with real data as a cross-user exposure event; transcribe OD-EXEC-2 into `DECISION_REGISTER.md` §2B (OD-BG-1) |
 | Mem0 cross-user reach under **app** RCE | The visibility filter is application code (§3c row 23) | Authorized paths contained (rows 18–22); secrets never stored (row 25); deleted text physically removed (row 26) | Inside **option (a)** |
+| In-process reach into a phone (§3d rows 30, 34) | The device hub and the FCM sender live in the application process | The victim's phone refuses what its own grid or cached classification forbids (rows 31, 32); a wake carries nothing (ANDC-T9) | Inside **option (a)** |
+| Push registration token at rest (§3d row 36) | Stored in plaintext so the waker can address the phone | Needs the server's separate FCM credential to be usable at all, and then only for a content-free wake; revocation clears it | **Owner decision** (low severity): accept for the pilot, or encrypt the column |
 | Memory store **at rest**: live facts in plaintext, deleted facts' vectors retained (§3c rows 27, 28) | No at-rest encryption for memory yet (docs/21 §7, DECISION_REGISTER §4 "future hardening"); hnswlib marks rather than erases | Owner-only (0700) store directories; disk/backup protection is the operator's | **Owner decision needed before real data**: accept for the pilot, or require encrypted storage / a periodic index rebuild first |
 
 Every residual above is documented with an owner action, and none is presented as
@@ -231,9 +271,16 @@ What this does **not** do:
 - It does not relax cross-user *logical* isolation, which stays mandatory and
   tested (AZ-T1, AZ-T10, the runtime's confused-deputy tests).
 - It does not by itself make the build **real-user-ready**. 17 §5 requires the
-  whole release-blocking set to be green as well, and that set includes the `09`,
-  `10`, `11` and `08` suites whose subsystems do not exist yet. Until they do, the
-  pilot runs on **disposable or test data**, for that reason rather than OD-A1's.
+  whole release-blocking set to be green as well. *(Original wording, kept for
+  the record: "that set includes the `09`, `10`, `11` and `08` suites whose
+  subsystems do not exist yet".)* As of Phase H those subsystems all exist and
+  their suites run in CI. The release gate is still **not** open, for reasons
+  other than OD-A1: RB criteria without the required evidence (#29 dashboard,
+  #32 fairness under load on the single-writer store), open owner decisions
+  (at-rest memory rows 27–28, push token row 36, and the others listed in
+  `docs/RELEASE_VALIDATION.md` §10), and Android validated only on fakes and
+  the JVM. See `docs/RELEASE_VALIDATION.md` §11. Until then the pilot runs on
+  **disposable or test data**.
 
 ### The owner's options (14 §4)
 
@@ -261,7 +308,11 @@ recorded as future hardening in `docs/DECISION_REGISTER.md` §4.
 - ~~Re-run BR-T2 once `11` (Mem0) exists~~ — done in the memory build (§3c). No
   authorized path reachable; row 23 inside the accepted class; rows 27–28 are
   at-rest and go to the owner (§5).
-- Re-run BR-T2 once `08`'s device client exists, and add its rows.
+- ~~Re-run BR-T2 once `08`'s device client exists~~ — done in Phase H (§3d):
+  no authorized path reachable, rows 30 and 34 inside the accepted class,
+  row 36 at rest (owner action, §5).
+- Re-run §3d rows 30–32 on a physical phone with the Kotlin guard: not done;
+  no device was available.
 
 ---
 
@@ -269,7 +320,7 @@ recorded as future hardening in `docs/DECISION_REGISTER.md` §4.
 
 ```bash
 python3 -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py \
-    tests/integration/test_br_t2_memory_rows.py -q -s
+    tests/integration/test_br_t2_memory_rows.py tests/integration/test_br_t2_android_rows.py -q -s
 ```
 
 `-s` prints the measured table. The experiment asserts the measurement in **both**

@@ -1,0 +1,251 @@
+"""Guard mutation check — proves the security tests would notice a guard's removal.
+
+    python tests/tools/guard_mutations.py            # every mutant
+    python tests/tools/guard_mutations.py M01 M07    # a selection
+    python tests/tools/guard_mutations.py --list
+
+Each mutant disables exactly one deterministic guard with one exact source edit
+(the "old" text must occur exactly once, or the mutant refuses to run), runs the
+test selection that is supposed to defend that guard, and **expects it to
+fail**. A mutant whose tests still pass is a *survivor*: the guard could be
+deleted and nothing would notice. The file is restored byte-for-byte in a
+`finally`, whatever happens.
+
+This is Phase H's §21 evidence (docs/RELEASE_VALIDATION.md records the last
+run). It is not wired into CI — a full run re-executes large suites once per
+mutant — but `tests/foundation/test_guard_mutations_meta.py` keeps every
+mutant's anchor text present, so the catalogue cannot silently rot as the code
+moves.
+"""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+PY = [sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider", "-p", "no:logging", "-W", "ignore"]
+GRADLE = ["./gradlew", "--offline", "-q", ":contract:test"]
+
+
+@dataclass(frozen=True)
+class Mutant:
+    id: str
+    guard: str
+    path: str
+    old: str
+    new: str
+    command: tuple[str, ...]
+    cwd: str = "."
+
+
+MUTANTS: tuple[Mutant, ...] = (
+    Mutant("M01", "AuthZ D4 visibility: a private resource becomes readable by anyone who reaches it",
+           "server/graph/predicate.py",
+           "        and is_active_member_of_resource_graph\n    ):\n        return True\n    return False",
+           "        and is_active_member_of_resource_graph\n    ):\n        return True\n    return True",
+           (*PY, "tests/security_core/test_authorization.py")),
+    Mutant("M02", "AuthZ D4 graph scope: graph_id alone authorizes (membership ignored)",
+           "server/graph/predicate.py",
+           "        and is_active_member_of_resource_graph\n    ):",
+           "        and True\n    ):",
+           (*PY, "tests/security_core/test_authorization.py")),
+    Mutant("M03", "AuthZ D1 membership: a non-member passes the graph check",
+           "server/graph/authorization.py",
+           "            if role is None:\n                return _deny(\"not_a_member\", DenialSurface.NOT_FOUND)",
+           "            if False:\n                return _deny(\"not_a_member\", DenialSurface.NOT_FOUND)",
+           (*PY, "tests/security_core/test_authorization.py")),
+    Mutant("M04", "Confirmation: the token no longer binds the exact arguments",
+           "server/capabilities/confirmation.py",
+           "        and row.arguments_hash == binding.arguments_hash()",
+           "        and True",
+           (*PY, "tests/security_core/test_confirmation.py")),
+    Mutant("M05", "Confirmation: the token no longer binds the session",
+           "server/capabilities/confirmation.py",
+           "        and row.session_id == binding.session_id",
+           "        and True",
+           (*PY, "tests/security_core/test_confirmation.py")),
+    Mutant("M06", "Step-up: a bad signature is accepted",
+           "server/auth/step_up.py",
+           "            except (InvalidSignature, ValueError, binascii.Error):\n                reason = \"bad_signature\"",
+           "            except (InvalidSignature, ValueError, binascii.Error):\n                reason = None",
+           (*PY, "tests/security_core/test_step_up.py")),
+    Mutant("M07", "Step-up: an expired challenge is accepted",
+           "server/auth/step_up.py",
+           "        elif expires_at is None or now >= as_utc(expires_at):",
+           "        elif False:",
+           (*PY, "tests/security_core/test_step_up.py")),
+    Mutant("M08", "Device routing: an operation goes to any connected device, not its exact device_id",
+           "server/execution/device_hub.py",
+           "        session = self._sessions.get(operation.device_id)\n        if session is None:\n"
+           "            # Never queued.",
+           "        session = next(iter(self._sessions.values()), None)\n        if session is None:\n"
+           "            # Never queued.",
+           (*PY, "tests/execution/test_device_hub.py")),
+    Mutant("M09", "Absolute floor: a reserved capability name is no longer recognised",
+           "server/capabilities/floor.py",
+           "    normalized = capability.strip().lower()\n    if normalized in _RESERVED_CAPABILITY_NAMES:",
+           "    normalized = capability.strip().lower()\n    return None\n    if normalized in _RESERVED_CAPABILITY_NAMES:",
+           (*PY, "tests/security_core/test_capabilities.py", "tests/security_core/test_confirmation.py")),
+    Mutant("M10", "SecretStore: the agent requester may resolve a secret",
+           "server/secrets/store.py",
+           "        # contract stopping server.agent from importing this package).\n"
+           "        if requester.kind is RequesterKind.AGENT:",
+           "        # contract stopping server.agent from importing this package).\n"
+           "        if False:",
+           (*PY, "tests/security_core/test_secretstore.py")),
+    Mutant("M11", "Secret filter: nothing is ever detected as a secret",
+           "server/security/secret_patterns.py",
+           '    """The name of the first secret pattern `text` matches, else `None`."""\n',
+           '    """The name of the first secret pattern `text` matches, else `None`."""\n    return None\n',
+           (*PY, "tests/memory/test_write_gate.py")),
+    Mutant("M12", "Egress: the cloud metadata address is no longer blocked",
+           "server/net/policy.py",
+           "    if str(parsed) in _METADATA_ADDRESSES or address_text in _METADATA_ADDRESSES:",
+           "    if False:",
+           (*PY, "tests/execution/test_net_egress.py")),
+    Mutant("M13", "Egress: loopback is no longer blocked",
+           "server/net/policy.py",
+           "    if parsed.is_loopback:",
+           "    if False:",
+           (*PY, "tests/execution/test_net_egress.py")),
+    Mutant("M14", "Sandbox: a read/listing follows a symlink swapped in after the check (TOCTOU)",
+           "server/fs/sandbox.py",
+           "        return os.open(name, flags | os.O_NOFOLLOW, dir_fd=dir_fd)",
+           "        return os.open(name, flags, dir_fd=dir_fd)",
+           (*PY, "tests/execution/test_fs_sandbox.py")),
+    Mutant("M27", "Sandbox: a write follows a symlink at the leaf",
+           "server/fs/sandbox.py",
+           "            flags = os.O_WRONLY | os.O_NOFOLLOW | (os.O_CREAT",
+           "            flags = os.O_WRONLY | (os.O_CREAT",
+           (*PY, "tests/execution/test_fs_sandbox.py")),
+    Mutant("M15", "Resource scope: an unclassified app may be UI-controlled",
+           "server/capabilities/app_classification.py",
+           "            return ScopeConstraint(denial=APP_NOT_CLASSIFIED)",
+           "            return ScopeConstraint()",
+           (*PY, "tests/runtime/test_sensitive_app_gate.py")),
+    Mutant("M16", "Principal freshness: a revoked device's task keeps running",
+           "server/composition/security_port.py",
+           "        if device is None or device.revoked or device.user_id != principal.user_id:\n"
+           "            return False\n        # The same link",
+           "        if device is None or device.user_id != principal.user_id:\n"
+           "            return False\n        # The same link",
+           (*PY, "tests/runtime/test_platform_wait.py", "tests/runtime/test_lifecycle_and_blast_radius.py")),
+    Mutant("M17", "Break-glass: activation no longer requires a verified superuser",
+           "server/composition/break_glass.py",
+           "    if not isinstance(principal, SuperuserPrincipal) or not principal.grant.is_valid():",
+           "    if False:",
+           (*PY, "tests/security_core/test_break_glass_registry.py")),
+    Mutant("M18", "Mode ceiling: draft/suggest/observe tasks may execute above low_read",
+           "server/agent/runtime.py",
+           "        if modes.MODE_CEILING[state.mode] is None:\n            return True",
+           "        if True:\n            return True",
+           (*PY, "tests/runtime/test_task_modes.py")),
+    Mutant("M19", "Memory hydration: the engine's readable() re-check is skipped",
+           "server/memory/hydration.py",
+           "            if not readable(",
+           "            if False and not readable(",
+           (*PY, "tests/runtime/test_memory_hydration.py")),
+    Mutant("M20", "Idempotency: keys are no longer namespaced by user (cross-user replay)",
+           "server/gateway/routers/agent.py",
+           '            idempotency_key=f"{principal.user_id}:{idempotency_key}",\n'
+           '            method="POST",\n            path="/api/v1/agent/tasks",',
+           '            idempotency_key=idempotency_key,\n'
+           '            method="POST",\n            path="/api/v1/agent/tasks",',
+           (*PY, "tests/runtime/test_resource_control.py")),
+    Mutant("M21", "Push: the wake payload carries a task id",
+           "shared/schemas/push.py",
+           '            "data": WakeData().model_dump(),',
+           '            "data": {**WakeData().model_dump(), "task_id": "t-1"},',
+           (*PY, "tests/security_core/test_push_wake.py")),
+    Mutant("M22", "Voice: a speaker context may claim to be an authorization signal",
+           "shared/schemas/voice.py",
+           "    is_authorization_signal: Literal[False] = False",
+           "    is_authorization_signal: bool = False",
+           (*PY, "tests/voice/test_voice_privacy_and_authority.py", "tests/foundation/test_schemas.py")),
+    Mutant("M23", "Scheduler: the firing path imports the agent runtime (a path to execution)",
+           "server/scheduler/firing.py",
+           "from __future__ import annotations\n",
+           "from __future__ import annotations\n\nimport server.agent.runtime  # noqa: F401 — mutant\n",
+           ("lint-imports", "--config", "pyproject.toml")),
+    Mutant("M24", "Device guard (Kotlin): a toggled-off app is no longer refused on the phone",
+           "android/contract/src/main/kotlin/com/hypermind/jarvis/contract/DeviceGuard.kt",
+           "        if (!toggleOn) return GuardVerdict.Refused(RefusalReason.TOGGLE_OFF)",
+           "        if (false) return GuardVerdict.Refused(RefusalReason.TOGGLE_OFF)",
+           tuple(GRADLE), cwd="android"),
+    Mutant("M25", "Device guard (Kotlin): an expired operation runs",
+           "android/contract/src/main/kotlin/com/hypermind/jarvis/contract/DeviceGuard.kt",
+           "            !now.isBefore(expires) -> RefusalReason.OPERATION_EXPIRED",
+           "            false -> RefusalReason.OPERATION_EXPIRED",
+           tuple(GRADLE), cwd="android"),
+    Mutant("M26", "Device guard (Kotlin): an operation addressed to another device runs",
+           "android/contract/src/main/kotlin/com/hypermind/jarvis/contract/DeviceGuard.kt",
+           "        if (envelope.deviceId != deviceId) return RefusalReason.WRONG_DEVICE",
+           "        if (false) return RefusalReason.WRONG_DEVICE",
+           tuple(GRADLE), cwd="android"),
+)
+
+
+def anchor_count(mutant: Mutant) -> int:
+    return (ROOT / mutant.path).read_text().count(mutant.old)
+
+
+def _verdict(mutant: Mutant, done: subprocess.CompletedProcess) -> str:
+    """Killed means *the defending tests failed* — not that something else went
+    wrong. A collection error, a compile error or an empty selection is
+    reported as such, never counted as a kill."""
+
+    output = done.stdout + done.stderr
+    if done.returncode == 0:
+        return "SURVIVED"
+    tool = mutant.command[0]
+    if tool == "lint-imports":
+        return "killed" if "BROKEN" in output else f"ERROR rc={done.returncode}"
+    if tool == "./gradlew":
+        failed_test = "FAILED" in output and ("Test" in output or "tests completed" in output)
+        return "killed" if failed_test and "Compilation error" not in output else f"ERROR rc={done.returncode}"
+    return "killed" if done.returncode == 1 else f"ERROR rc={done.returncode}"
+
+
+def run(mutant: Mutant) -> tuple[str, float]:
+    path = ROOT / mutant.path
+    original = path.read_bytes()
+    text = original.decode()
+    if text.count(mutant.old) != 1:
+        return "ANCHOR MISSING", 0.0
+    started = time.monotonic()
+    try:
+        path.write_text(text.replace(mutant.old, mutant.new, 1))
+        env = {**os.environ, "HYPERMIND_REQUIRE_MEMORY_STACK": os.environ.get("HYPERMIND_REQUIRE_MEMORY_STACK", "1")}
+        done = subprocess.run(list(mutant.command), cwd=ROOT / mutant.cwd, capture_output=True, text=True,
+                              env=env, timeout=1800)
+        verdict = _verdict(mutant, done)
+    except subprocess.TimeoutExpired:
+        verdict = "killed (timeout)"
+    finally:
+        path.write_bytes(original)
+    return verdict, time.monotonic() - started
+
+
+def main(argv: list[str]) -> int:
+    if "--list" in argv:
+        for m in MUTANTS:
+            print(f"{m.id}  {m.guard}  [{m.path}]")
+        return 0
+    chosen = [m for m in MUTANTS if not argv or m.id in argv]
+    survivors = 0
+    for m in chosen:
+        verdict, seconds = run(m)
+        if not verdict.startswith("killed"):
+            survivors += 1
+        print(f"{m.id}  {verdict:<16} {seconds:6.1f}s  {m.guard}", flush=True)
+    print(f"{len(chosen) - survivors}/{len(chosen)} mutants killed")
+    return 1 if survivors else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

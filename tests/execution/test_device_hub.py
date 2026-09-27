@@ -64,6 +64,29 @@ async def test_an_operation_goes_to_exactly_its_device_and_no_other():
     await sending
 
 
+async def test_routing_is_by_device_id_whatever_the_connection_order():
+    """ANDC-T1 across users and attach order (Phase H mutation M08): with many
+    phones connected, every operation reaches exactly the one it names — never
+    the first, the last, or any other connected device."""
+
+    hub = DeviceHub()
+    phones = [await _attached(hub, user_id=uuid.uuid4()) for _ in range(4)]
+    for device_id, conn, session in reversed(phones):
+        user = session.user_id
+        op = _op(device_id, user_id=user)
+        sending = asyncio.create_task(hub.send(op))
+        frames = await conn.wait_frames(1)
+        assert frames[-1]["device_id"] == str(device_id) and frames[-1]["op_id"] == str(op.op_id)
+        hub.deliver(session, _reply(op, status="ok", result=BATTERY))
+        await sending
+    # Each phone received exactly its own one operation, and nothing else.
+    assert all(len(conn.sent) == 1 for _, conn, _ in phones)
+    with pytest.raises(ExecutionError) as exc:
+        await hub.send(_op(uuid.uuid4()))
+    assert exc.value.code is ExecutionErrorCode.DEVICE_UNAVAILABLE
+    assert all(len(conn.sent) == 1 for _, conn, _ in phones)
+
+
 async def test_is_connected_is_per_device():
     hub = DeviceHub()
     phone, _, _ = await _attached(hub)
