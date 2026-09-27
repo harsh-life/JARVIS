@@ -44,6 +44,9 @@ import com.hypermind.jarvis.push.PushClient
 import com.hypermind.jarvis.push.PushRegistrar
 import com.hypermind.jarvis.push.PushSettings
 import com.hypermind.jarvis.push.WakeHandler
+import com.hypermind.jarvis.reminders.AndroidReminderNotifier
+import com.hypermind.jarvis.reminders.ReminderInbox
+import com.hypermind.jarvis.reminders.ReminderNotifier
 import com.hypermind.jarvis.tasks.TaskController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +69,7 @@ class AppGraph(
     keyStore: DeviceKeyStore = KeystoreDeviceKeyStore(context),
     private val shizuku: RikkaShizukuGateway = RikkaShizukuGateway(context.applicationContext),
     primitives: Map<String, Primitive> = defaultPrimitives(context, shizuku),
+    reminderNotifier: ReminderNotifier = AndroidReminderNotifier(context.applicationContext),
     pushClient: PushClient = FirebasePushClient(context),
 ) {
     private val appContext = context.applicationContext
@@ -158,6 +162,9 @@ class AppGraph(
         }
     }
 
+    /** docs/22: reminders shown as notifications — messages, never operations. */
+    val reminders = ReminderInbox(deviceId = { store.deviceId?.toString() }, notifier = reminderNotifier)
+
     val channel: DeviceChannel =
         DeviceChannel(
             http = http,
@@ -188,6 +195,10 @@ class AppGraph(
                 reportPlatforms()
             },
         )
+
+    init {
+        channel.onReminder = reminders::receive
+    }
 
     // ── docs/23 §4 push wake: optional, off by default ──────────────────
 

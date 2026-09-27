@@ -10,7 +10,11 @@ takes that binding only from credentials the server verifies itself
    device must be the token's device. Credentials never travel in the URL.
 2. The client's mapping version must equal the server's (docs/23 §5.1); a
    mismatch closes the socket — the client must update, never "try anyway".
-3. The binding lasts until the access token expires. `reauth` extends it with
+3. Reminders (docs/22 §2) ride the same socket, only if the client declared
+   the `reminders` feature in `hello`: owed reminders are sent right after
+   `hello_ok`, and `reminder_ack` acknowledges one delivery addressed to this
+   socket's own device. A reminder is a message, never an operation.
+4. The binding lasts until the access token expires. `reauth` extends it with
    a fresh token for the *same* device and user; nothing can re-bind a socket
    to anyone else. The principal is re-checked every minute, so a revoked
    device, a suspended user or a logged-out session loses its socket even if
@@ -43,12 +47,14 @@ from server.security.events import AuditAction
 from shared.schemas.device_channel import (
     MAX_CONTROL_FRAME_BYTES,
     MAX_SCREENSHOT_FRAME_BYTES,
+    ChannelFeature,
     DeviceCloseCode,
     DeviceHello,
     DeviceHelloAck,
     DevicePlatformStatus,
     DeviceReauth,
     DeviceReauthAck,
+    DeviceReminderAck,
 )
 from shared.schemas.enums import AuditActor, AuditResult
 
@@ -105,6 +111,29 @@ async def _audit(websocket: WebSocket, action: AuditAction, result: AuditResult,
 
 # Background resumes keep a reference until done.
 _RESUMES: set[asyncio.Task] = set()
+
+
+def _in_background(coro) -> None:
+    task = asyncio.ensure_future(coro)
+    _RESUMES.add(task)
+    task.add_done_callback(_RESUMES.discard)
+
+
+def _send_owed_reminders(websocket: WebSocket, user_id: uuid.UUID, device_id: uuid.UUID) -> None:
+    """docs/22 §3: reminders queued while this device was offline. In the
+    background, so the loop keeps reading (the device acks over this socket)."""
+
+    inbox = getattr(websocket.app.state, "reminders", None)
+    if inbox is None:
+        return
+
+    async def run() -> None:
+        try:
+            await inbox.device_connected(user_id=user_id, device_id=device_id)
+        except Exception:  # noqa: BLE001 — they stay queued for the next connect
+            logger.warning("sending queued reminders to device %s failed", device_id, exc_info=True)
+
+    _in_background(run())
 
 
 def _resume_waiting_tasks(websocket: WebSocket, device_id: uuid.UUID, dependencies: list[str]) -> None:
@@ -226,7 +255,8 @@ async def device_channel(websocket: WebSocket) -> None:
         return
 
     connection = _SocketConnection(websocket)
-    session = await hub.attach(user_id=principal.user_id, device_id=principal.device_id, connection=connection)
+    session = await hub.attach(user_id=principal.user_id, device_id=principal.device_id, connection=connection,
+                               features=frozenset(hello.features))
     await _audit(websocket, AuditAction.DEVICE_CHANNEL_OPENED, AuditResult.SUCCESS,
                  user_id=principal.user_id, device_id=principal.device_id)
     token = hello.access_token
@@ -239,6 +269,8 @@ async def device_channel(websocket: WebSocket) -> None:
                 server_time=_utcnow(), session_expires_at=expires_at,
             ).model_dump_json()
         )
+        if ChannelFeature.REMINDERS in session.features:
+            _send_owed_reminders(websocket, principal.user_id, principal.device_id)
         # docs/23 §4: the channel is back, authenticated as exactly this
         # device. A task that waited for it (its device was offline and was
         # sent a wake) proposes its call again through every check. A push
@@ -280,6 +312,18 @@ async def device_channel(websocket: WebSocket) -> None:
                 token = reauth.access_token
                 expires_at = check.token_expires_at or _utcnow()
                 await connection.send_text(DeviceReauthAck(session_expires_at=expires_at).model_dump_json())
+            elif frame_type == "reminder_ack":
+                try:
+                    ack = DeviceReminderAck.model_validate_json(raw)
+                except ValidationError:
+                    close_code = DeviceCloseCode.PROTOCOL_ERROR
+                    break
+                inbox = getattr(websocket.app.state, "reminders", None)
+                if inbox is not None:
+                    # Scoped to this socket's own binding: a device can only
+                    # acknowledge a reminder addressed to itself.
+                    await inbox.acknowledge(user_id=principal.user_id, device_id=principal.device_id,
+                                            delivery_id=ack.delivery_id)
             elif frame_type == "platform_status":
                 try:
                     status = DevicePlatformStatus.model_validate_json(raw)

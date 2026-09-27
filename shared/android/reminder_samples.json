@@ -1,0 +1,40 @@
+{
+  "device_to_server": {
+    "ack": {
+      "delivery_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000e001",
+      "type": "reminder_ack"
+    },
+    "hello_with_reminders": {
+      "access_token": "sample-token-not-real",
+      "client_version": "0.1",
+      "device_proof": "v1.sample.proof.not.real",
+      "features": [
+        "reminders"
+      ],
+      "mapping_version": "1-0123456789abcdef",
+      "type": "hello"
+    }
+  },
+  "server_to_device": {
+    "late_recurring": {
+      "delivery_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000e001",
+      "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+      "job_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000b001",
+      "late": true,
+      "recurring": true,
+      "scheduled_for": "2026-10-01T03:30:00Z",
+      "task_reason": "Every Monday at 8, remind me to put the bins out",
+      "type": "reminder"
+    },
+    "on_time": {
+      "delivery_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000e001",
+      "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+      "job_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000b001",
+      "late": false,
+      "recurring": false,
+      "scheduled_for": "2026-10-01T03:30:00Z",
+      "task_reason": "Call the dentist to move Thursday's appointment",
+      "type": "reminder"
+    }
+  }
+}

@@ -25,6 +25,10 @@ dependencies = [
     "cryptography>=42.0",
     "pyjwt[crypto]>=2.8",
     "httpx>=0.27",
+    # scheduler (docs/22 §3): APScheduler's cron / one-shot trigger semantics.
+    # Only the triggers are used — the job store is the application database's
+    # own `scheduled_jobs` table, never APScheduler's pickling job store.
+    "apscheduler>=3.11,<4",
 ]
 
 [project.optional-dependencies]
@@ -376,3 +380,54 @@ type = "forbidden"
 source_modules = ["server", "shared"]
 forbidden_modules = ["mem0"]
 ignore_imports = ["server.memory.mem0_provider -> mem0"]
+
+# docs/22 §0/§2 (SCH-T2): the scheduler delivers messages and executes nothing.
+# There is no principal at fire time, so it must not be able to reach anything
+# that acts: the runtime, a tool, a model, a device operation (server.execution
+# — its one route to a phone is a Protocol that carries only a DeviceReminder,
+# satisfied at the composition root), the filesystem or network boundary, the
+# grant / confirmation / decision engine (it asks nothing and grants nothing;
+# the facade that authorizes the API path lives in server.composition), the
+# SecretStore's resolution path, persistent memory, the vault, the Judge,
+# voice, or the dashboard — directly or through a chain. Its audit rows go
+# through server.security.audit, whose only secrets-side import is the
+# string-typed audit port, so resolution modules are named individually.
+[[tool.importlinter.contracts]]
+name = "The scheduler never executes: no runtime, tool, device, authority, secret, memory or judge (docs/22, SCH-T2)"
+type = "forbidden"
+source_modules = ["server.scheduler"]
+forbidden_modules = [
+    "server.agent",
+    "server.tools",
+    "server.modeltools",
+    "server.models",
+    "server.execution",
+    "server.fs",
+    "server.net",
+    "server.capabilities",
+    "server.graph",
+    "server.auth",
+    "server.secrets.store",
+    "server.secrets.kek",
+    "server.secrets.crypto",
+    "server.secrets.requester",
+    "server.memory",
+    "server.vault",
+    "server.evaluation",
+    "server.intelligence",
+    "server.voice",
+    "server.dashboard",
+    "server.gateway",
+    "server.composition",
+]
+
+# REPO-T5 for the scheduler: no raw process or socket of its own. (Indirect
+# imports are allowed for the same reason as the tools contract above: the
+# storage driver reaches `socket` three layers down; what must not exist is the
+# scheduler opening one itself.)
+[[tool.importlinter.contracts]]
+name = "The scheduler opens no process or socket (docs/22, REPO-T5)"
+type = "forbidden"
+source_modules = ["server.scheduler"]
+forbidden_modules = ["subprocess", "socket"]
+allow_indirect_imports = true

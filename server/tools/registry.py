@@ -84,6 +84,10 @@ class ToolDefinition:
     adapters: Mapping[ExecutionPlatform, ToolAdapter]
     is_model_tool: bool = False
     projected_cost_per_call: float = 0.0
+    # docs/22 §1: receive the task's own user input from the runtime (see
+    # `ToolInvocation.task_input`). For tools whose output must be traceable to
+    # the user's words rather than the worker's.
+    binds_task_input: bool = False
 
 
 @dataclass
@@ -191,6 +195,7 @@ class ToolRegistry:
                 else None
             ),
             projected_cost_per_call=max(0.0, float(definition.projected_cost_per_call)),
+            binds_task_input=bool(definition.binds_task_input),
         )
         self._entries[tool_id] = _Entry(
             definition=definition,

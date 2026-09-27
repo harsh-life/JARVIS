@@ -23,6 +23,7 @@ from server.composition.break_glass import BreakGlassRegistry
 from server.composition.latch import InProcessLatch, SupervisorGate
 from server.composition.memory import MemoryFacade, VaultFacade
 from server.composition.models import ConfiguredModelResolver, ProviderFactory
+from server.composition.scheduler import reminder_scope
 from server.composition.secret_context import CURRENT_SECRET_RESOLVER, SecretUnavailable
 from server.composition.security_port import RuntimeSecurityAdapter
 from server.composition.usage_port import RuntimeUsageAdapter
@@ -152,7 +153,10 @@ class AgentTaskFacade:
 
         token = CURRENT_SECRET_RESOLVER.set(resolve)
         try:
-            yield
+            # docs/22 §1: a reminder tool call writes in this request's own
+            # transaction (the pilot's SQLite has one writer).
+            with reminder_scope(session, audit):
+                yield
         finally:
             CURRENT_SECRET_RESOLVER.reset(token)
 

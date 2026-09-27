@@ -1,8 +1,11 @@
 package com.hypermind.jarvis.channel
 
 import com.hypermind.jarvis.auth.EnrollmentLost
+import com.hypermind.jarvis.contract.FailureReason
 import com.hypermind.jarvis.contract.OperationEnvelope
 import com.hypermind.jarvis.contract.PlatformDependency
+import com.hypermind.jarvis.contract.Reminder
+import com.hypermind.jarvis.contract.ReminderAck
 import com.hypermind.jarvis.contract.ResultEnvelope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -161,9 +164,11 @@ class DeviceChannelTest {
         val hello = connected(channel, side)
         assertEquals("hello", hello.getValue("type").jsonPrimitive.content)
         assertEquals(
-            setOf("type", "access_token", "device_proof", "mapping_version", "client_version"),
+            setOf("type", "access_token", "device_proof", "mapping_version", "client_version", "features"),
             hello.keys,
         )
+        // docs/22 §2: the client declares that it understands reminder frames.
+        assertEquals("[\"reminders\"]", hello.getValue("features").toString())
         assertEquals("1-0123456789abcdef", hello.getValue("mapping_version").jsonPrimitive.content)
         // Nothing about the user, graph, or capabilities is ever asserted by the device.
         assertTrue(hello.keys.none { it in setOf("user_id", "graph_id", "capabilities") })
@@ -174,6 +179,36 @@ class DeviceChannelTest {
                 .toString()
                 .let { "token" !in it && "proof" !in it },
         )
+        channel.stop()
+    }
+
+    @Test
+    fun `a reminder is shown, acknowledged, and never reaches the operation handler`() {
+        acceptConnections(1)
+        val received = mutableListOf<Reminder>()
+        val operations = AtomicInteger()
+        val handler =
+            OperationHandler { envelope ->
+                operations.incrementAndGet()
+                ResultEnvelope.failed(envelope.opId, FailureReason.ACTION_FAILED)
+            }
+        val channel = channel(handler)
+        channel.onReminder = { reminder ->
+            received += reminder
+            ReminderAck(deliveryId = reminder.deliveryId)
+        }
+        channel.start()
+        val side = connections.take()
+        connected(channel, side)
+        side.socket.send(
+            """{"type":"reminder","delivery_id":"r-1","job_id":"j-1","device_id":"d",""" +
+                """"task_reason":"call mum","scheduled_for":"2026-10-01T03:30:00Z","late":false,"recurring":false}""",
+        )
+        val ack = side.next()
+        assertEquals("reminder_ack", ack.getValue("type").jsonPrimitive.content)
+        assertEquals("r-1", ack.getValue("delivery_id").jsonPrimitive.content)
+        assertEquals(listOf("call mum"), received.map { it.taskReason })
+        assertEquals(0, operations.get())
         channel.stop()
     }
 
@@ -364,7 +399,10 @@ class DeviceChannelTest {
         // Well inside the ≥800 ms backoff: the wake connected it.
         val second = requireNotNull(connections.poll(600, TimeUnit.MILLISECONDS)) { "the wake did not reconnect" }
         val hello = connected(channel, second)
-        assertEquals(setOf("type", "access_token", "device_proof", "mapping_version", "client_version"), hello.keys)
+        assertEquals(
+            setOf("type", "access_token", "device_proof", "mapping_version", "client_version", "features"),
+            hello.keys,
+        )
         // The cancelled backoff does not open another one afterwards.
         Thread.sleep(1_500)
         assertEquals(2, server.requestCount)

@@ -233,6 +233,9 @@ data class Hello(
     @SerialName("device_proof") val deviceProof: String,
     @SerialName("mapping_version") val mappingVersion: String,
     @SerialName("client_version") val clientVersion: String,
+    // Frame families this client understands (docs/22 §2): the server sends a
+    // family only to a socket that declared it.
+    val features: List<ChannelFeature> = emptyList(),
 ) {
     // Credentials must never reach a log line through a data-class toString.
     override fun toString(): String = "Hello(mappingVersion=$mappingVersion, clientVersion=$clientVersion)"

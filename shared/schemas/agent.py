@@ -141,6 +141,11 @@ class ToolInvocation:
     # per-app grid is per phone, PRD §13), so dispatching to "some device of
     # this user" would execute where the user never granted anything.
     device_id: UUID | None = None
+    # The task's own user input, verbatim — set by the runtime, and only for a
+    # tool whose registration declared `binds_task_input` (docs/22 §1: a
+    # reminder's reason is the user's words, which the worker cannot author).
+    # Never taken from a proposal: no proposal field reaches it.
+    task_input: str | None = None
 
 
 @dataclass(frozen=True)
@@ -294,3 +299,6 @@ class ToolHandle:
     # Upper-bound cost of one call, for the budget precheck (13 §3). Non-zero
     # only for paid model-tools.
     projected_cost_per_call: float = 0.0
+    # docs/22 §1: the runtime passes the task's own user input to this tool as
+    # `ToolInvocation.task_input`. Declared at registration, never by a proposal.
+    binds_task_input: bool = False
