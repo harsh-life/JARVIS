@@ -98,7 +98,7 @@ vault:
 intelligence:
   enabled: false
 
-# Task-linked reminders (docs/22). A firing reminder delivers a message to the
+# Reminders tied to a task the user asked for (docs/22). A firing reminder delivers a message to the
 # owner's own devices; it never executes anything. Starting a task from it is
 # the user's own, ordinary action.
 scheduler:
