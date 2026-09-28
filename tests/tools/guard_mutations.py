@@ -187,7 +187,7 @@ MUTANTS: tuple[Mutant, ...] = (
            "        if (envelope.deviceId != deviceId) return RefusalReason.WRONG_DEVICE",
            "        if (false) return RefusalReason.WRONG_DEVICE",
            tuple(GRADLE), cwd="android"),
-    # ── Real-data gate (RG7): Stage 5 surfaces and grant scoping ──────────────
+    # ── Real-data gate: Stage 5 surfaces and grant scoping ──────────────
     Mutant("M28", "Console (DSH-T4): user content is shown instead of redacted",
            "server/dashboard/redaction.py",
            '    return {"redacted": True, "chars": len(text)}',

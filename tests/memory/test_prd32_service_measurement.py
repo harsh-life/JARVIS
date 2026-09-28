@@ -1,4 +1,4 @@
-"""PRD §39 #32 — measured service under ~10-device pilot load (RG6, OD-TEST-2).
+"""PRD §39 #32 — measured service under ~10-device pilot load (real-data gate, OD-TEST-2).
 
 #32: "The system holds correctly under a ~10-device concurrent pilot load, with
 per-principal fairness — no user's usage starves another's." 17 §7 OD-TEST-2

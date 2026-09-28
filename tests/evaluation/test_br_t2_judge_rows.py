@@ -1,4 +1,4 @@
-"""BR-T2, Stage 5 dimension — the Judge's improvement path (RG5, docs/OD_A1_BR_T2.md §3e).
+"""BR-T2, Stage 5 dimension — the Judge's improvement path (real-data gate, docs/OD_A1_BR_T2.md §3e).
 
 The earlier BR-T2 tables predate the Judge and the console. Stage 5 adds one
 data path none of them measures: a Judge candidate is written from **one
