@@ -61,7 +61,8 @@ carried forward and re-measured where this run could. Anything not re-measured i
 | Repository secret scan | tracked files: 0 findings (CI test). Git history: 1,178 blobs; 15 unmarked hits, all in superseded versions of test files, all synthetic (§J) |
 | **H-1 run, PostgreSQL** (§Q) | server **1781 passed, 7 skipped, 0 failed**; memory **198 passed** (incl. PRD #32 S1/S2 and the pilot-concurrency suite); BR-T2 **45 rows, 15 REACHABLE**, row-for-row identical to SQLite; migrations round-trip clean, `alembic check` no drift |
 | **H-1 run, SQLite** (§Q) | server **1787 passed, 7 skipped, 0 failed** (1786 + the probe fixed in `675daae`); memory **196 passed** (PRD #32 excluded: it refuses SQLite); migrations round-trip clean |
-| **H-1 run, contracts / mutations** | `lint-imports` **24 kept, 0 broken**; guard mutations: see §Q.6 |
+| **H-1 run, contracts / mutations** | `lint-imports` **24 kept, 0 broken**; guard mutations **44/44 killed** on PostgreSQL (41 + M42–M44, §Q.6) |
+| **H-1 run, CI** | run 86 on `675daae`: `checks` (SQLite), `postgres` (reachability, migrations round-trip, server suite, memory suite, PRD #32 step) and `android` all **success** |
 
 Test categories, kept separate (17 §1):
 
@@ -534,14 +535,15 @@ those.
 - CI job `postgres` (`.github/workflows/ci.yml`): a `postgres:16` service container with trust authentication
   on the job network, so there is no credential anywhere. A reachability step fails, never skips. Then the
   migration round-trip on PostgreSQL, the server suite, the memory suite and PRD #32 as its own step. The SQLite
-  job deselects PRD #32 by name.
+  job deselects PRD #32 by name. First run: CI run 86 on `675daae`, every job green, the `postgres` job's
+  PRD #32 step included (it asserts every S1/S2 condition).
 
 ### Q.6 Regression, security and secret audit
 
 - Suites on both stores, contracts and BR-T2: §C.
 - Guard mutations: 44 mutants: the 41 of §E plus **M42** (idempotency in-flight guard removed), **M43**
   (admissions not counted), **M44** (store not released before a long wait), run on PostgreSQL. Result:
-  *run in progress at this commit; the tally is recorded in the next commit*.
+  **44/44 killed** (the Kotlin device-guard mutants included, via Gradle).
 - Locked contracts: no change to authorization, identity, capabilities, confirmation, memory isolation, Judge
   authority or Android authority. The two `flush()` calls only order inserts. BR-T2 is row-for-row identical.
 - Secrets: no database credential in git, fixtures, logs, the APK or the dashboard. CI uses trust auth; local

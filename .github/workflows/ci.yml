@@ -193,7 +193,7 @@ jobs:
       - name: Memory release-blocking suite on PostgreSQL
         run: python -m pytest tests/memory -q --ignore=tests/memory/test_prd32_service_measurement.py
 
-      - name: PRD #32 ~10-user fairness acceptance (H-1)
+      - name: "PRD #32 ~10-user fairness acceptance (H-1)"
         # Its own step, with the measured S1/S2 tables in the log. It refuses
         # to run on any store but PostgreSQL.
         run: python -m pytest tests/memory/test_prd32_service_measurement.py -q -s
