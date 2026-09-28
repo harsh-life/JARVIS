@@ -245,14 +245,18 @@ async def _transient_error(h) -> BaseException:
             await b.close()
     from sqlalchemy.ext.asyncio import create_async_engine
 
+    async with engine.begin() as setup:
+        await setup.execute(text("CREATE TABLE lock_probe (x INTEGER)"))
     impatient = create_async_engine(str(engine.url), connect_args={"timeout": 0.1})
     holder = await engine.connect()
     try:
         await holder.begin()
-        await holder.execute(text("CREATE TABLE lock_probe (x INTEGER)"))  # takes the write lock
+        # A DML statement opens the transaction and takes the write lock (the
+        # sqlite3 module does not open one for DDL).
+        await holder.execute(text("INSERT INTO lock_probe VALUES (1)"))
         try:
             async with impatient.begin() as conn:
-                await conn.execute(text("CREATE TABLE lock_probe_2 (x INTEGER)"))
+                await conn.execute(text("INSERT INTO lock_probe VALUES (2)"))
         except Exception as exc:  # noqa: BLE001
             return exc
         raise AssertionError("the second writer was not refused")
