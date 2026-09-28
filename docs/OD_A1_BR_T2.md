@@ -200,6 +200,29 @@ class** because it needs no running process. Its impact is a content-free wake
 at most, and only together with the FCM credential. It is listed in §5 as an
 owner action rather than accepted here.
 
+### 3e. The Judge's improvement path (real-data gate re-run, docs/19 §9)
+
+The tables above predate Stage 5 (the Judge and the operator console). Stage 5
+adds one data path none of them measures. A Judge candidate is written from
+**one** user's task trace (19 §4, JDG-T7). An approved `worker.system_prompt`
+change then applies to **every** user's worker prompt (19 §9). The re-run lives
+in `tests/evaluation/test_br_t2_judge_rows.py`. It runs on the production
+composition root with a scripted Judge whose suggestion copies the user's
+details, which a real model summarising the trace can also do. Every row is
+asserted in both directions.
+
+| # | Attempt | Model | Result | Why |
+|---|---|---|---|---|
+| 38 | A's private content reaches B's worker prompt through a Judge candidate that the operator approved from the default (redacted) console | authorized (operator approval) | **REACHABLE** | Approval re-checks target, range and secret-shaped text (JDG-T9). Nothing checks for a user's private, non-secret content. The console shows the candidate redacted by default (DSH-B1). Reading it is the audited DASH-006 view, which approval does not require. |
+| 39 | The same candidate reaches B while it waits in the queue | authorized | contained | Nothing applies without a superuser approval (JDG-T9) |
+| 40 | A secret-shaped value in a candidate reaches the queue or B | authorized | contained | Refused at creation (`secret_in_value`); approval re-validates |
+| 41 | A's private content appears in the console's default views | authorized | contained | User content is redacted to its length (DSH-B1); the unredacted view is audited before it reads |
+
+Row 38 is **not** inside OD-A1 (a)'s class. It needs no compromised process,
+only a human approval made without reading the text. The row exists only when
+the Judge is enabled (`evaluation.enabled: false` by default) with a provider
+that writes candidates. It is listed in §5 as an owner action.
+
 ---
 
 ## 4. Dimensions — measured, and what is still not measured
@@ -215,6 +238,7 @@ hardware (below):
 | Filesystem sandbox (`09`) | **MEASURED** — §3b rows 12, 13, 15, 17 | In-process reach is REACHABLE (accepted class); authorized reach is contained |
 | Network egress exfiltration (`10`) | **MEASURED** — §3b row 14 (in-process); `system.restricted` sockets denied by Landlock TCP rules + seccomp `socket()` filter | In-process reach is REACHABLE (accepted class) |
 | Android device (`08`, docs/23) | **MEASURED** — §3d rows 29–37 | Authorized reach contained. In-process reach into a phone is bounded by that phone's own guard (rows 30–32). At-rest: push token plaintext (row 36, owner action) |
+| Judge improvement path / operator console (19 §9, 28) | **MEASURED** — §3e rows 38–41 | Unapproved, secret-shaped and default-view reach are contained. Operator-approved guidance carries one user's content to every user (row 38, owner action) |
 | Android device on **physical hardware** | **NOT MEASURED** | No phone or emulator was available. §3d runs the reference guard against the real hub; the Kotlin guard is unit- and mutation-tested on the JVM. A physical-device re-run of rows 30–32 remains outstanding (docs/RELEASE_VALIDATION.md §9) |
 
 `[LOCKED]` these rows are **pending, not passing**. They are measured on the same
@@ -246,6 +270,8 @@ the measured radius.
 | In-process reach into a phone (§3d rows 30, 34) | The device hub and the FCM sender live in the application process | The victim's phone refuses what its own grid or cached classification forbids (rows 31, 32); a wake carries nothing (ANDC-T9) | Inside **option (a)** |
 | Push registration token at rest (§3d row 36) | Stored in plaintext so the waker can address the phone | Needs the server's separate FCM credential to be usable at all, and then only for a content-free wake; revocation clears it | **Owner decision** (low severity): accept for the pilot, or encrypt the column |
 | Memory store **at rest**: live facts in plaintext, deleted facts' vectors retained (§3c rows 27, 28) | No at-rest encryption for memory yet (docs/21 §7, DECISION_REGISTER §4 "future hardening"); hnswlib marks rather than erases | Owner-only (0700) store directories; disk/backup protection is the operator's | **Owner decision needed before real data**: accept for the pilot, or require encrypted storage / a periodic index rebuild first |
+
+| Judge guidance carries one user's content to every user (§3e row 38) | An approved `worker.system_prompt` is global (19 §9). Approval screens for secret shapes only, and the approver's default view is redacted | Judge off by default. Nothing applies without a superuser approval. Secret-shaped values are refused. Every approval is audited and can be rolled back | **Owner decision** before the Judge runs on real data: e.g. require the audited unredacted view before approving, scope guidance per user, or keep the Judge off for real data (OD-JDG-5, `DECISION_REGISTER.md` §2H) |
 
 Every residual above is documented with an owner action, and none is presented as
 solved.
@@ -312,7 +338,11 @@ recorded as future hardening in `docs/DECISION_REGISTER.md` §4.
   no authorized path reachable, rows 30 and 34 inside the accepted class,
   row 36 at rest (owner action, §5).
 - Re-run §3d rows 30–32 on a physical phone with the Kotlin guard: not done;
-  no device was available.
+  no device was available. *(Real-data gate run, 2026-09-28: still not done.
+  `adb devices` listed no device and the host has no USB bus or KVM.)*
+- ~~Measure the Judge / console surfaces~~ — done in the real-data gate run
+  (§3e). Row 38 is reachable by an *authorized* path and goes to the owner
+  (§5). The gate record is `docs/RELEASE_VALIDATION.md`.
 
 ---
 
@@ -320,7 +350,8 @@ recorded as future hardening in `docs/DECISION_REGISTER.md` §4.
 
 ```bash
 python3 -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py \
-    tests/integration/test_br_t2_memory_rows.py tests/integration/test_br_t2_android_rows.py -q -s
+    tests/integration/test_br_t2_memory_rows.py tests/integration/test_br_t2_android_rows.py \
+    tests/evaluation/test_br_t2_judge_rows.py -q -s
 ```
 
 `-s` prints the measured table. The experiment asserts the measurement in **both**

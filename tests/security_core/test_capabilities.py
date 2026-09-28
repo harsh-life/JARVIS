@@ -314,6 +314,43 @@ async def test_tl_t5_a_floor_capability_is_never_active_even_if_a_row_exists(
     )
 
 
+@pytest.mark.parametrize(
+    ("scope", "keyed_on"),
+    [
+        (CapabilityScopeType.DEVICE, "session_id"),
+        (CapabilityScopeType.DEVICE, "user_id"),
+        (CapabilityScopeType.SESSION, "device_id"),
+        (CapabilityScopeType.USER, "device_id"),
+    ],
+)
+async def test_a_grant_keyed_on_the_wrong_kind_of_id_never_matches(db, grants, world, scope, keyed_on):
+    """01 §7.1: `principal_id` is the id of whatever `scope_type` names. A row
+    whose id is one of the caller's own ids *of another kind* (written by a
+    direct database edit, since the grant service refuses it) authorizes
+    nothing. The candidate query alone would let it through, so the scope check
+    is what holds."""
+
+    import datetime
+
+    from server.storage.models import CapabilityGrant
+
+    principal = Principal(user_id=world.alice.user_id, device_id=uuid.uuid4(), session_id=uuid.uuid4())
+    db.add(
+        CapabilityGrant(
+            principal_id=getattr(principal, keyed_on),
+            scope_type=scope,
+            capability="file.read",
+            granted_by=world.alice.user_id,
+            created_at=datetime.datetime.now(datetime.timezone.utc),
+        )
+    )
+    await db.flush()
+
+    assert not await grants.has_capability(
+        db, capability="file.read", context=CapabilityCheckContext(principal=principal)
+    )
+
+
 async def test_the_registry_contains_no_floor_capability(db):
     """The primary enforcement is the closed allow-list (PRD §16's "prohibited
     because no capability grants them"), so no registry entry may describe a

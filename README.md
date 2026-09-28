@@ -292,12 +292,21 @@ PILOT — ACCEPTED RESIDUAL** (option (a)): logical isolation, with the measured
 in-process residual accepted for the pilot. That is not an isolation claim.
 
 Real-user readiness needs 17 §5's whole release-blocking set green *and* the
-OD-A1 gate decided. As of Phase H the gate is **still closed**. Some RB criteria
-lack the required evidence: #29 has no dashboard, and #32 fairness under load
-is not met on the single-writer store. At-rest BR-T2 rows (memory 27–28, push
-token 36) wait for owner decisions. The Android client is validated only
-against fakes, the JVM and Robolectric, not on a phone.
-`docs/RELEASE_VALIDATION.md` §11 has the exact status. Until then:
+OD-A1 gate decided. The real-data gate was run on `8b15e39` (2026-09-28). Its
+decision is **REAL-DATA GATE: CLOSED**. #29 now has evidence: the console's
+DSH-T1..T5 pass and are mutation-tested. What blocks real data:
+
+- The Android release-blocking set has not run on a phone. No device was
+  available.
+- #32 fairness is measured and **not met** on the single-writer store: one
+  user's task refuses every other user's writes.
+- At-rest BR-T2 rows wait for owner decisions: memory 27–28 and push token 36.
+- A new authorized-path row: approved Judge guidance can carry one user's
+  content to every user (row 38).
+- The real-integration smoke was not run: it needs an OIDC client, a stable
+  hostname and a phone.
+
+`docs/RELEASE_VALIDATION.md` §P has the exact blockers. Until they are cleared:
 **disposable or test data only.**
 
 ## Repository layout

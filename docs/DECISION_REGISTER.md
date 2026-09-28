@@ -310,6 +310,19 @@ document, not the architecture.
 
 ---
 
+## 2H. Real-data gate run — findings (2026-09-28)
+
+The real-data gate run validated `main` @ `8b15e39` (Phase H + Stage 5). It
+added no feature and closed no decision. The evidence and the gate decision are
+in `docs/RELEASE_VALIDATION.md`. Findings that need a decision:
+
+| ID | Finding | What the code does now | Status |
+|---|---|---|---|
+| OD-JDG-5 | **One user's content can reach every user through an approved Judge candidate** (BR-T2 §3e row 38, *authorized* path). A candidate is written from one user's trace. An approved `worker.system_prompt` applies to every user's worker prompt. Approval screens for secret-shaped text only, and the approver's default console view shows the candidate redacted. | Judge off by default. Superuser-only approval, audited, can be rolled back. Secret-shaped values refused. | **OPEN — OWNER**. Mandatory before the Judge runs with real data. Options include: require the audited unredacted view (DASH-006) before an approval; scope approved guidance to the source user; or keep `evaluation.enabled: false` for real data. Not decided here. |
+| H-1 (update) | PRD #32 now **measured** (`tests/memory/test_prd32_service_measurement.py`). Ten users submitting at once are all served but fully serialized: 11.6 s wall clock for ten 0.5 s tasks, median task latency 8.7 s, 15 retryable `503`s across 9 of 10 users. One task whose model call passes the 5 s busy timeout refuses **9/9** other users' writes `503 storage`. Reads are unaffected. | Unchanged. | **OPEN — owner/engineering**, as in §2F. STORE-004 makes the DB choice `[IMPL]`, but both remedies change a property other documents rely on: a multi-writer store (no driver declared or tested) or shorter runtime transactions (02 §1.2's one-transaction audit guarantee, FAIL-001). Neither was chosen here. |
+| H-2 (scope) | The push-token at-rest row (BR-T2 36) exists only when push is enabled. With the default `android.push.provider: none` the server refuses to store a token (`409`; `test_push_is_off_by_default_and_nothing_can_be_registered`). | As §2F. | **OPEN — owner**: accept or encrypt before enabling FCM with real data. It does not arise in a push-off deployment. |
+| OD-MB-4 (scope) | Memory at-rest rows (BR-T2 27–28) exist only when `memory.enabled: true` (default false). | As §2C. | **OPEN — owner**. Mandatory before memory runs with real data. |
+
 ## 3. Genuinely unresolved owner decisions
 
 | ID | Question | Why it is the owner's |
@@ -328,6 +341,7 @@ document, not the architecture.
 | OD-JDG-4 | `usage.kind` extension vs `model_call` + attribution | `model_call` + `evaluator:` attribution; the locked enum is unchanged. |
 | OD-DASH-1 | Dashboard/control split vs amending DASH-002 | Split built as recommended; DASH-002 unchanged; not ratified. |
 | OD-DASH-2 | Console UI | Not built; JSON API only (§2G). |
+| OD-JDG-5 | How approved Judge guidance may carry user content (§2H) | Global guidance with secret screening only reaches every user with one user's content (BR-T2 row 38); which control fits is a product and privacy call. |
 
 ---
 

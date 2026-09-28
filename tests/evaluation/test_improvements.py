@@ -11,8 +11,13 @@ candidate aimed at security policy never reaches the queue at all.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
+from server.gateway.superuser_auth import SuperuserPrincipal
+from server.secrets.requester import SuperuserGrant
+from server.security.audit import AuditLogger
 from server.security.events import AuditAction
 from server.storage.models import ConfigVersion, ImprovementCandidateRow
 from tests.evaluation.conftest import SU, TOKEN, audit, drain, evaluations, verdict
@@ -97,6 +102,32 @@ async def test_no_ordinary_or_forged_credential_can_approve(judged):
     # The body cannot claim authority either.
     resp = await h.client.post(url, json={"reason": "ok", "approved_by": "superuser"}, headers=alice.auth)
     assert resp.status_code == 401
+
+
+async def test_the_control_object_itself_refuses_without_a_verified_superuser(judged):
+    """Defence in depth under the HTTP gate: the composition-root control
+    refuses any caller that does not hold a *verified* superuser grant, so an
+    internal caller that skips `get_superuser` still cannot decide."""
+
+    h, _, _, [row] = await queued(judged, candidate("worker.system_prompt", GUIDANCE))
+    control = h.app.state.evaluation_control
+    unverified = SuperuserPrincipal(grant=SuperuserGrant(token_fingerprint="forged"), request_id=uuid.uuid4())
+    async with h.storage.session() as session:
+        log = AuditLogger(session, request_id=uuid.uuid4())
+        for principal in (None, unverified):
+            with pytest.raises(PermissionError):
+                await control.approve_candidate(session, log, principal=principal,
+                                                candidate_id=row.candidate_id, reason="x")
+            with pytest.raises(PermissionError):
+                await control.reject_candidate(session, log, principal=principal,
+                                               candidate_id=row.candidate_id, reason="x")
+            with pytest.raises(PermissionError):
+                await control.rollback_version(session, log, principal=principal, version_id=1, reason="x")
+            with pytest.raises(PermissionError):
+                await control.set_switches(session, log, principal=principal, judge_enabled=False,
+                                           stop_requests_enabled=None, reason="x")
+    assert (await h.rows(ImprovementCandidateRow))[0].status == "pending"
+    assert await h.rows(ConfigVersion) == []
 
 
 async def test_approval_applies_a_versioned_change_that_rolls_back(judged):
