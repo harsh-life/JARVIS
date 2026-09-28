@@ -33,7 +33,7 @@ from server.gateway.deps import (
 from server.gateway.errors import AppError
 from server.gateway.security import SecurityCore
 from server.security.audit import AuditLogger
-from server.storage.idempotency import IdempotencyConflict, get_or_execute
+from server.storage.idempotency import IdempotencyConflict, IdempotencyInProgress, get_or_execute
 from shared.schemas.agent import AgentFailureCode, AgentResult, AgentTaskStatus, TaskMode, ToolSummary
 from shared.schemas.errors import ERROR_CODE_TABLE, ErrorCode
 
@@ -191,6 +191,11 @@ async def submit_task(
             execute=execute,
             redact_for_storage=_without_confirmation_token,
         )
+    except IdempotencyInProgress:
+        # H-1: the same key's first submission is still running; retry for
+        # its result once it has answered.
+        raise AppError(ErrorCode.CONFLICT, "a request with this Idempotency-Key is still running",
+                       details={"idempotency": "in_progress"}) from None
     except IdempotencyConflict:
         raise AppError(ErrorCode.CONFLICT, "Idempotency-Key reused for a different request") from None
     return JSONResponse(status_code=stored.status_code, content=stored.response_body)

@@ -49,7 +49,7 @@ SecretRef = Annotated[str, AfterValidator(_validate_secret_ref)]
 _DATABASE_DRIVERS = ("postgresql+asyncpg", "sqlite+aiosqlite")
 
 
-def _validate_database_url(value: str) -> str:
+def validate_database_url(value: str) -> str:
     from sqlalchemy.engine import make_url
     from sqlalchemy.exc import ArgumentError
 
@@ -72,7 +72,7 @@ def _validate_database_url(value: str) -> str:
     return value
 
 
-DatabaseUrl = Annotated[str, AfterValidator(_validate_database_url)]
+DatabaseUrl = Annotated[str, AfterValidator(validate_database_url)]
 
 
 class StrictModel(BaseModel):

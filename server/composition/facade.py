@@ -102,11 +102,21 @@ class AgentTaskFacade:
         return self._runtime
 
     def environment(self, session: AsyncSession, audit: AuditLogger) -> TaskEnvironment:
+        usage = RuntimeUsageAdapter(policy=self._usage, session=session, request_id=audit.request_id)
+
+        async def release_store() -> None:
+            # H-1: commit what the task has written so far, so no transaction
+            # is held across the model call / tool run about to start. The
+            # call just admitted stays counted until its ledger row commits.
+            with usage.holding_admissions():
+                await session.commit()
+
         return TaskEnvironment(
             session=session,
+            release_store=release_store,
             security=RuntimeSecurityAdapter(core=self._core, session=session, audit=audit,
                                             break_glass=self._break_glass),
-            usage=RuntimeUsageAdapter(policy=self._usage, session=session, request_id=audit.request_id),
+            usage=usage,
             models=ConfiguredModelResolver(
                 config=self._config,
                 session=session,

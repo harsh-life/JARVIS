@@ -17,8 +17,9 @@ What must hold while everything interleaves:
   user's answer, and one user flooding the server cannot take every slot.
 
 A retryable refusal is retried, as the Android client does; anything else is a
-failure. SQLite serializes writers, so a `503 dependency_unavailable` under
-contention is an honest, explicit state (02 §13), not a defect.
+failure. A `503 dependency_unavailable` for a transient store conflict is an
+honest, explicit state (02 §13), not a defect — but since H-1 one user's
+running task never holds the store against another's (the flood test below).
 """
 
 from __future__ import annotations
@@ -138,19 +139,15 @@ async def test_concurrent_tasks_hydrate_only_their_own_principals_memory(pilot):
         assert leaked == [], f"{u.subject}'s task hydrated another user's private fact: {leaked}"
 
 
-async def test_one_flooding_user_is_capped_per_principal_and_the_store_serializes_writers(pilot):
+async def test_one_flooding_user_is_capped_per_principal_and_never_blocks_another(pilot):
     """Per-principal fairness (13 §6, PRD #32), measured in both directions.
 
-    Held: the flooder's excess is refused **per principal** — explicitly and
-    retryably — so one user can never occupy more than its own slots, and every
-    other user is served once load clears.
-
-    Not held (the documented single-writer limitation, docs/RUNNING_RUNTIME.md
-    §4a): while the flooder's task is running, its request holds SQLite's one
-    write lock, so another user's write-bearing request is refused
-    `503 storage` for as long as that task runs. That is explicit and
-    retryable, never a leak or a lost write — but it is one user's usage
-    delaying another's, so #32 is recorded as **not met** on this store.
+    The flooder's excess is refused **per principal** — explicitly and
+    retryably — so one user can never occupy more than its own slots; and while
+    the flooder's admitted tasks are still running, another user's task is
+    served at once. Before H-1 that second half failed on SQLite: a running
+    task's request held the store's one write lock, and the other user got
+    `503 storage` for as long as it ran (docs/RELEASE_VALIDATION.md, H-1).
     """
 
     h, users, _ = pilot
@@ -176,12 +173,10 @@ async def test_one_flooding_user_is_capped_per_principal_and_the_store_serialize
     assert limits <= {"per_session_concurrency", "per_user_concurrency"}, limits
     assert all(r.json()["error"]["retryable"] is True for r in refused_now)
 
-    # The single-writer store: another user's task is refused while the
-    # flooder's runs — explicitly, retryably, with nothing persisted.
-    blocked = await h.submit(others[0], "while the flood runs")
-    assert blocked.status_code == 503, blocked.text
-    assert blocked.json()["error"]["details"] == {"dependency": "storage"}
-    assert blocked.json()["error"]["retryable"] is True
+    # Another user's task is served while the flooder's are still running.
+    during = await h.submit(others[0], "meanwhile, a normal request")  # not held by `respond`
+    assert during.status_code == 200 and during.json()["status"] == "completed", during.text
+    assert sum(1 for t in flood if not t.done()) == h.config.security.rate_limits.per_session_concurrent_tasks
 
     gate.set()
     flooded = await asyncio.gather(*flood)

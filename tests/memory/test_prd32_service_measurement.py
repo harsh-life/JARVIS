@@ -180,14 +180,12 @@ async def test_s2_one_long_task_does_not_block_other_users(pilot):
 
     h, users, _, backend = pilot
     long_user, others = users[0], users[1:]
-    release = asyncio.Event()
 
     async def respond(messages):
         if "long task" in messages[-1].content:
-            try:
-                await asyncio.wait_for(release.wait(), timeout=LONG_MODEL_SECONDS)
-            except asyncio.TimeoutError:
-                pass
+            # The full call, every time: it is never cut short once the
+            # other users have been served.
+            await asyncio.sleep(LONG_MODEL_SECONDS)
         return final("ok")
 
     h.model.push(*[respond for _ in range(4 * PILOT)])
@@ -208,7 +206,6 @@ async def test_s2_one_long_task_does_not_block_other_users(pilot):
             MEM, json={"fact_type": "preference", "content": unique(f"{u.subject} likes tea")},
             headers=u.auth)) for u in others),
     ))
-    release.set()
     done = await long_task
     long_seconds = time.monotonic() - long_started
     assert done.status_code == 200, done.text
