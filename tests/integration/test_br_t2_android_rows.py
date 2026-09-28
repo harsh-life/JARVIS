@@ -52,6 +52,7 @@ from server.tools.platforms import AndroidDeviceAdapter
 from shared.schemas.device_channel import ResultKind
 from shared.schemas.execution import ExecutionError
 from shared.schemas.push import fcm_wake_message
+from tests.dbsupport import store_contents
 from tests.fake_device import DeviceLocalState, FakeDevice, default_result
 from tests.runtime.conftest import android_ui_tool, ask, call, final
 
@@ -212,8 +213,7 @@ async def test_br_t2_android_dimension(make_harness, tmp_path, capsys):
     assert payloads == [fcm_wake_message(PUSH_TOKEN)]
 
     # ── 35–36. what the database file holds about B's phone ─────────────────
-    db_file = Path(h.storage._engine.url.database)
-    raw = db_file.read_bytes()
+    raw = await store_contents(h.storage)
     private_markers = [b"BEGIN PRIVATE KEY", b"BEGIN EC PRIVATE KEY", bob.credential.encode()]
     rows.append(Row("35", "recover B's device credential or step-up private key from the store", "at-rest",
                     any(m in raw for m in private_markers),
@@ -233,6 +233,8 @@ async def test_br_t2_android_dimension(make_harness, tmp_path, capsys):
     assert done.status_code == 200 and done.json()["status"] == "completed", done.text
     assert MARKER in h.model.all_text() or element.result is not ResultKind.SCREEN_READ
     leftovers = _files_containing(tmp_path, MARKER.encode())
+    if MARKER.encode() in await store_contents(h.storage):  # the store, wherever it lives
+        leftovers.append("relational store")
     rows.append(Row("37", "recover B's screen content from the server's disk after B's task", "at-rest",
                     bool(leftovers),
                     "screen results are transient task context: validated, shown to the model as untrusted "

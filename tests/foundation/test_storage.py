@@ -33,10 +33,12 @@ def test_alembic_migration_applies_and_reverses_cleanly(tmp_path: Path) -> None:
     """Migrations must be reproducible (§11) — apply head, then reverse to
     base, on a fresh throwaway file, via the real `alembic` CLI."""
 
+    from tests.dbsupport import admin_url, database_url_for
+
     db_path = tmp_path / "alembic_test.db"
     env = {
         **__import__("os").environ,
-        "HYPERMIND_DATABASE_URL": f"sqlite+aiosqlite:///{db_path}",
+        "HYPERMIND_DATABASE_URL": database_url_for(db_path),
     }
 
     upgrade = subprocess.run(
@@ -47,7 +49,7 @@ def test_alembic_migration_applies_and_reverses_cleanly(tmp_path: Path) -> None:
         text=True,
     )
     assert upgrade.returncode == 0, upgrade.stderr
-    assert db_path.exists()
+    assert admin_url() is not None or db_path.exists()
 
     downgrade = subprocess.run(
         [sys.executable, "-m", "alembic", "downgrade", "base"],
@@ -118,6 +120,7 @@ async def test_duplicate_active_graph_membership_rejected(storage: SQLAlchemySto
 
     async with storage.session() as session:
         session.add(User(user_id=user_id, oidc_subject="sub-1", oidc_issuer="iss", created_at=now))
+        await session.flush()  # the graph's owner first (a foreign key PostgreSQL enforces)
         session.add(Graph(graph_id=graph_id, name="g", owner_user_id=user_id, type="private", created_at=now))
         await session.commit()
 
@@ -151,6 +154,7 @@ async def test_revoked_membership_does_not_block_a_new_active_one(
 
     async with storage.session() as session:
         session.add(User(user_id=user_id, oidc_subject="sub-2", oidc_issuer="iss", created_at=now))
+        await session.flush()  # the graph's owner first (a foreign key PostgreSQL enforces)
         session.add(Graph(graph_id=graph_id, name="g2", owner_user_id=user_id, type="private", created_at=now))
         await session.commit()
 

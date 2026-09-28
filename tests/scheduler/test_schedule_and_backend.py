@@ -18,6 +18,7 @@ from server.scheduler.schedule import ScheduleError, first_fire, parse_schedule
 from server.storage import SQLAlchemyStorageBackend
 from server.storage.models import ScheduledJob
 from shared.schemas.enums import JobStatus, Visibility
+from tests.dbsupport import database_url_for
 from tests.scheduler.conftest import NOW, make_user
 
 MIN = timedelta(minutes=5)
@@ -169,7 +170,7 @@ async def test_jobs_survive_a_restart(storage: SQLAlchemyStorageBackend, db_path
         await session.commit()
     await storage.dispose()
 
-    restarted = SQLAlchemyStorageBackend(f"sqlite+aiosqlite:///{db_path}")
+    restarted = SQLAlchemyStorageBackend(database_url_for(db_path))
     try:
         async with restarted.session() as session:
             due = await DatabaseSchedulerBackend().list_due(session, now=NOW + timedelta(minutes=10), limit=10)

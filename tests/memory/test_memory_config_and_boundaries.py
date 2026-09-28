@@ -109,7 +109,9 @@ async def test_an_enabled_memory_is_wired_end_to_end_from_config_alone(tmp_path,
     monkeypatch.setenv(TEST_KEK_ENV_VAR, make_test_kek())
     config = make_test_config(memory={"enabled": True, "mem0": {
         "path": str(tmp_path / "m"), "embedder_cache": str(EMBEDDER_CACHE)}})
-    storage = SQLAlchemyStorageBackend(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    from tests.dbsupport import database_url_for
+
+    storage = SQLAlchemyStorageBackend(database_url_for(tmp_path / 'db.sqlite'))
     await storage.init_models()
     oidc = LocalOIDCProvider()
     core = build_security_core(config, oidc_provider=oidc)

@@ -273,14 +273,13 @@ class AuditEvent(Base):
 
     event_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=True)
-    device_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("devices.device_id"), nullable=True
-    )
-    session_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("sessions.session_id"), nullable=True
-    )
-    graph_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("graphs.graph_id"), nullable=True)
+    # Identifiers, not foreign keys: a refusal's audit row may name an id that
+    # does not exist (an unknown graph, a revoked session), and must still be
+    # written (02 §1.2). Migration a2d6e8f4c0b9.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    device_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    session_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    graph_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     actor: Mapped[AuditActor] = mapped_column(_sa_enum(AuditActor, "audit_actor"), nullable=False)
     action: Mapped[str] = mapped_column(String, nullable=False)
     resource: Mapped[str] = mapped_column(String, nullable=False)
@@ -513,8 +512,9 @@ class SpeakerContext(Base):
     is_authorization_signal: Mapped[bool] = mapped_column(nullable=False, default=False)
 
     __table_args__ = (
+        # `NOT col`, not `col = 0`: PostgreSQL has no boolean = integer operator.
         CheckConstraint(
-            "is_authorization_signal = 0",
+            "NOT is_authorization_signal",
             name="ck_speaker_contexts_never_auth_signal",
         ),
     )

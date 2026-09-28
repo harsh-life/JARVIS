@@ -14,12 +14,13 @@ import pytest
 import pytest_asyncio
 
 from server.storage import SQLAlchemyStorageBackend
+from tests.dbsupport import database_url_for
 
 
 @pytest_asyncio.fixture
 async def storage(tmp_path) -> AsyncIterator[SQLAlchemyStorageBackend]:
     db_path = tmp_path / f"test_{uuid.uuid4().hex}.db"
-    backend = SQLAlchemyStorageBackend(f"sqlite+aiosqlite:///{db_path}")
+    backend = SQLAlchemyStorageBackend(database_url_for(db_path))
     await backend.init_models()
     try:
         yield backend

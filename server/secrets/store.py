@@ -318,6 +318,9 @@ class EncryptedLocalSecretStore(SecretStore):
                 created_at=now,
             )
         )
+        # The reference row first: the material row's foreign key points at it,
+        # and PostgreSQL enforces that (the ORM has no relationship to order by).
+        await session.flush()
         session.add(
             SecretMaterial(
                 secret_ref=secret_ref,

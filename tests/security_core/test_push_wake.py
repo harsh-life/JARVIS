@@ -505,12 +505,14 @@ def test_no_waker_exists_unless_fcm_is_configured(tmp_path, monkeypatch):
     from server.composition import build_application
     from server.storage import SQLAlchemyStorageBackend
 
+    from tests.dbsupport import database_url_for
+
     monkeypatch.setenv(TEST_KEK_ENV_VAR, "unused")
-    storage = SQLAlchemyStorageBackend(f"sqlite+aiosqlite:///{tmp_path / 'a.db'}")
+    storage = SQLAlchemyStorageBackend(database_url_for(tmp_path / 'a.db'))
     app = build_application(_app_config(None), storage=storage, extra_tools=[])
     assert app.state.device_waker is None and app.state.device_hub._waker is None
 
-    storage = SQLAlchemyStorageBackend(f"sqlite+aiosqlite:///{tmp_path / 'b.db'}")
+    storage = SQLAlchemyStorageBackend(database_url_for(tmp_path / 'b.db'))
     app = build_application(_app_config(PUSH_ON.model_dump(mode="json")), storage=storage, extra_tools=[])
     assert app.state.device_waker is not None and app.state.device_hub._waker is app.state.device_waker
 

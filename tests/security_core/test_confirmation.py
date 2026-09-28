@@ -46,6 +46,27 @@ async def issue(confirmations, db, binding, tier=RiskCategory.CONSEQUENTIAL, **k
     return await confirmations.issue(db, binding=binding, risk_category=tier, **kw)
 
 
+async def session_principal(db, user, *, graph_id=None) -> Principal:
+    """A principal whose device and session rows exist. A stored confirmation
+    token names its session, and PostgreSQL enforces that foreign key — the
+    synthetic ids of `principal_for` would name a session that was never made."""
+
+    import datetime
+
+    from server.storage.models import Device, Session
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    device = Device(user_id=user.user_id, credential_ref="secretstore:test-device", registered_at=now)
+    db.add(device)
+    await db.flush()
+    session = Session(device_id=device.device_id, user_id=user.user_id, issued_at=now,
+                      expires_at=now + timedelta(hours=1))
+    db.add(session)
+    await db.flush()
+    return Principal(user_id=user.user_id, device_id=device.device_id, session_id=session.session_id,
+                     active_graph_id=graph_id)
+
+
 # ── the happy path ─────────────────────────────────────────────────────────
 
 
@@ -185,7 +206,8 @@ async def test_a_token_does_not_validate_for_a_different_session(
     """Binding the session means a token captured from one session cannot be
     replayed in another."""
 
-    session_a, session_b = uuid.uuid4(), uuid.uuid4()
+    session_a = (await session_principal(db, world.alice)).session_id
+    session_b = (await session_principal(db, world.alice)).session_id
     issued = await issue(
         confirmations, db, binding_for(world.alice, session_id=session_a)
     )
@@ -390,9 +412,7 @@ async def test_a_matching_confirmation_lets_the_engine_allow(
     """The positive path: the engine issues a binding, the human confirms, and the
     next authorization with that token allows exactly that action."""
 
-    from tests.security_core.test_authorization import principal_for
-
-    principal = principal_for(world.alice, graph_id=world.graph_id)
+    principal = await session_principal(db, world.alice, graph_id=world.graph_id)
     base = dict(
         principal=principal,
         operation=Operation.SHARE,
@@ -423,10 +443,8 @@ async def test_a_confirmation_token_is_spent_by_the_authorization_that_uses_it(
 ):
     """Validating and spending cannot be separate steps that a retry repeats."""
 
-    from tests.security_core.test_authorization import principal_for
-
     base = dict(
-        principal=principal_for(world.alice, graph_id=world.graph_id),
+        principal=await session_principal(db, world.alice, graph_id=world.graph_id),
         operation=Operation.SHARE,
         resource_type=ResourceType.FILERESOURCE,
         resource_ref=str(world.alice_private_file.file_id),
@@ -455,9 +473,7 @@ async def test_a_confirmation_for_one_file_does_not_authorize_another(
 ):
     """The engine-level version of the substitution attack."""
 
-    from tests.security_core.test_authorization import principal_for
-
-    principal = principal_for(world.alice, graph_id=world.graph_id)
+    principal = await session_principal(db, world.alice, graph_id=world.graph_id)
     shared_base = dict(
         principal=principal,
         operation=Operation.SHARE,
@@ -498,9 +514,7 @@ async def test_a_denied_request_is_never_upgraded_by_a_confirmation_token(
     would substitute for authorization.
     """
 
-    from tests.security_core.test_authorization import principal_for
-
-    bob = principal_for(world.bob, graph_id=world.graph_id)
+    bob = await session_principal(db, world.bob, graph_id=world.graph_id)
 
     own = await engine.authorize(
         db,
