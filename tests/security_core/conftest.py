@@ -42,6 +42,7 @@ from server.security.audit import AuditLogger
 from server.storage import SQLAlchemyStorageBackend
 from server.storage.models import FileResource, ScheduledJob, User
 from shared.schemas.enums import GraphType, MembershipRole, UserStatus, Visibility
+from tests.dbsupport import database_url_for
 from tests.support import (
     TEST_KEK_ENV_VAR,
     LocalOIDCProvider,
@@ -53,7 +54,7 @@ from tests.support import (
 @pytest_asyncio.fixture
 async def storage(tmp_path) -> AsyncIterator[SQLAlchemyStorageBackend]:
     db_path = tmp_path / f"sec_{uuid.uuid4().hex}.db"
-    backend = SQLAlchemyStorageBackend(f"sqlite+aiosqlite:///{db_path}")
+    backend = SQLAlchemyStorageBackend(database_url_for(db_path))
     await backend.init_models()
     try:
         yield backend

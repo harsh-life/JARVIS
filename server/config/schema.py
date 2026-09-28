@@ -44,6 +44,36 @@ def _validate_secret_ref(value: str) -> str:
 
 SecretRef = Annotated[str, AfterValidator(_validate_secret_ref)]
 
+# H-1: PostgreSQL is the pilot's runtime store; SQLite stays for development
+# and tests (it cannot meet PRD #32 — one writer at a time).
+_DATABASE_DRIVERS = ("postgresql+asyncpg", "sqlite+aiosqlite")
+
+
+def validate_database_url(value: str) -> str:
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import ArgumentError
+
+    try:
+        url = make_url(value)
+    except ArgumentError:
+        raise ValueError("database_url is not a database URL") from None
+    if url.drivername not in _DATABASE_DRIVERS:
+        raise ValueError(
+            f"database_url must use one of {', '.join(_DATABASE_DRIVERS)} "
+            f"(got {url.drivername!r}); PostgreSQL is the pilot's runtime store"
+        )
+    # SECRET-004 applies here too: a password never sits in configuration.
+    # asyncpg reads it from PGPASSWORD or ~/.pgpass (the libpq conventions).
+    if url.password is not None or any(k.lower() in ("password", "passfile") for k in url.query):
+        raise ValueError(
+            "database_url must not carry a password — supply it out of band "
+            "through PGPASSWORD or a ~/.pgpass file (SECRET-004)"
+        )
+    return value
+
+
+DatabaseUrl = Annotated[str, AfterValidator(validate_database_url)]
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -777,7 +807,10 @@ class AppConfig(StrictModel):
     # of this branch's instructions) — not part of 15 §2's shape verbatim,
     # since 15 predates any concrete storage decision (STORE-004 is [IMPL]).
     # Documented explicitly rather than silently folded into `server`.
-    database_url: str = "sqlite+aiosqlite:///./data/hypermind.db"
+    # H-1: the pilot runs on PostgreSQL (`postgresql+asyncpg://user@host:5432/db`,
+    # password via PGPASSWORD / ~/.pgpass). The SQLite default is for local
+    # development and tests only.
+    database_url: DatabaseUrl = "sqlite+aiosqlite:///./data/hypermind.db"
 
     @model_validator(mode="after")
     def _distinct_mem0_and_vault_collections(self) -> "AppConfig":

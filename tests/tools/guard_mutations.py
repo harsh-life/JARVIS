@@ -259,6 +259,23 @@ MUTANTS: tuple[Mutant, ...] = (
            "        return row.principal_id == context.principal.device_id",
            "        return True",
            (*PY, "tests/security_core/test_grid_grants.py", "tests/security_core/test_capabilities.py")),
+    # H-1: the guards that concurrent requests on a multi-writer store need.
+    # Run them with HYPERMIND_TEST_DATABASE_URL set, as CI's `postgres` job does.
+    Mutant("M42", "H-1 idempotency: a same-key retry while the original runs executes again",
+           "server/storage/idempotency.py",
+           "    if idempotency_key in _IN_FLIGHT:",
+           "    if False:",
+           (*PY, "tests/runtime/test_concurrent_store.py")),
+    Mutant("M43", "H-1 usage admission: calls admitted but not yet in the ledger stop counting",
+           "server/security/usage.py",
+           "        return [a for a in self._admitted.values() if a.recorded_in is not own]",
+           "        return []",
+           (*PY, "tests/runtime/test_concurrent_store.py")),
+    Mutant("M44", "H-1 transaction scope: a task's store transaction is held across its model and tool calls",
+           "server/agent/runtime.py",
+           "    if env.release_store is not None:\n        await env.release_store()",
+           "    return None",
+           (*PY, "tests/runtime/test_concurrent_store.py")),
 )
 
 

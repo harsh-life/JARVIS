@@ -30,6 +30,23 @@ class IdempotencyConflict(Exception):
     """
 
 
+class IdempotencyInProgress(IdempotencyConflict):
+    """The same key arrived again while its first request is still running.
+
+    H-1: once requests run concurrently (they used to queue on SQLite's one
+    writer), a retry could otherwise find no stored result yet and run the
+    action a second time. It is refused instead — a `409 conflict` like any
+    other idempotency conflict (02 §1.7) — and once the original has answered,
+    the same key replays it as usual.
+    """
+
+
+# Keys whose first request is running now. The pilot is one server process
+# (docs/RUNNING_RUNTIME.md §4a); across processes the table's primary key
+# still refuses a second stored result.
+_IN_FLIGHT: set[str] = set()
+
+
 @dataclass(frozen=True)
 class StoredResult:
     status_code: int
@@ -67,26 +84,34 @@ async def get_or_execute(
 
     fp = fingerprint_request(method, path, body)
 
-    existing = await session.get(IdempotencyKey, idempotency_key)
-    if existing is not None:
-        if existing.request_fingerprint != fp:
-            raise IdempotencyConflict(
-                f"idempotency key {idempotency_key!r} was already used for a "
-                "different request"
+    # Claimed before the first `await`, and let go only after the result is
+    # committed: a same-key request either sees it running or reads its result.
+    if idempotency_key in _IN_FLIGHT:
+        raise IdempotencyInProgress(f"a request with idempotency key {idempotency_key!r} is still running")
+    _IN_FLIGHT.add(idempotency_key)
+    try:
+        existing = await session.get(IdempotencyKey, idempotency_key)
+        if existing is not None:
+            if existing.request_fingerprint != fp:
+                raise IdempotencyConflict(
+                    f"idempotency key {idempotency_key!r} was already used for a "
+                    "different request"
+                )
+            return StoredResult(existing.status_code, existing.response_body)
+
+        status_code, response_body = await execute()
+        stored_body = redact_for_storage(response_body) if redact_for_storage else response_body
+
+        session.add(
+            IdempotencyKey(
+                idempotency_key=idempotency_key,
+                request_fingerprint=fp,
+                status_code=status_code,
+                response_body=stored_body,
+                created_at=datetime.now(timezone.utc),
             )
-        return StoredResult(existing.status_code, existing.response_body)
-
-    status_code, response_body = await execute()
-    stored_body = redact_for_storage(response_body) if redact_for_storage else response_body
-
-    session.add(
-        IdempotencyKey(
-            idempotency_key=idempotency_key,
-            request_fingerprint=fp,
-            status_code=status_code,
-            response_body=stored_body,
-            created_at=datetime.now(timezone.utc),
         )
-    )
-    await session.commit()
-    return StoredResult(status_code, response_body)
+        await session.commit()
+        return StoredResult(status_code, response_body)
+    finally:
+        _IN_FLIGHT.discard(idempotency_key)

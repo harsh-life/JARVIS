@@ -56,6 +56,38 @@ def test_minimal_valid_config_loads(tmp_path: Path) -> None:
     assert cfg.memory.mem0.collection != cfg.vault.collection
 
 
+@pytest.mark.parametrize("url", [
+    "postgresql+asyncpg://jarvis@127.0.0.1:5432/jarvis",
+    "postgresql+asyncpg://jarvis@db.internal/jarvis?ssl=require",
+    "sqlite+aiosqlite:///./data/hypermind.db",
+])
+def test_the_supported_database_urls_load(tmp_path: Path, url: str) -> None:
+    """H-1: PostgreSQL (the pilot's runtime store) and SQLite (development)."""
+
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(MINIMAL_VALID_YAML + f'database_url: "{url}"\n')
+    assert load_config(cfg_file).database_url == url
+
+
+@pytest.mark.parametrize("url", [
+    "postgresql+asyncpg://jarvis:TESTONLYpw@127.0.0.1:5432/jarvis",  # TEST-ONLY placeholder
+    "postgresql+asyncpg://jarvis@127.0.0.1/jarvis?password=TESTONLYpw",  # TEST-ONLY placeholder
+    "postgresql://jarvis@127.0.0.1/jarvis",   # a sync driver the async engine cannot use
+    "mysql+aiomysql://jarvis@127.0.0.1/jarvis",
+    "not a url",
+])
+def test_an_unsupported_or_credential_bearing_database_url_fails_closed(tmp_path: Path, url: str) -> None:
+    """SECRET-004 for the store: a password never sits in configuration (it
+    comes from PGPASSWORD or ~/.pgpass), and an unsupported driver fails at load
+    rather than at the first request. The refusal never echoes the value."""
+
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(MINIMAL_VALID_YAML + f'database_url: "{url}"\n')
+    with pytest.raises(ConfigError) as refused:
+        load_config(cfg_file)
+    assert "TESTONLYpw" not in str(refused.value)
+
+
 def test_literal_secret_rejected_at_load(tmp_path: Path) -> None:
     """CFG-T6: a config bearing a literal secret fails validation at load."""
 
@@ -71,8 +103,12 @@ def test_literal_secret_rejected_at_load(tmp_path: Path) -> None:
             """
         )
     )
-    with pytest.raises(ConfigError):
+    with pytest.raises(ConfigError) as refused:
         load_config(cfg_file)
+    # The refusal names the field, never the value (it is logged at startup).
+    assert "agent.secret_ref" in str(refused.value)
+    assert "literal-value-for-CFG-T6" not in str(refused.value)
+    assert refused.value.__cause__ is None and refused.value.__suppress_context__
 
 
 def test_mem0_and_vault_same_collection_rejected(tmp_path: Path) -> None:

@@ -17,7 +17,9 @@ import logging
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import DBAPIError
+
+from server.storage.errors import is_transient_store_error
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 
@@ -136,14 +138,16 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 
-async def storage_error_handler(request: Request, exc: OperationalError) -> JSONResponse:
-    """A store too busy to take this request's write — SQLite is single-writer,
-    and a running task holds the write lock for its request. The request's
-    transaction was rolled back, so nothing it did persisted: a retryable
-    `503 dependency_unavailable`, not a 500. Any other operational error is
-    still an internal error."""
+async def storage_error_handler(request: Request, exc: DBAPIError) -> JSONResponse:
+    """A store that cannot take this request's work right now: SQLite's single
+    writer is busy, or PostgreSQL reports a transient conflict (a deadlock, a
+    serialization failure, a lock timeout) or cannot take another connection.
+    The request's transaction was rolled back, so nothing it did persisted: a
+    retryable `503 dependency_unavailable`, not a 500. Any other database error
+    is still an internal error, reported without its text (it can name the
+    database)."""
 
-    if "database is locked" not in str(getattr(exc, "orig", exc)):
+    if not is_transient_store_error(exc):
         return await unhandled_exception_handler(request, exc)
     logger.warning("storage busy: request rolled back")
     http_status, _ = ERROR_CODE_TABLE[ErrorCode.DEPENDENCY_UNAVAILABLE]
@@ -159,7 +163,7 @@ async def storage_error_handler(request: Request, exc: OperationalError) -> JSON
 
 def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, app_error_handler)
-    app.add_exception_handler(OperationalError, storage_error_handler)
+    app.add_exception_handler(DBAPIError, storage_error_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)

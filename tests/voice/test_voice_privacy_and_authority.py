@@ -29,6 +29,7 @@ from server.storage.models import VoiceEvent as VoiceEventRow
 from server.voice.speaker import speaker_context
 from shared.schemas.voice import SpeakerContext
 from tests.runtime.conftest import ask, call, final, pending_of
+from tests.dbsupport import table_names
 from tests.voice.conftest import server_voice
 
 REPO = Path(__file__).resolve().parents[2]
@@ -251,8 +252,8 @@ async def test_voi_t5_audio_and_transcripts_stay_out_of_audit_usage_tables_and_m
         assert "dentist" not in dumped and MARKER.decode() not in dumped
     assert await h.rows(VoiceEventRow) == []  # transcribe → process → delete (LIFE-002)
     assert h.memory is not None and h.memory.facts == []  # never a memory
+    tables = await table_names(h.storage)
     async with h.storage.session() as s:
-        tables = [r[0] for r in (await s.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))).all()]
         for table in tables:
             rows = (await s.execute(text(f'SELECT * FROM "{table}"'))).all()
             assert "dentist" not in repr(rows), table

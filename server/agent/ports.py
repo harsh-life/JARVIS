@@ -27,7 +27,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Mapping, Protocol, Sequence
+from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -465,6 +465,12 @@ class TaskEnvironment:
     supervisor: SupervisorGatePort
     memory: MemoryFormationPort | None = None
     tuning: TuningPort | None = None
+    # H-1: ends the request's store transaction before the runtime starts a long
+    # wait — a model call, a tool run, a memory search or write — so no
+    # transaction (and no lock) is held across one. What the task has written
+    # so far becomes durable; the next write opens a new transaction. `None`
+    # (a test environment) keeps the one-transaction behaviour.
+    release_store: Callable[[], Awaitable[None]] | None = None
 
 
 __all__: Sequence[str] = [

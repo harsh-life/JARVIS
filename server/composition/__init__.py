@@ -281,7 +281,11 @@ def build_application(
     vault_facade = VaultFacade(index=index, config=config.vault) if index is not None else None
 
     async def active_graph_ids(session, user_id):
-        graphs = await core.graph_repository.graphs_for_user(session, user_id=user_id, limit=1000)
+        # H-1: read in a short transaction of its own, so none is left open
+        # across the memory search that follows. The runtime has committed the
+        # request's writes before hydrating, so this sees the same state.
+        async with storage.session() as reads:
+            graphs = await core.graph_repository.graphs_for_user(reads, user_id=user_id, limit=1000)
         return {g.graph_id for g in graphs}
 
     # docs/22 §2/§3: firing and delivery. The runner is a lifespan service; it

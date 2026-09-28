@@ -255,9 +255,15 @@ secrets:
   store: "encrypted_local"
   kek_source: "env:HYPERMIND_KEK"   # the KEK *source*, never the KEK itself
 
-# SQLite is single-writer: while one user's task runs, another user's write is
-# refused with a retryable 503 (docs/RUNNING_RUNTIME.md §4a). That is fine for
-# development and a small trial on disposable data, but PRD #32 (fairness under
-# ~10-device load) is not met on it. No multi-writer store has been validated
-# (docs/DECISION_REGISTER.md §2F H-1).
+# The relational store (docs/RUNNING_FOUNDATION.md §4). Two drivers only:
+#
+#   postgresql+asyncpg://<user>@<host>:<port>/<database>   the pilot's runtime
+#       store (H-1, docs/DECISION_REGISTER.md §2I). NO password in this URL —
+#       config refuses one (SECRET-004). The driver reads it from PGPASSWORD
+#       or ~/.pgpass (mode 0600) in the server's environment. TLS: append
+#       ?ssl=require for a server that is not on localhost.
+#   sqlite+aiosqlite:///./data/hypermind.db   development and tests. One
+#       writer: PRD #32 (fairness under ~10-device load) is not met on it.
+#
+# Anything else fails at startup. The value below is the development default.
 database_url: "sqlite+aiosqlite:///./data/hypermind.db"

@@ -54,6 +54,7 @@ from shared.schemas.agent import ExecutionPlatform, OperationSpec, ToolInvocatio
 from shared.schemas.agent_config import ToolContract
 from shared.schemas.authorization import Operation, ResourceType
 from shared.schemas.enums import RiskCategory, Visibility
+from tests.dbsupport import database_url_for
 from tests.support import TEST_ISSUER, TEST_KEK_ENV_VAR, LocalOIDCProvider, make_test_kek, TEST_CLIENT_ID
 
 pytestmark = pytest.mark.asyncio
@@ -462,7 +463,7 @@ async def make_harness(tmp_path, monkeypatch) -> AsyncIterator[Callable]:
         vault_index: Any = None,
         scheduler_tool: bool | None = None,
     ) -> Harness:
-        storage = SQLAlchemyStorageBackend(f"sqlite+aiosqlite:///{tmp_path / uuid.uuid4().hex}.db")
+        storage = SQLAlchemyStorageBackend(database_url_for(tmp_path / f"{uuid.uuid4().hex}.db"))
         await storage.init_models()
         payload = _deep_merge(base_config_payload(), config or {})
         app_config = AppConfig.model_validate(payload)

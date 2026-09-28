@@ -14,6 +14,7 @@ from alembic import context
 from server.storage.base import Base
 from server.storage import models  # noqa: F401  (registers tables on Base.metadata)
 from server.config import ConfigError, load_config
+from server.config.schema import validate_database_url
 
 config = context.config
 
@@ -31,7 +32,12 @@ def _resolve_database_url() -> str:
 
     env_override = os.environ.get("HYPERMIND_DATABASE_URL")
     if env_override:
-        return env_override
+        # The same rules as config's `database_url` (H-1): a supported driver,
+        # and never a password in the URL (PGPASSWORD / ~/.pgpass instead).
+        try:
+            return validate_database_url(env_override)
+        except ValueError as exc:
+            raise SystemExit(f"HYPERMIND_DATABASE_URL refused: {exc}") from None
 
     try:
         app_config = load_config()

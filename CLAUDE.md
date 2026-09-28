@@ -28,8 +28,11 @@ this" in `README.md` and `docs/OD_A1_BR_T2.md`; disposable/test data only.
 uv venv .venv && source .venv/bin/activate
 uv pip install -e ".[dev]"          # add ",memory" for the Mem0/Chroma/fastembed stack
 cp config.example.yaml config.yaml  # never commit config.yaml
-export HYPERMIND_DATABASE_URL="sqlite+aiosqlite:///./data/hypermind.db"
+export HYPERMIND_DATABASE_URL="sqlite+aiosqlite:///./data/hypermind.db"   # dev store
 mkdir -p data && alembic upgrade head
+# The pilot's runtime store is PostgreSQL (H-1): postgresql+asyncpg://<user>@<host>:5432/<db>,
+# never with a password in the URL (config refuses it) — PGPASSWORD or ~/.pgpass instead.
+# See docs/RUNNING_FOUNDATION.md §4.
 export HYPERMIND_KEK="$(python3 -m server.secrets.kek)"   # security-core: store durably, out of repo
 ```
 
@@ -65,6 +68,11 @@ python -m pytest tests/runtime/test_confirmation_boundary.py::test_name -q
 # Memory suite (needs `pip install -e ".[memory]"` + provisioning above)
 HYPERMIND_REQUIRE_MEMORY_STACK=1 python -m pytest tests/memory -q
 
+# Any suite on PostgreSQL (CI's `postgres` job): one fresh database per test on a
+# throwaway server; unreachable = failure, not skip. PRD #32's acceptance
+# (tests/memory/test_prd32_service_measurement.py) runs only this way.
+HYPERMIND_TEST_DATABASE_URL="postgresql+asyncpg://postgres@127.0.0.1:5432/postgres" python -m pytest tests/ -q --ignore=tests/memory
+
 # Module-boundary contracts (see Architecture below) — run this after any new
 # cross-package import; it's a separate CI job, not folded into pytest
 lint-imports --config pyproject.toml
@@ -81,7 +89,10 @@ alembic upgrade head && alembic downgrade base && alembic upgrade head && alembi
 ```
 
 CI (`.github/workflows/ci.yml`) needs no secrets at all — suites build their
-own throwaway config and generate a fresh key per test. `tests/asyncio_mode`
+own throwaway config and generate a fresh key per test. It runs everything
+twice: on SQLite (`checks`) and on a PostgreSQL service container (`postgres`,
+trust auth, no credential), which also round-trips the migrations and runs
+PRD #32. `tests/asyncio_mode`
 is `auto` (pytest-asyncio), configured in `pyproject.toml`.
 
 ## Architecture

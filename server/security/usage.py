@@ -25,7 +25,10 @@ come from configuration.
 
 from __future__ import annotations
 
+import asyncio
+import itertools
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -145,12 +148,43 @@ class UsageLedger:
         return float((await session.execute(query)).scalar_one())
 
 
+@dataclass
+class _Admission:
+    """A call admitted but not yet visible in the ledger to other requests."""
+
+    user_id: uuid.UUID
+    device_id: uuid.UUID | None
+    cost: float
+    expires: float
+    # The session whose own (uncommitted) ledger row now stands for this call:
+    # that session's queries already count it, every other session's do not.
+    recorded_in: object | None = None
+
+
 class UsagePolicy:
-    """Rate and budget checks, evaluated against the ledger before a call."""
+    """Rate and budget checks, evaluated against the ledger before a call.
+
+    H-1: the ledger alone is not enough once requests run concurrently and
+    commit early. Between a call's admission and its ledger row becoming
+    visible (the call itself, then a commit), another request's check would
+    not see it, and two calls could both pass a limit with room for one. So an
+    admission (`admit`) is held in process until the row that accounts for it
+    is committed — or the transaction that would have written it is gone — and
+    every check counts the held admissions alongside the ledger. The pilot is
+    one server process (docs/RUNNING_RUNTIME.md §4a), so this is the whole set
+    of calls in flight.
+    """
+
+    # A safety net only: an admission is normally let go when its request's
+    # transaction ends. One never let go (a bug) stops counting after this.
+    ADMISSION_TTL_SECONDS = 900.0
 
     def __init__(self, *, limits: UsageLimits, ledger: UsageLedger | None = None) -> None:
         self._limits = limits
         self._ledger = ledger or UsageLedger()
+        self._admitting = asyncio.Lock()
+        self._admitted: dict[int, _Admission] = {}
+        self._ids = itertools.count(1)
 
     @property
     def ledger(self) -> UsageLedger:
@@ -177,6 +211,46 @@ class UsagePolicy:
             logger.exception("usage ledger unreadable; treating as at-limit")
             raise LimitExceeded("limiter_unavailable", retry_after_seconds=60) from None
 
+    async def admit(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: uuid.UUID,
+        device_id: uuid.UUID | None,
+        projected_cost: float,
+    ) -> int:
+        """`precheck`, and on success hold the call as admitted until
+        `release`. One admission is checked at a time, so two cannot both
+        pass on room for one. Returns the admission's id."""
+
+        async with self._admitting:
+            await self.precheck(session, user_id=user_id, device_id=device_id,
+                                projected_cost=projected_cost)
+            admission_id = next(self._ids)
+            self._admitted[admission_id] = _Admission(
+                user_id=user_id, device_id=device_id, cost=max(0.0, float(projected_cost)),
+                expires=time.monotonic() + self.ADMISSION_TTL_SECONDS,
+            )
+            return admission_id
+
+    def recorded(self, admission_id: int, session: object) -> None:
+        """The admitted call's ledger row is written in `session`, uncommitted."""
+
+        admission = self._admitted.get(admission_id)
+        if admission is not None:
+            admission.recorded_in = session
+
+    def release(self, admission_id: int) -> None:
+        self._admitted.pop(admission_id, None)
+
+    def _in_flight(self, session: AsyncSession) -> list[_Admission]:
+        now = time.monotonic()
+        for admission_id in [i for i, a in self._admitted.items() if a.expires <= now]:
+            logger.warning("usage admission %s was never released; no longer counted", admission_id)
+            del self._admitted[admission_id]
+        own = getattr(session, "sync_session", session)
+        return [a for a in self._admitted.values() if a.recorded_in is not own]
+
     async def _check(
         self,
         session: AsyncSession,
@@ -189,21 +263,23 @@ class UsagePolicy:
         limits = self._limits
         rate_since = now - RATE_WINDOW
         retry = int(RATE_WINDOW.total_seconds())
+        in_flight = self._in_flight(session)
+        mine = [a for a in in_flight if a.user_id == user_id]
 
         if await self._ledger.calls_since(session, since=rate_since, user_id=user_id,
-                                          exclude_evaluation=True) >= (
+                                          exclude_evaluation=True) + len(mine) >= (
             limits.per_user_calls_per_minute
         ):
             raise LimitExceeded("per_user_rate", retry_after_seconds=retry)
 
         if device_id is not None and await self._ledger.calls_since(
             session, since=rate_since, device_id=device_id, exclude_evaluation=True
-        ) >= limits.per_device_calls_per_minute:
+        ) + sum(1 for a in in_flight if a.device_id == device_id) >= limits.per_device_calls_per_minute:
             raise LimitExceeded("per_device_rate", retry_after_seconds=retry)
 
-        if await self._ledger.calls_since(session, since=rate_since, exclude_evaluation=True) >= (
-            limits.global_calls_per_minute
-        ):
+        if await self._ledger.calls_since(session, since=rate_since, exclude_evaluation=True) + len(
+            in_flight
+        ) >= limits.global_calls_per_minute:
             raise LimitExceeded("global_rate", retry_after_seconds=retry)
 
         if projected_cost > 0:
@@ -211,12 +287,14 @@ class UsagePolicy:
             retry_budget = int(BUDGET_WINDOW.total_seconds())
             user_spent = await self._ledger.cost_since(session, since=budget_since, user_id=user_id,
                                                        exclude_evaluation=True)
+            user_spent += sum(a.cost for a in mine)
             if user_spent + projected_cost > limits.per_user_daily_cost_limit:
                 raise LimitExceeded("per_user_budget", retry_after_seconds=retry_budget)
             global_spent = await self._ledger.cost_since(
                 session, since=budget_since,
                 exclude_evaluation=not limits.evaluation_counts_toward_global_budget,
             )
+            global_spent += sum(a.cost for a in in_flight)
             if global_spent + projected_cost > limits.global_daily_cost_limit:
                 raise LimitExceeded("global_budget", retry_after_seconds=retry_budget)
 

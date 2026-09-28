@@ -9,6 +9,10 @@ dependencies = [
     "pydantic>=2.6,<3.0",
     "pydantic-settings>=2.2",
     "sqlalchemy[asyncio]>=2.0.29",
+    # H-1: PostgreSQL is the pilot's runtime store (multi-writer, so one user's
+    # task never holds every other user's writes — PRD #32). SQLite stays for
+    # development and the suites' throwaway stores.
+    "asyncpg>=0.29",
     "aiosqlite>=0.20",
     "alembic>=1.13",
     "pyyaml>=6.0",

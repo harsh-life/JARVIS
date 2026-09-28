@@ -128,6 +128,9 @@ class SessionService:
             scope=None,
         )
         session.add(db_session)
+        # The session row first: the access token's foreign key points at it
+        # (enforced on PostgreSQL; the ORM has no relationship to order by).
+        await session.flush()
 
         raw = generate_token()
         now = utcnow()

@@ -132,9 +132,10 @@ set, including `08`'s suite on a real device and the BR-T2 re-runs — and only
 then Darwin (§7). Stage 5 adds no release-blocking suite and does not open the gate.
 
 **Real-data gate:** run on `8b15e39`, 2026-09-28. The decision is **CLOSED**
-(`docs/RELEASE_VALIDATION.md` §P). The blockers are: Android on hardware, #32
-(H-1), OD-MB-4, H-2, OD-JDG-5, and the real-integration smoke. Darwin does not
-start until the gate is OPEN.
+(`docs/RELEASE_VALIDATION.md` §P). The blockers are: Android on hardware,
+OD-MB-4, H-2, OD-JDG-5, and the real-integration smoke. #32 (H-1) is no longer
+one: the owner chose PostgreSQL, and #32 is met on it (`DECISION_REGISTER.md`
+§2I). The gate stays **CLOSED**. Darwin does not start until it is OPEN.
 
 ---
 

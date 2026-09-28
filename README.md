@@ -298,13 +298,16 @@ DSH-T1..T5 pass and are mutation-tested. What blocks real data:
 
 - The Android release-blocking set has not run on a phone. No device was
   available.
-- #32 fairness is measured and **not met** on the single-writer store: one
-  user's task refuses every other user's writes.
 - At-rest BR-T2 rows wait for owner decisions: memory 27–28 and push token 36.
 - A new authorized-path row: approved Judge guidance can carry one user's
   content to every user (row 38).
 - The real-integration smoke was not run: it needs an OIDC client, a stable
   hostname and a phone.
+
+#32 fairness is no longer on this list: since the H-1 owner decision
+(`docs/DECISION_REGISTER.md` §2I) the pilot's runtime store is PostgreSQL, a
+running task no longer holds the store against other users, and #32 is met on
+it. SQLite stays for development and does not meet #32.
 
 `docs/RELEASE_VALIDATION.md` §P has the exact blockers. Until they are cleared:
 **disposable or test data only.**

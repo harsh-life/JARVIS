@@ -66,4 +66,11 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     try:
         return AppConfig.model_validate(raw)
     except ValidationError as exc:
-        raise ConfigError(f"config file {resolved} failed validation:\n{exc}") from exc
+        # Field and reason only — never the rejected value: the value refused
+        # may be the very secret SECRET-004 keeps out of config, and this
+        # message is logged at startup. Not chained, for the same reason.
+        problems = "\n".join(
+            f"  {'.'.join(str(part) for part in error['loc']) or '(root)'}: {error['msg']}"
+            for error in exc.errors(include_url=False, include_input=False)
+        )
+        raise ConfigError(f"config file {resolved} failed validation:\n{problems}") from None

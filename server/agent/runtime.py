@@ -196,6 +196,16 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+async def _release_store(env: TaskEnvironment) -> None:
+    """H-1: end the store transaction before a long wait (a model call, a tool
+    run, a memory search), so no transaction or lock is held across it. Every
+    decision that wait depends on — the task row, the authorization, the
+    audit — is already written, and is now durable."""
+
+    if env.release_store is not None:
+        await env.release_store()
+
+
 def _merge_scope(*scopes: Any) -> dict[str, str] | None:
     merged: dict[str, str] = {}
     for scope in scopes:
@@ -329,6 +339,7 @@ class AgentRuntime:
                 if state.tripped is not None:
                     return await self._emergency_stop(env, state)
 
+                await _release_store(env)  # H-1: hydration searches the memory store
                 hydration = await env.hydrator.hydrate(
                     principal=principal, graph_id=graph_id, query=user_input
                 )
@@ -810,6 +821,7 @@ class AgentRuntime:
         await self._precheck(env, state, projected)
 
         state.model_calls += 1
+        await _release_store(env)
         try:
             result = await self._invoke_cancellable(state, provider, messages, remaining)
         except _Interrupted:
@@ -1250,6 +1262,7 @@ class AgentRuntime:
         await self._precheck(env, state, handle.projected_cost_per_call)
 
         state.tool_calls += 1
+        await _release_store(env)
         output = await self._run_cancellable(
             state, handle.tool_id, platform,
             ToolInvocation(
@@ -1508,6 +1521,7 @@ class AgentRuntime:
                 state.notes.append(_MEMORY_SKIPPED_NOTE)
                 return
             state.model_calls += 1
+            await _release_store(env)
             try:
                 result = await asyncio.wait_for(
                     provider.invoke(messages, timeout=spec.timeout_seconds), timeout=spec.timeout_seconds

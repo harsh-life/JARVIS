@@ -241,12 +241,11 @@ async def test_a_busy_store_is_a_clean_retryable_503_and_other_errors_stay_500(h
     assert "disk" not in other.text
 
 
-async def test_a_concurrent_submission_while_the_store_is_held_is_a_clean_503(h):
-    """SQLite is single-writer and a task's request holds the write lock until
-    it ends. A second request that needs to write waits the driver's busy
-    timeout (5 s) and then gets a clean, retryable 503 — with nothing of it
-    persisted — instead of a raw 500. The limitation itself is documented,
-    not redesigned (docs/RUNNING_RUNTIME.md)."""
+async def test_a_concurrent_submission_while_another_task_runs_is_served(h):
+    """H-1: a task's request no longer holds a store transaction across its
+    model call, so another user's submission is served while it runs — it
+    neither waits the task out nor is refused. (Before H-1 it waited SQLite's
+    5 s busy timeout and got `503 storage`.)"""
 
     alice, bob = await h.user("alice"), await h.user("bob")
     holding = asyncio.Event()
@@ -256,18 +255,19 @@ async def test_a_concurrent_submission_while_the_store_is_held_is_a_clean_503(h)
         await asyncio.sleep(6.5)
         return final("slow done")
 
-    h.model.push(slow)
+    h.model.push(slow, final("fast done"))
     first = asyncio.create_task(h.submit(alice, "one"))
     await holding.wait()
     started = time.monotonic()
     second = await h.submit(bob, "two")
 
-    assert second.status_code == 503, second.text
-    assert second.json()["error"]["details"] == {"dependency": "storage"}
-    assert time.monotonic() - started < 6.5  # it failed fast-ish, it did not wait the task out
+    assert second.status_code == 200 and second.json()["response"] == "fast done", second.text
+    assert time.monotonic() - started < 1.0
+    assert not first.done()
     assert (await first).status_code == 200
     rows = await h.rows(AgentTask)
-    assert [r.user_id for r in rows] == [alice.user_id]
+    assert sorted(str(r.user_id) for r in rows) == sorted([str(alice.user_id), str(bob.user_id)])
+    assert all(r.status == "completed" for r in rows)
     assert [s.principal.user_id for s in h.runtime.states.live()] == []
 
 
@@ -341,12 +341,14 @@ async def test_startup_runs_the_reconciliation(tmp_path):
             Port.calls += 1
             return [uuid.uuid4()]
 
-    storage = SQLAlchemyStorageBackend(f"sqlite+aiosqlite:///{tmp_path / 'r.db'}")
+    from tests.dbsupport import database_url_for
+
+    storage = SQLAlchemyStorageBackend(database_url_for(tmp_path / 'r.db'))
     await storage.init_models()
     for flag, expected in ((False, 0), (True, 1)):
         Port.calls = 0
         app = create_app(config=make_test_config(), storage=SQLAlchemyStorageBackend(
-            f"sqlite+aiosqlite:///{tmp_path / 'r.db'}"), agent_tasks=Port(), reconcile_tasks_on_startup=flag)
+            database_url_for(tmp_path / 'r.db')), agent_tasks=Port(), reconcile_tasks_on_startup=flag)
         async with app.router.lifespan_context(app):
             pass
         assert Port.calls == expected

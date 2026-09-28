@@ -191,6 +191,9 @@ class MemoryFacade:
             visibility=Visibility.PRIVATE, fact_type=verdict.fact_type, content=verdict.content,
             source_session_id=principal.session_id,
         )
+        # H-1: the authorization and its audit are durable before the memory
+        # provider's write, and no store transaction is held across it.
+        await session.commit()
         fact_id = await self._provider.add(fact)
         stored = await self._provider.get(fact_id)
         if stored is None:

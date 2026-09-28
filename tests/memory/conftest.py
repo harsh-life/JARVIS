@@ -78,9 +78,26 @@ _NET_EVENTS = {
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC
 
 
+def _configured_store_endpoint() -> set[tuple[str, int]]:
+    """The relational store's own address when the suite runs on PostgreSQL
+    (tests/dbsupport.py) — the deployment's configured database, which is not
+    memory or vault egress. Exactly that host and port; nothing else."""
+
+    from sqlalchemy.engine import make_url
+
+    from tests.dbsupport import admin_url
+
+    url = admin_url()
+    if url is None:
+        return set()
+    parsed = make_url(url)
+    return {(parsed.host or "localhost", parsed.port or 5432)}
+
+
 @dataclass
 class EgressRecorder:
     allowed_write_roots: list[Path] = field(default_factory=list)
+    allowed_connect: set[tuple[str, int]] = field(default_factory=_configured_store_endpoint)
     events: list[tuple[str, str]] = field(default_factory=list)
     writes_outside: list[str] = field(default_factory=list)
     active: bool = False
@@ -99,6 +116,9 @@ _HOOK_LOCK = threading.Lock()
 def _hook(event: str, args: tuple) -> None:
     recorder = _RECORDER
     if recorder is None or not recorder.active:
+        return
+    if event == "socket.connect" and len(args) >= 2 and isinstance(args[1], tuple) \
+            and tuple(args[1][:2]) in recorder.allowed_connect:
         return
     if event in _NET_EVENTS:
         recorder.events.append((event, repr(args)[:160]))

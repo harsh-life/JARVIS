@@ -73,7 +73,10 @@ def upgrade() -> None:
     sa.Column('utterance', sa.String(), nullable=False),
     sa.Column('timestamp', sa.DateTime(timezone=True), nullable=False),
     sa.Column('is_authorization_signal', sa.Boolean(), nullable=False),
-    sa.CheckConstraint('is_authorization_signal = 0', name='ck_speaker_contexts_never_auth_signal'),
+    # H-1: `NOT col` holds on SQLite and PostgreSQL alike; the original
+    # `col = 0` has no PostgreSQL operator, so this migration could not run there.
+    # Same meaning, so an already-migrated SQLite store is unaffected.
+    sa.CheckConstraint('NOT is_authorization_signal', name='ck_speaker_contexts_never_auth_signal'),
     sa.PrimaryKeyConstraint('speaker_context_id')
     )
     op.create_table('users',

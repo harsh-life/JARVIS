@@ -12,7 +12,22 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
+from tests.dbsupport import created_keys, drop_created_databases
+
 if os.environ.get("JARVIS_TEST_SIMULATE_NO_LANDLOCK") == "1":
     from server.execution import confinement
 
     confinement.landlock_abi = lambda: 0  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
+def _drop_test_databases():
+    """With `HYPERMIND_TEST_DATABASE_URL` set, drop the databases this test
+    created. Root autouse fixtures are set up first and torn down last, so every
+    storage backend the test opened has been disposed by then."""
+
+    before = created_keys()
+    yield
+    drop_created_databases(keep=before)

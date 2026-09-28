@@ -82,9 +82,12 @@ jobs:
         # Its own step so the real-data gate's evidence is legible in the checks
         # list. With HYPERMIND_REQUIRE_MEMORY_STACK=1 a missing store or model is
         # a failure, never a skip: MEM-T1 cannot pass by not running.
+        # The PRD #32 acceptance is deselected here, by name, because it is a
+        # property of the PostgreSQL runtime store (H-1) and refuses to run on
+        # SQLite; the `postgres` job below runs it.
         env:
           HYPERMIND_REQUIRE_MEMORY_STACK: "1"
-        run: python -m pytest tests/memory -q
+        run: python -m pytest tests/memory -q --ignore=tests/memory/test_prd32_service_measurement.py
 
       - name: Migrations round-trip
         # 15 §3 / STORE-004: migrations must be reproducible, and `downgrade
@@ -112,6 +115,88 @@ jobs:
         env:
           HYPERMIND_REQUIRE_MEMORY_STACK: "1"
         run: python -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py tests/integration/test_br_t2_memory_rows.py tests/integration/test_br_t2_android_rows.py -q -s
+
+  postgres:
+    # H-1 (docs/DECISION_REGISTER.md): the pilot's runtime store is PostgreSQL.
+    # Every suite runs again on a real PostgreSQL server, the migrations
+    # round-trip on it, and the PRD #32 ~10-user fairness acceptance runs here.
+    # The server is a throwaway service container with trust authentication
+    # on the job's private network, so there is still no credential anywhere:
+    # not in this file, not in a secret, not in a fixture.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hypermind_ci
+          POSTGRES_DB: hypermind_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U hypermind_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      # The suites create (and drop) one database per test on this server
+      # (tests/dbsupport.py). Unreachable, they fail — they never fall back to
+      # SQLite once this is set.
+      HYPERMIND_TEST_DATABASE_URL: postgresql+asyncpg://hypermind_ci@127.0.0.1:5432/hypermind_ci
+      HYPERMIND_REQUIRE_MEMORY_STACK: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev,memory]"
+
+      - name: Cache the embedding model
+        uses: actions/cache@v4
+        with:
+          path: data/models
+          key: embedder-bge-small-en-v1.5-fastembed-0.8.1
+
+      - name: Provision the embedding model (15 §3 step 5)
+        run: python -m server.memory provision --config config.example.yaml
+
+      - name: PostgreSQL is reachable (a failure, never a skip)
+        run: |
+          python - <<'EOF'
+          import asyncio, os, asyncpg
+          from sqlalchemy.engine import make_url
+          url = make_url(os.environ["HYPERMIND_TEST_DATABASE_URL"]).set(drivername="postgresql")
+          async def main():
+              conn = await asyncpg.connect(url.render_as_string(hide_password=False))
+              print(await conn.fetchval("SELECT version()"))
+              await conn.close()
+          asyncio.run(main())
+          EOF
+
+      - name: Migrations round-trip on PostgreSQL
+        # 15 §3 / STORE-004 on the pilot's store: up, all the way down, up
+        # again, and no drift between the models and the migrated schema.
+        env:
+          HYPERMIND_DATABASE_URL: postgresql+asyncpg://hypermind_ci@127.0.0.1:5432/hypermind_ci
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+          alembic check
+
+      - name: Tests on PostgreSQL
+        run: python -m pytest tests/ -q --ignore=tests/memory
+
+      - name: Memory release-blocking suite on PostgreSQL
+        run: python -m pytest tests/memory -q --ignore=tests/memory/test_prd32_service_measurement.py
+
+      - name: "PRD #32 ~10-user fairness acceptance (H-1)"
+        # Its own step, with the measured S1/S2 tables in the log. It refuses
+        # to run on any store but PostgreSQL.
+        run: python -m pytest tests/memory/test_prd32_service_measurement.py -q -s
 
   android:
     # docs/23 §8: Kotlin lint and unit tests from the first commit. Like the job

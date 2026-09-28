@@ -38,7 +38,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
 from sqlalchemy import func, select
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.agent import AgentRuntime
@@ -62,6 +62,7 @@ from server.security.audit import AuditLogger
 from server.security.events import AuditAction
 from server.security.usage import UsageLedger
 from server.storage import StorageBackend
+from server.storage.errors import is_transient_store_error
 from server.storage.models import ImprovementCandidateRow, SecretReference, TaskEvaluation, UsageEvent
 from shared.schemas.enums import AuditActor, AuditResult, SecretClass, UsageKind, Visibility
 from shared.schemas.evaluation import (
@@ -149,8 +150,8 @@ class StorageEvaluationSink:
                     await write(session)
                     await session.commit()
                 return
-            except OperationalError as exc:
-                if "locked" not in str(exc).lower() or asyncio.get_running_loop().time() >= deadline:
+            except DBAPIError as exc:
+                if not is_transient_store_error(exc) or asyncio.get_running_loop().time() >= deadline:
                     raise
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 1.0)
