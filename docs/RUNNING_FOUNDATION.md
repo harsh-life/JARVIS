@@ -50,6 +50,41 @@ startup with a clear message rather than a partial/degraded start.
 
 ## 4. Initialize the database (15 §3 step 5)
 
+Two stores are supported, and the URL's driver picks one. Anything else — or
+a URL with a password in it — fails at startup (and at `alembic`) with a
+message naming the problem, never echoing the value.
+
+**PostgreSQL — the pilot's runtime store (H-1).** PostgreSQL 13 or later. Put
+the URL, **without a password**, in `config.yaml` (or `HYPERMIND_DATABASE_URL`
+for migrations):
+
+```yaml
+database_url: "postgresql+asyncpg://jarvis_app@db.example.internal:5432/jarvis"
+```
+
+The password is supplied out of band, the libpq way, in the server's (and
+`alembic`'s) environment: `PGPASSWORD`, or a `~/.pgpass` line
+`db.example.internal:5432:jarvis:jarvis_app:<password>` in a file with mode
+`0600`. It never goes in `config.yaml`, the repository, a log or the console
+(SECRET-004). For a database that is not on localhost, add `?ssl=require` to
+the URL. Create the role and database once, as the database owner:
+
+```sql
+CREATE ROLE jarvis_app LOGIN;          -- then set its password out of band
+CREATE DATABASE jarvis OWNER jarvis_app;
+```
+
+then:
+
+```bash
+export HYPERMIND_DATABASE_URL="postgresql+asyncpg://jarvis_app@db.example.internal:5432/jarvis"
+alembic upgrade head
+```
+
+**SQLite — development and tests.** One writer at a time, so it does not meet
+PRD #32 (fairness under ~10-device load); fine for a single developer and for
+the test suites.
+
 ```bash
 export HYPERMIND_DATABASE_URL="sqlite+aiosqlite:///./data/hypermind.db"
 mkdir -p data
@@ -57,7 +92,23 @@ alembic upgrade head
 ```
 
 (If you don't set `HYPERMIND_DATABASE_URL`, migrations fall back to reading
-`database_url` from `config.yaml` via `server/config`.)
+`database_url` from `config.yaml` via `server/config`.) Every migration
+downgrades as well as upgrades, on both stores:
+`alembic upgrade head && alembic downgrade base && alembic upgrade head && alembic check`.
+
+Startup fails closed. The server (`server.composition.main`) touches the store
+before serving — it closes tasks a previous run left unfinished — so an
+unreachable server, a missing database or a refused login stops it with
+"Application startup failed" and the driver's error in the log (measured:
+connection refused and `database "…" does not exist` both exit with status 3).
+A URL carrying a password never gets that far: config loading refuses it
+(and `alembic` refuses it in `HYPERMIND_DATABASE_URL`), naming the rule and
+not the value. Once running, a transient conflict the store reports (a
+deadlock, a serialization failure, a lock timeout, too many connections, or
+SQLite's busy lock) fails the affected request `503 dependency_unavailable`
+(`details.dependency = "storage"`), retryable. A database server that goes
+away mid-run is **not** mapped yet: those requests fail `500 internal_error`
+(logged) until it is back — a known limitation (`docs/RELEASE_VALIDATION.md` §N).
 
 This creates every table in `01_DATA_MODEL_SCHEMA.md`'s relational-store
 catalog (users, devices, sessions, graphs, graph_memberships,
@@ -108,6 +159,19 @@ python3 -m pytest tests/ -q
 
 Each test gets its own throwaway SQLite file (see `tests/foundation/conftest.py`)
 — nothing here touches `config.yaml` or `data/hypermind.db`.
+
+To run the same suites on PostgreSQL (as CI's `postgres` job does), point them
+at a server the tests may create and drop databases on — a throwaway one,
+never a deployment's:
+
+```bash
+export HYPERMIND_TEST_DATABASE_URL="postgresql+asyncpg://<user>@127.0.0.1:5432/postgres"
+python -m pytest tests/ -q --ignore=tests/memory
+```
+
+Each test then gets a fresh database (`tests/dbsupport.py`); an unreachable
+server is a test failure, not a skip. The PRD #32 acceptance
+(`tests/memory/test_prd32_service_measurement.py`) runs only on PostgreSQL.
 
 ## Checking module boundaries
 

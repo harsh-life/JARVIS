@@ -112,23 +112,35 @@ integration-hardening pass through U6, not bugs to work around:
   breaker, the in-memory side of the global latch, and break-glass records all
   live in the process. Run one uvicorn worker. (The persisted latch still fails
   closed across processes; nothing else is shared.)
-- **SQLite is single-writer, and a task holds the write lock for its whole
-  request.** A request that needs to write while another task's request is
-  running (a model call, a tool run) waits the driver's busy timeout (5 s) and
-  then fails with a clean, retryable `503 dependency_unavailable`
-  (`details.dependency = "storage"`); its transaction is rolled back, so
-  nothing it did persisted, and an approval that hit this is kept pending for a
-  retry. Operator stop and global stop are unaffected: they act in memory
-  first and write only after the stopped task has released the lock. Serving
-  concurrent users smoothly needs a multi-writer store (`database_url` is a
-  config change; see `server/storage`), which is out of scope for this build.
-  *Phase H measured this at pilot size (ten users, one shared graph —
-  `tests/memory/test_pilot_concurrency.py`): isolation and the per-principal
-  caps hold under concurrency, but while one user's task runs another user's
-  write is refused `503 storage`, so PRD #32 (fairness under ~10-device load)
-  is **not met** on SQLite. No PostgreSQL (or other multi-writer) driver is
-  declared or tested, so "a config change" is unvalidated. The decision is
-  `docs/DECISION_REGISTER.md` §2F H-1.*
+- **The pilot's runtime store is PostgreSQL (H-1).** SQLite stays supported
+  for development and tests, but it has one writer, and PRD #32 (fairness
+  under ~10-device load) is measured and met only on PostgreSQL
+  (`docs/RELEASE_VALIDATION.md` §I, `docs/DECISION_REGISTER.md` §2I H-1).
+  Setup: `docs/RUNNING_FOUNDATION.md` §4.
+- **No store transaction is held across a long wait.** A request still has
+  one session (02 §1.2: a refusal commits its audit and nothing else), but the
+  runtime commits what a task has written so far — its row, its
+  authorization decisions, its audit, its metered usage — before each model
+  call, tool run and memory search, and the memory write path commits before
+  the provider's write (`TaskEnvironment.release_store`). So one user's
+  running task holds no lock and no pooled connection while it waits, and
+  another user's request is served at once. Consequences, deliberately:
+  what a task did before an unexpected failure stays recorded (its row,
+  audit and spend) instead of being rolled back, and the restart
+  reconciliation below closes a row left `running`; a confirmation token
+  spent on an approved action is spent durably before the action runs, so a
+  retry can never run it twice.
+- **In-process guards cover what concurrency now exposes.** A retry with the
+  same `Idempotency-Key` that arrives while the original still runs is
+  refused `409 conflict` (`details.idempotency = "in_progress"`) and replays
+  the stored result once the original has answered. Usage admission counts the
+  calls already admitted but not yet committed to the ledger, so two users
+  cannot both pass a budget or rate limit with room for one. Both guards live
+  in the one server process, which is another reason to run exactly one.
+- **A transient store conflict is a retryable `503`.** SQLite's busy lock, a
+  PostgreSQL deadlock, serialization failure, lock timeout or connection
+  pressure → `503 dependency_unavailable` (`details.dependency = "storage"`),
+  with that request's transaction rolled back — never a `500`.
 - **A restart fails what it interrupted, closed.** The transcript and any
   paused action are volatile (MEM-001). At startup, before the first request,
   every task left non-terminal is closed — `confirmation_state_lost` if it was
