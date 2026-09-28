@@ -13,6 +13,10 @@ carried forward and re-measured where this run could. Anything not re-measured i
 > **Gate decision: CLOSED** (§P). No real, non-disposable user data until every blocker in §P is cleared.
 > Disposable or test data only.
 
+> **H-1 remediation (2026-09-28, same branch, §Q).** The owner decided H-1: the runtime store moves to
+> PostgreSQL. It was implemented, and PRD #32 was re-measured: **MET on PostgreSQL** (§I). This clears
+> blocker 2 of §P and nothing else. **The gate stays CLOSED.**
+
 ---
 
 ## A. Environment
@@ -22,7 +26,7 @@ carried forward and re-measured where this run could. Anything not re-measured i
 | Host | Linux 6.18 (x86-64), 4 vCPU, 15 GiB RAM, cloud container. No USB bus, no `/dev/kvm` |
 | Python | 3.11.15, fresh venv, `pip install -e ".[dev,memory]"` (mem0ai 2.2.1, chromadb 1.5.9, fastembed 0.8.1, dulwich 1.2.15, SQLAlchemy 2.1.1, FastAPI 0.141.1, pytest 9.1.1, import-linter 2.15) |
 | Embedder | `python -m server.memory provision --config config.example.yaml`, downloaded fresh (the one sanctioned download) |
-| Relational store | SQLite via aiosqlite, file-backed per test (the pilot store) |
+| Relational store | Gate run: SQLite via aiosqlite, file-backed per test (then the pilot store). **H-1 run (§Q):** PostgreSQL 16.13, local cluster, one fresh database per test (`HYPERMIND_TEST_DATABASE_URL`); asyncpg 0.31. Every suite also re-run on SQLite |
 | Kernel confinement | Landlock available: BR-T2 rows 15–16 **measured**, not skipped |
 | Java / Android | OpenJDK 21. Android SDK installed fresh for this run: platform 35, build-tools 35.0.0, platform-tools r37.0.1. Gradle 8.14.3 wrapper, cold cache |
 | Android hardware | **None.** `adb devices -l` lists no device. No USB bus, no KVM, so no emulator either |
@@ -55,6 +59,9 @@ carried forward and re-measured where this run could. Anything not re-measured i
 | APK secret scan (ANDC-T11) | `app-debug.apk` (58 MB, built this run): **no server secret found** |
 | **Final tree (this branch's head)** | re-run after every change: contracts 24 kept; server **1768 passed, 7 skipped, 0 failed**. The +34 are 28 meta checks for the 14 new mutants, 4 grant-scope cases, 1 control-object test and 1 Judge BR-T2 module. Memory **198 passed**; BR-T2 **45 rows** (41 + 4) |
 | Repository secret scan | tracked files: 0 findings (CI test). Git history: 1,178 blobs; 15 unmarked hits, all in superseded versions of test files, all synthetic (§J) |
+| **H-1 run, PostgreSQL** (§Q) | server **1781 passed, 7 skipped, 0 failed**; memory **198 passed** (incl. PRD #32 S1/S2 and the pilot-concurrency suite); BR-T2 **45 rows, 15 REACHABLE**, row-for-row identical to SQLite; migrations round-trip clean, `alembic check` no drift |
+| **H-1 run, SQLite** (§Q) | server **1787 passed, 7 skipped, 0 failed** (1786 + the probe fixed in `675daae`); memory **196 passed** (PRD #32 excluded: it refuses SQLite); migrations round-trip clean |
+| **H-1 run, contracts / mutations** | `lint-imports` **24 kept, 0 broken**; guard mutations: see §Q.6 |
 
 Test categories, kept separate (17 §1):
 
@@ -106,7 +113,7 @@ All of these ran green in this run's server or memory suite.
 | **29** | dashboard shows usage/health/audit, no secret or unredacted PII by default | **green: new evidence.** DSH-T1..T5 (`tests/dashboard/`). Mutations M28–M31 killed. JSON API only; no browser UI (OD-DASH-2) |
 | 30 | reminder needs a user-given reason | green (`tests/scheduler/`) |
 | **31** | SEC-A..V pass; BR-T2 run and reviewed | behavioural suite green (§D.2). BR-T2 re-run (§H). Its reachable rows outside OD-A1 wait on the owner |
-| **32** | ~10-device load with per-principal fairness | **NOT MET**: measured (§I) |
+| **32** | ~10-device load with per-principal fairness | Gate run: **NOT MET** on SQLite. **H-1 run: MET on PostgreSQL** (§I, §Q) |
 
 ### D.2 Adversarial suite (SEC-A..V → tests)
 
@@ -268,25 +275,57 @@ isolation under application RCE (INV-20).
 
 ## I. PRD #32 service / load result
 
-Measured by `tests/memory/test_prd32_service_measurement.py`. It uses the production composition root, the real
-Mem0 store, the pilot's file-backed SQLite store and ten users in one shared graph. Model latency is a sleep.
+Measured by `tests/memory/test_prd32_service_measurement.py`: the production composition root, the real Mem0
+store, ten users in one shared graph, model latency a sleep. Since the H-1 run it is an **acceptance test**:
+it asserts the criterion and refuses to run on any store but PostgreSQL (`HYPERMIND_PRD32_BASELINE=sqlite`
+reproduces the baseline). Pass conditions, fixed before the fix was written (Slice A, `3dd0ab6`): S1 all 20
+requests served, no cross-user leak, **zero** `503 storage`, every user's worst wait ≤ 3.0 s (6 × the model
+call); S2 all reads served, **every** write served (`201`) while the long task is still running, zero `503`,
+median write latency ≤ 1.0 s. Retryable `429`s from the configured concurrency caps are retried, as a client
+does.
+
+**Before — gate run, SQLite, one transaction per request (`8b15e39`):**
 
 | Scenario | Result |
 |---|---|
-| S1: 10 users at once, one task (0.5 s model call) + one memory write each | all 20 served, 0 lost, 0 leaked. Wall clock **11.6 s** (one task alone: 0.5 s). Task time-to-served p50 **8.7 s**, max 11.6 s. Memory write p50 7.3 s. **15 retryable `503 storage`** across **9/10 users**; 6 `429` from the per-principal caps |
+| S1: 10 users at once, one task (0.5 s model call) + one memory write each | all 20 served, 0 lost, 0 leaked. Wall clock **11.6 s** (one task alone: 0.5 s). Task time-to-served p50 **8.7 s**, max 11.6 s. Memory write p50 7.3 s. **15 retryable `503 storage`** across **9/10 users**; 6 `429` from the concurrency caps |
 | S2: one user's task makes a 6 s model call; 9 other users each try once | memory reads 0/9 refused. Memory writes **9/9 refused `503 storage`** after a median 5.2 s wait. After the task, 9/9 served |
-| Isolation under the same load (`test_pilot_concurrency.py`) | holds; per-principal caps refuse a flooder's excess (`429`) |
 
-**Failing acceptance condition:** "no user's usage starves another's". One user's task holds SQLite's single
-write lock for its whole request (02 §1.2's one-transaction audit guarantee). Any other user's write-bearing
-request therefore waits the 5 s busy timeout and is refused while that task runs. Real model calls commonly
-exceed 5 s, and `wall_clock_timeout_seconds` allows 120 s.
+Cause: one user's task held SQLite's single write lock for its whole request, so every other user's write
+waited the 5 s busy timeout and was refused while it ran.
 
-**Remedy status:** not chosen, because no canonical text selects one. STORE-004 leaves the DB choice `[IMPL]`,
-but the two candidate remedies each change something other documents rely on. A multi-writer store has no
-driver declared or tested. Shorter runtime transactions change 02 §1.2 / FAIL-001 semantics. Implementing either
-here would select a database architecture or transaction model to make a test pass, which this stage must not
-do. **H-1 stays OPEN (owner/engineering)**; `DECISION_REGISTER.md` §2F/§2H.
+**After — H-1 run, PostgreSQL 16, short task transactions (`675daae`), three consecutive runs:**
+
+| Scenario | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| S1 wall clock (one task alone: 0.5 s) | **1.80 s** | 1.75 s | 1.80 s |
+| S1 task time-to-served p50 / max | **1.16 s / 1.80 s** | 1.18 / 1.75 s | 1.14 / 1.80 s |
+| S1 memory write time-to-served p50 / max | **0.75 s / 0.83 s** | 0.80 / 0.88 s | 0.72 / 0.82 s |
+| S1 worst per-user wait (limit 3.0 s) | **1.80 s** | 1.75 s | 1.80 s |
+| S1 `503 storage` | **0** (0/10 users) | 0 | 0 |
+| S1 `429` (all `global_concurrency`: 10 users, 8 configured slots) | 10 | 10 | 9 |
+| S1 served | **20/20** | 20/20 | 20/20 |
+| S2 long task end to end (6.0 s model call, never cut short) | 6.13 s | 6.13 s | 6.13 s |
+| S2 other users' reads served | **9/9** (median 0.21 s) | 9/9 (0.18 s) | 9/9 (0.19 s) |
+| S2 other users' writes served, while the long task ran | **9/9, 0 × `503`** | 9/9, 0 | 9/9, 0 |
+| S2 write latency p50 / max | **0.51 s / 0.51 s** | 0.51 / 0.51 s | 0.56 / 0.57 s |
+
+Isolation under the same load (`test_pilot_concurrency.py`) holds on PostgreSQL. Its flood test now also
+asserts the half that used to fail: while a flooder's admitted tasks are running, another user's task is served
+at once.
+
+**Status: PRD #32 MET on PostgreSQL.** Every S1/S2 condition holds, in every run, with no weakening of the
+scenario. Ten users, the 0.5 s and 6 s model calls and the memory writes are unchanged. A single `503` fails
+either scenario. The S2 long call is now *longer* than in the baseline test: it always runs its full 6 s instead of
+being released once the others were served. The `429`s are the configured global cap of 8 concurrent tasks,
+applied equally to every principal, and are explicit and retryable.
+
+**What fixed it, and a nuance to keep.** The engine alone was not the fix. A PostgreSQL store still held one
+transaction, and one pooled connection, per task across every model call. The change that removes the
+starvation is the transaction scope (§Q.3). With it in place, the same synthetic acceptance also passes on SQLite
+(informational run: S1 1.96 s wall clock, 0 × `503`; S2 9/9 writes served during the task). SQLite is still one
+writer at a time: every commit serializes. PostgreSQL is the store the owner chose, and the one validated in CI.
+It is the supported pilot store. SQLite stays for development.
 
 ## J. Secret audit
 
@@ -342,7 +381,7 @@ is decided.
 | OD-A1 | A | decided: (a) for the in-process class | nothing. Rows outside the class are listed below |
 | **OD-MB-4** | C | **yes**, if `memory.enabled: true` | accept plaintext live facts and retained deleted vectors for the pilot, or require encryption and/or an index rebuild first |
 | **H-2** | C | **yes**, if `android.push.provider: fcm` | accept the plaintext push token, or encrypt the column. With `none` the server stores no token |
-| **H-1** | C (owner/engineering) | **yes** (RB #32) | a multi-writer store, a runtime transaction redesign, or an explicit release treatment of #32 |
+| H-1 | **A — decided (H-1 run)**: OWNER DECISION PostgreSQL, `DECISION_REGISTER.md` §2I | no longer: #32 is met on PostgreSQL (§I) | nothing. Deploy on PostgreSQL (§Q) |
 | **OD-JDG-5** (new) | C | **yes**, if `evaluation.enabled: true` | how approved guidance may carry user content (§K) |
 | matrix §5.1 sensitive-app lists | C | not for safety: the lists ship empty, so no app is UI-controllable. Yes for Android UI control | which apps are sensitive, and their tiers |
 | OD-JDG-3 | C | yes, if the Judge is enabled with a cloud provider (traces leave the host) | pilot Judge provider |
@@ -361,7 +400,24 @@ No decision was closed in this run. Implemented recommendations are not ratifica
 
 - One server process, one uvicorn worker. The task registry, breaker and break-glass records are in-process
   (RUNNING_RUNTIME §4a).
-- SQLite single writer (§I). SQLite foreign keys are off by design (audit rows reference probe ids).
+- SQLite single writer (§I): SQLite is for development. The pilot store is PostgreSQL (H-1, §Q).
+- H-1 run: the idempotency in-flight guard and the usage-admission reservations are **in-process**. This is
+  correct only with one server process, which is already required (above). With several processes, a same-key
+  retry that reaches a *different* process while the original runs would run the task a second time. The table's
+  primary key then refuses its stored result, and it answers `500`. Admissions would not see other processes'
+  calls in flight either. **Run one process.**
+- H-1 run: a PostgreSQL server that goes away mid-run surfaces as `500 internal_error`: a refused connection
+  is not a DBAPI error and is not mapped. Transient conflicts the server *reports* are mapped to a retryable
+  `503`. At startup an unreachable or misconfigured database stops the server (exit 3), which fails closed.
+- H-1 run: a task's committed prefix (its row, authorization decisions, audit and metered spend) survives an
+  unexpected mid-task failure instead of being rolled back. The restart reconciliation closes a row left
+  `running`. Within the same process, such a row stays `running` until the next restart.
+- H-1 run: the memory API's read paths (list, search, recall) and voice's server-side STT/TTS (off by default,
+  OD-VOI-1) still hold their request's transaction across the provider call. It is read-only apart from the
+  caller's own session row. On PostgreSQL that takes one pooled connection for the call and no lock another user
+  needs. The task path, the memory write path and the Judge hold none.
+- H-1 run: PostgreSQL enforces foreign keys, except on `audit_events`' id columns, which are plain identifiers
+  by design (migration `a2d6e8f4c0b9`). SQLite foreign keys stay off.
 - `mediated` fs and `mediated_proxy` egress bind this codebase's adapters, not the process (BR-T2 13–14).
 - A restart fails interrupted tasks closed. Paused actions and transcripts are volatile.
 - FilesystemSandbox does synchronous I/O on the event loop, bounded by quotas.
@@ -381,7 +437,7 @@ does **not** cover:
 - unmeasured surfaces (rows 30–32 on hardware).
 
 Those go to the owner (§M). OD-A1 being decided does **not** open the gate. 17 §5 also requires every RB test
-green, and #32 is not met.
+green. #32 is now met on PostgreSQL (H-1, §I), but the other blockers in §P stand.
 
 ## P. Gate decision
 
@@ -390,14 +446,111 @@ green, and #32 is not met.
 | # | Blocker | Evidence | Impact | Required action | Type | Prevents real data |
 |---|---|---|---|---|---|---|
 | 1 | Android release-blocking set not run on a physical device (docs/23 §9 `[LOCKED]`); BR-T2 30–32 not on hardware | §G: `adb devices` empty, no USB or KVM | device control, perception and step-up unvalidated on real hardware | run AND-T1..T8 plus instrumentation on a budget-class phone; re-run BR-T2 30–32 | **hardware** | **yes** |
-| 2 | PRD #32 per-principal fairness not met | §I: 9/9 other users' writes refused during one 6 s task | one user's task starves every other user's writes | choose a multi-writer store or a transaction redesign, then re-measure §I | **owner decision + engineering** | **yes** |
+| ~~2~~ | ~~PRD #32 per-principal fairness not met~~ **Cleared by the H-1 run**: owner decision PostgreSQL, implemented, #32 **MET** on PostgreSQL | §I (after), §Q | — | deploy on PostgreSQL, one server process | — | **no longer** (for a PostgreSQL deployment) |
 | 3 | Memory at rest: plaintext facts, retained deleted vectors | BR-T2 27–28 | a stolen disk or backup reveals memory | OD-MB-4 | **owner decision** | **yes**, if memory is enabled |
 | 4 | Push token at rest | BR-T2 36 | token readable from a stolen DB (usable only with the FCM credential, for a content-free wake) | H-2 | **owner decision** | **yes**, if push is enabled |
 | 5 | Judge guidance carries one user's content to all users | BR-T2 38 | cross-user disclosure through an operator approval | OD-JDG-5 | **owner decision** | **yes**, if the Judge is enabled |
 | 6 | Real-integration smoke not performed end to end. Only a live server, Mem0 and console run was done (§J) | no OIDC client, stable hostname, FCM credential or phone | the integrated path under real auth has never run end to end | provide the infrastructure; run the smoke with disposable pilot accounts | **infrastructure / hardware** | **yes** |
 | 7 | PRD #28 end-to-end self-host not exercised | test/build path green only | first real self-host is unproven | same as 6 | **infrastructure** | **yes** |
 
-Items 3–5 are conditional on a feature that is off by default. Items 1, 2, 6 and 7 are not. The gate therefore
-stays closed even for a deployment with memory, push and the Judge all turned off.
+Items 3–5 are conditional on a feature that is off by default. Items 1, 6 and 7 are not (item 2 is cleared by
+the H-1 run). The gate therefore stays closed even for a deployment with memory, push and the Judge all turned
+off.
 
-**Disposable or test data only.**
+**REAL-DATA GATE: CLOSED. Disposable or test data only.**
+
+---
+
+## Q. H-1 remediation — the runtime store moves to PostgreSQL (2026-09-28)
+
+### Q.1 Owner decision
+
+*"Move the runtime relational store to PostgreSQL to remove the SQLite single-writer bottleneck, then re-run the
+PRD #32 ~10-device fairness acceptance test."* It is recorded as **OWNER DECISION — PostgreSQL** in
+`DECISION_REGISTER.md` §2I, with rationale, consequences, validation method and status. No other decision was
+closed.
+
+### Q.2 Implementation (existing SQLAlchemy/Alembic path; no second schema)
+
+| Change | Where | Commit |
+|---|---|---|
+| PRD #32 as an acceptance test, failing on SQLite for the intended reason | `tests/memory/test_prd32_service_measurement.py` | `3dd0ab6` |
+| `database_url`: `postgresql+asyncpg` or `sqlite+aiosqlite` only; a URL with a password is refused (SECRET-004: `PGPASSWORD` / `~/.pgpass`); the refusal names the field and rule, never the value, and is not chained | `server/config/schema.py`, `server/config/loader.py` | `cec7218` |
+| A boolean check constraint PostgreSQL can evaluate (`NOT is_authorization_signal`) | model + initial migration | `cec7218` |
+| Explicit `flush()` where a child row's foreign key needs its parent first (PostgreSQL enforces FKs) | `server/secrets/store.py`, `server/auth/sessions.py` | `cec7218` |
+| Migration `a2d6e8f4c0b9`: `audit_events` user/device/session/graph become plain identifiers (audit rows deliberately name ids that do not, or no longer, exist) | `server/storage/migrations/versions/` | `cec7218` |
+| Transient store conflicts → retryable `503 dependency_unavailable` (`storage`) | `server/storage/errors.py`, `server/gateway/errors.py` | `cec7218` |
+| Short task transactions + concurrency guards (§Q.3) | runtime, composition, usage, idempotency | `eef7a85` |
+| Migration-time `HYPERMIND_DATABASE_URL` gets the same driver / no-password check | `server/storage/migrations/env.py` | `eef7a85` |
+| CI `postgres` job | `.github/workflows/ci.yml` | `69d0761` |
+
+The connection string was not simply swapped: on PostgreSQL alone, before §Q.3, the S2 condition held only
+because PostgreSQL does not serialize writers. A task still held a transaction and a pooled connection across
+every model call, and three concurrency defects surfaced (§Q.4).
+
+### Q.3 Transaction-scope change
+
+Audit of every long wait a request can reach, and its state after this run:
+
+| Wait | Before | After |
+|---|---|---|
+| Model call (worker step) | inside the request's transaction | committed before (`TaskEnvironment.release_store`) |
+| Tool run (incl. Android dispatch) | inside | committed before |
+| Memory hydration search | inside | committed before; the membership read uses its own short session |
+| Memory formation (extraction call, provider write) | inside | committed before the call and before each `provider.add` |
+| Memory API write (`POST /memory`) | inside | committed before `provider.add` |
+| Android / confirmation waits | the request ends (task pauses) | unchanged: no transaction |
+| Judge | background, short sessions of its own | unchanged: its persist retry sleeps outside any session |
+| Scheduler firing, device channel | commit per step already | unchanged |
+| Memory API reads; voice server STT/TTS | inside (read-only) | **unchanged** (§N) |
+
+02 §1.2 still holds. Every request-level refusal (token, device, session, membership, capability) happens
+before the first commit point, and still commits its audit and nothing else. A task's later decisions are
+committed at each point together with their audit. They are never split from it.
+
+### Q.4 Concurrency correctness on real PostgreSQL
+
+`tests/runtime/test_concurrent_store.py`, written first. On the Slice B commit (PostgreSQL, before §Q.3) three
+of its tests failed for exactly the intended reasons, and all pass after:
+
+| Test | Before §Q.3 (PostgreSQL) | After |
+|---|---|---|
+| no transaction open (`pg_stat_activity` "idle in transaction" = 0) during a model call, a second model call and a tool run | **failed**: open at all three | pass |
+| a same-key retry from the user's other device while the original runs | **failed**: the task ran twice; the second insert hit the key's primary key → `500` | pass: `409 {"idempotency":"in_progress"}`, then replay of the one result; 1 task row, 1 model call |
+| two users' paid calls against a global budget with room for one | **failed**: 2 paid calls | pass: 1 call, spend ≤ limit, the other `429 budget_exceeded` |
+| ten users' tasks at once: rows consistent (status, counters, response, owner, one usage row each) | pass | pass |
+| a real PostgreSQL deadlock (40P01) → retryable `503`, store not named | pass | pass |
+
+Also on PostgreSQL: the pilot-concurrency suite (10 users; private facts, hydration, flood), MEM-T1, the
+lifecycle and rollback tests of the runtime suite, and the whole server suite. No lost update, duplicate,
+deadlock or lock timeout appeared in any run. The ten-user row check and the deadlock probe look for exactly
+those.
+
+### Q.5 Migrations and CI
+
+- PostgreSQL 16 and SQLite: `alembic upgrade head → downgrade base → upgrade head → check`: clean, head
+  `a2d6e8f4c0b9`, no drift. Migration history was not rewritten: one additive revision, plus the initial
+  migration's check constraint expressed as `NOT is_authorization_signal` (same meaning on SQLite).
+- CI job `postgres` (`.github/workflows/ci.yml`): a `postgres:16` service container with trust authentication
+  on the job network, so there is no credential anywhere. A reachability step fails, never skips. Then the
+  migration round-trip on PostgreSQL, the server suite, the memory suite and PRD #32 as its own step. The SQLite
+  job deselects PRD #32 by name.
+
+### Q.6 Regression, security and secret audit
+
+- Suites on both stores, contracts and BR-T2: §C.
+- Guard mutations: 44 mutants: the 41 of §E plus **M42** (idempotency in-flight guard removed), **M43**
+  (admissions not counted), **M44** (store not released before a long wait), run on PostgreSQL. Result:
+  *run in progress at this commit; the tally is recorded in the next commit*.
+- Locked contracts: no change to authorization, identity, capabilities, confirmation, memory isolation, Judge
+  authority or Android authority. The two `flush()` calls only order inserts. BR-T2 is row-for-row identical.
+- Secrets: no database credential in git, fixtures, logs, the APK or the dashboard. CI uses trust auth; local
+  runs used a trust-auth throwaway cluster. The only credential-shaped URL added to git is the config test's
+  refusal case, marked `TEST-ONLY` (`TESTONLYpw`). Scan of every line added since `08119ac`: 0 other hits.
+  Live checks: a password in `database_url` and in `HYPERMIND_DATABASE_URL` is refused without echoing it. A
+  marker in `PGPASSWORD` did not appear in the server's startup-failure log.
+
+### Q.7 PRD #32 final status
+
+**PRD #32: MET on PostgreSQL** (§I). This clears §P blocker 2 and nothing else. **The Real-Data Gate stays
+CLOSED.**
