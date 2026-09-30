@@ -604,6 +604,7 @@ source_modules = [
     "server.agents.compiler",
     "server.agents.hashing",
     "server.agents.rendering",
+    "server.agents.gateway.model_routing",
 ]
 forbidden_modules = [
     "sqlalchemy",
@@ -622,6 +623,24 @@ forbidden_modules = [
     "server.composition",
     "server.agents.service",
 ]
+
+# AF-C3: a runtime provider decides nothing. Authorization stays in the
+# runtime/engine path; a provider cannot reach the engine, the grant tables or
+# the SecretStore — and no third-party agent framework is imported (docs/29
+# §30.3: never inside the gateway process).
+[[tool.importlinter.contracts]]
+name = "AF-C3: runtime providers never reach authorization (docs/29 §3.1)"
+type = "forbidden"
+source_modules = ["server.agents.providers"]
+forbidden_modules = ["server.graph", "server.capabilities", "server.secrets", "server.gateway"]
+
+# The envelope gate (docs/29 §10.3) lives in the runtime and is pure: it can
+# only remove, so it must not be able to reach anything that grants.
+[[tool.importlinter.contracts]]
+name = "The agent envelope gate is pure (docs/29 §10.3)"
+type = "forbidden"
+source_modules = ["server.agent.envelope"]
+forbidden_modules = ["server.storage", "server.tools", "server.models", "server.execution", "sqlalchemy"]
 
 # AF-C4: the scheduler still executes nothing. A reminder may one day carry an
 # `agent_id` as data (docs/29 §17); the scheduler never imports the factory.
