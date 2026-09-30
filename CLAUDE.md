@@ -61,6 +61,7 @@ python -m pytest tests/execution -q
 python -m pytest tests/scheduler -q
 python -m pytest tests/voice -q
 python -m pytest tests/integration -q
+python -m pytest tests/agents -q
 
 # A single test
 python -m pytest tests/runtime/test_confirmation_boundary.py::test_name -q
@@ -117,7 +118,7 @@ graph | capabilities
 auth
 gateway
 models
-agent | modeltools | tools | memory | vault | scheduler | voice | evaluation
+agent | agents | modeltools | tools | memory | vault | scheduler | voice | evaluation
 dashboard
 composition
 ```
@@ -170,6 +171,7 @@ Subsystem map (see `README.md` for the full narrative per branch):
 | `server/scheduler` | task-linked reminders (`scheduled_jobs` table; a firing reminder delivers a message, never executes) |
 | `server/voice` | STT/TTS; on-device by default; voice can never confirm or step up |
 | `server/evaluation` | the Judge (scoring/recommendation only, no authority) |
+| `server/agents` | the Agent Factory (docs/29, a proposal, off by default): templates, ability table, pure selector/compiler, owner-private definitions; never an authority (contracts AF-C1…C6) |
 | `server/dashboard` | read-only operator views |
 | `server/composition` | the composition root — the only place upper-layer Protocols get their concrete implementations wired in; `server/composition/main.py` is the app entrypoint |
 | `server/gateway` | FastAPI routers, request context, the one HTTP entry to superuser auth |

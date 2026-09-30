@@ -340,6 +340,46 @@ row of §2F, §2H and §3 is unchanged.
 | **Validation method** | Test first: `tests/memory/test_prd32_service_measurement.py` (the #32 acceptance, S1/S2) failed on SQLite and refuses to run on anything but PostgreSQL; `tests/runtime/test_concurrent_store.py` (no open transaction during model/tool calls, same-key retry, budget race, ten users' rows, deadlock → `503`) failed for the intended reasons before the fix. Then every suite on a real PostgreSQL server (and still on SQLite), the migration round-trip on both, the import contracts, BR-T2 and the guard mutations (M42–M44 added for the new guards). CI's `postgres` job runs all of it on every push. Measurements: `docs/RELEASE_VALIDATION.md` §I. |
 | **Acceptance status** | **PRD #32: MET on PostgreSQL** (`docs/RELEASE_VALIDATION.md` §I). The Real-Data Gate is **not** opened by this: its other blockers stand (§P). |
 
+## 2J. Agent Factory — Phase 1 (`[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]`)
+
+`docs/29_AGENT_FACTORY_ASSESSMENT.md` is a proposal. Its Phase 1 boundary
+(docs/29 §31) is built **behind `agents.enabled: false`** as implemented
+recommendations: with the flag off no agent tool is registered, the worker's
+prompt is unchanged, the `/api/v1/agents` endpoints answer `503` with
+`dependency: agents`, and nothing writes to the three new tables. **No OD-AF
+decision is ratified by being built**; each row below says what the build does
+while the decision is open. Nothing runs an agent yet (Phase 2).
+
+| ID | Decision | Value implemented (not ratified) | Where |
+|---|---|---|---|
+| OD-AF-1 | Ratify the factory abstractions | **`[OPEN — OWNER]`.** Built as docs/29 describes: templates, model/runtime profile registries, a pure selector and compiler (the only writer of `CompiledAgentSpec`), owner-private definitions with immutable hashed spec versions, and the `AgentRuntimeProvider` Protocol (declared, no provider wired). No separate AgentStateProvider. | `server/agents/`, `shared/schemas/agent_factory.py` |
+| OD-AF-2 | PRD §22 amendment for unattended runs | **`[OPEN — OWNER]`.** Not built. The compiler rejects `trigger.kind: unattended` (`unattended_unavailable`) and the config refuses `agents.unattended_enabled: true` even with `standing_delegation_ratified: true`. The scheduler is unchanged and cannot import the factory (AF-C4). | `server/agents/compiler.py`, `server/config/schema.py` |
+| OD-AF-3 | The `agent.*` tier table | **`[OPEN — OWNER]`.** Registered as proposed: `agent.define` {`compile`, `compile_update` → low_read; `create`, `update` → consequential}, `agent.inspect` {`list`, `get` → low_read}, `agent.delete` {`delete` → consequential}; `agentdefinition` create/write are consequential in the resource axis too, so the HTTP path confirms as well. `agent.run`/`agent.control`/`agent.delegate` are not registered (Phase 2/5). | `server/capabilities/registry.py`, `server/capabilities/risk.py` |
+| OD-AF-4 | Consequential actions in unattended runs | **`[OPEN — OWNER]`.** Moot until Phase 5; no unattended run exists. | — |
+| OD-AF-5 | Default delegation lifetime | **`[OPEN — OWNER]`.** Only the config field exists (`agents.delegation_max_days`, 30); nothing reads it. | `server/config/schema.py` |
+| OD-AF-6 | First external provider | **`[OPEN — OWNER]`.** None. Every docs/29 §30 runtime id is reserved; enabling one fails startup (no container/netns, MCP transport or egress proxy exists). | `server/agents/registry/runtimes.py` |
+| OD-AF-7 | Per-user quota and default budgets | **`[OPEN — OWNER]`.** `agents.max_agents_per_user: 5`; `default_budget_per_run`/`per_month: 0.0`, so only local models can be selected until an operator raises them (`no_model:budget` otherwise). | `server/config/schema.py`, `server/agents/selector.py` |
+| OD-AF-8 | Outputs beyond the owner's inbox | **`[OPEN — OWNER]`.** Inbox only (`OutputKind` has one value); the inbox itself is Phase 2. | `shared/schemas/agent_factory.py` |
+| OD-AF-9 | Attribution: join table vs extending `UsageEvent` | **`[OPEN — OWNER]`.** Nothing built yet (runs are Phase 2); `usage_events` is untouched. | — |
+| OD-AF-10 | `agentdefinition` in `ResourceType`; new `01` entities | **`[OPEN — OWNER]`.** Added as proposed: `ResourceType.AGENTDEFINITION` (owner-private, decided by the one engine; a deleted agent is `not_found`) and migration `e1f3a5c7b9d2` (`agent_definitions`, `agent_spec_versions`, `agent_compile_previews`), additive, round-tripped on SQLite and PostgreSQL. | `shared/schemas/authorization.py`, `server/storage/` |
+
+Build choices where docs/29 leaves a gap (`[IMPL]`, each flagged for review):
+
+| ID | Choice | Where |
+|---|---|---|
+| AF-B1 | **No `awaiting_confirmation` row.** A compile writes an owner- and task-bound, single-use, 15-minute preview; the definition and its first spec version are written together when the approved preview is consumed. A rejected or expired approval leaves nothing to clean up. | `server/agents/service.py` |
+| AF-B2 | **`compile_update`.** Compiling a new version names the agent (`resource_ref`), so the engine checks ownership before anything is compiled; docs/29 lists only `compile`. `GET /agents/previews/{compile_id}` renders an owner's pending card for a task paused on `create`/`update`. | `server/composition/agents.py`, `server/gateway/routers/agents.py` |
+| AF-B3 | **Roles as model features.** `ModelFeature` adds `writing`, `image_generation`, `document_structured`, `speech`, and the draft adds `preferred_model_features` (ordering only). Both are routing metadata; neither can make a profile eligible or widen an envelope. | `shared/schemas/agent_factory.py`, `server/agents/selector.py` |
+| AF-B4 | **Model profiles reference existing entries only** — `agent.primary`, `agent.fallback`, `models_as_tools.<id>` — and carry no provider, endpoint or key; credentials stay on the entry and resolve through the existing SecretStore path. No separate connector or credential store was built (none exists in the repository). | `server/agents/registry/models.py`, `server/composition/agents.py` |
+| AF-B5 | **Owner model policy.** A profile is usable when open to all or when its `model_ref` is the owner's resolved primary; an owner with their own (or their graph's) `AgentConfiguration` resolves to no profile reference, so only open profiles apply. | `server/composition/agents.py` |
+| AF-B6 | **Cost projection and class.** Per run: `max_model_calls × context_window/1000 × (input + output price per 1k)`; class thresholds `low ≤ 0.002`, `medium ≤ 0.02` per 1k combined. docs/29 derives both from pricing without fixing the formula. | `server/agents/registry/models.py` |
+| AF-B7 | **Never guessed.** File abilities need a named sandbox label (`sandbox_needed`); a reminder needs an exact cron and IANA zone; a URL source outside `execution.network.default_destinations` is `source_not_allowlisted`. Each is a clarification, never a default. | `server/agents/compiler.py` |
+| AF-B8 | **Interfaces declared, not wired.** The envelope gate (`server/agent/envelope.py`), the provider Protocol and model-as-tool routing exist with tests against the real engine; the runtime does not call the gate until Phase 2 runs agents. | `server/agent/envelope.py`, `server/agents/providers/`, `server/agents/gateway/` |
+
+Contracts AF-C1…AF-C6 and a purity contract for the envelope gate are in
+`pyproject.toml`; mutants M-AG1–M-AG5, M-AG13, M-AG14 are in
+`tests/tools/guard_mutations.py` (all killed).
+
 ---
 
 ## 3. Genuinely unresolved owner decisions
@@ -361,6 +401,7 @@ row of §2F, §2H and §3 is unchanged.
 | OD-DASH-1 | Dashboard/control split vs amending DASH-002 | Split built as recommended; DASH-002 unchanged; not ratified. |
 | OD-DASH-2 | Console UI | Not built; JSON API only (§2G). |
 | OD-JDG-5 | How approved Judge guidance may carry user content (§2H) | Global guidance with secret screening only reaches every user with one user's content (BR-T2 row 38); which control fits is a product and privacy call. |
+| OD-AF-1…10 | The Agent Factory's abstractions, tiers, entities and the unattended-run amendment (§2J) | docs/29 is a proposal; Phase 1 is built behind `agents.enabled: false` and none of its decisions is ratified. |
 
 ---
 
