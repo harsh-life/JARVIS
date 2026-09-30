@@ -936,3 +936,97 @@ class EvaluationControl(Base):
     changed_by: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (CheckConstraint("control_id = 1", name="ck_evaluation_control_single_row"),)
+
+
+# ── docs/29 — the Agent Factory, Phase 1 (`[PROPOSAL — NOT CANONICAL]`) ────
+#
+# Three tables, all owner-private and all in the OD-A1 (a) residual class like
+# `agent_tasks.response` (docs/29 §22.1). `01` §1.2 has no such entities: they
+# are recorded as implemented recommendations pending OD-AF-10
+# (docs/DECISION_REGISTER.md §2J), and nothing reaches them unless
+# `agents.enabled`.
+
+
+class AgentDefinitionRow(Base):
+    """docs/29 §4.1 — the mutable head of one agent. Every change is a new
+    immutable `AgentSpecVersionRow`; this row only says which version is
+    current and in what state.
+
+    `owner_user_id` is the principal who approved the creation and `graph_id`
+    that principal's active graph at the time — never values from a draft.
+    Deleting keeps a tombstone (ids and timestamps only: `name` is cleared and
+    every spec version purged, §22.1)."""
+
+    __tablename__ = "agent_definitions"
+
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    graph_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("graphs.graph_id"), nullable=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    status_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    visibility: Mapped[Visibility] = mapped_column(
+        _sa_enum(Visibility, "visibility"), nullable=False, default=Visibility.PRIVATE
+    )
+    # Provenance, not references: a task or device row outliving (or not) this
+    # one changes nothing about the agent.
+    created_from_task_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_by_device_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('awaiting_confirmation','active','paused','needs_reapproval','revoked','deleted')",
+            name="ck_agent_definitions_status",
+        ),
+        # v1: every agent is private to its owner (RAUTH-005); graph-shared
+        # agents are [FUTURE] (docs/29 §4.1).
+        CheckConstraint("visibility = 'private'", name="ck_agent_definitions_private"),
+        CheckConstraint("current_version >= 1", name="ck_agent_definitions_version"),
+        Index("ix_agent_definitions_owner", "owner_user_id", "status"),
+    )
+
+
+class AgentSpecVersionRow(Base):
+    """docs/29 §9.5 — one immutable CompiledAgentSpec, as canonical JSON with
+    its hash. Never updated; purged when the agent is deleted."""
+
+    __tablename__ = "agent_spec_versions"
+
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("agent_definitions.agent_id"), primary_key=True
+    )
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    spec_hash: Mapped[str] = mapped_column(String, nullable=False)
+    spec_json: Mapped[dict] = mapped_column(SAJSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AgentCompilePreviewRow(Base):
+    """docs/29 §9.4 — a compiled spec awaiting the owner's approval. Bound to
+    its owner and, when compiled inside a task, to that task; single-use;
+    expires after `agents.compile_preview_ttl_minutes`. It is the only
+    pre-approval state: no definition row exists until the owner approves
+    (so a rejected or expired approval leaves nothing behind)."""
+
+    __tablename__ = "agent_compile_previews"
+
+    compile_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    # The version the preview updates (`None` for a new agent): an update
+    # compiled against a version that is no longer current is refused.
+    base_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    spec_hash: Mapped[str] = mapped_column(String, nullable=False)
+    spec_json: Mapped[dict] = mapped_column(SAJSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ix_agent_compile_previews_owner", "owner_user_id"),
+        Index("ix_agent_compile_previews_expires_at", "expires_at"),
+    )

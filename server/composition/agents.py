@@ -8,9 +8,18 @@ slices — the authorization engine. It adds no policy of its own.
 
 from __future__ import annotations
 
+import uuid
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from server.agents.registry import AgentRegistries, ModelEntryFacts, build_registries
 from server.config.schema import LOCAL_MODEL_PROVIDERS, AppConfig
+from server.graph.ports import ResourceDescriptor
 from server.models.factory import IMPLEMENTED_PROVIDERS
+from server.storage.models import AgentDefinitionRow
+from shared.schemas.agent_factory import AgentStatus
+from shared.schemas.authorization import ResourceType
+from shared.schemas.enums import Visibility
 
 
 def _facts(entry) -> ModelEntryFacts:
@@ -52,4 +61,32 @@ def registries_from_config(config: AppConfig) -> AgentRegistries:
     )
 
 
-__all__ = ["model_entry_facts", "registries_from_config"]
+class AgentDefinitionLoader:
+    """`ResourceLoader` for `agentdefinition` (docs/29 §4.1): the engine's
+    projection of a definition to its authorization facts — owner, private
+    visibility, graph scope — and nothing else. A deleted definition is not
+    loadable, so every operation on it is `not_found`, for its owner too."""
+
+    async def load(self, session: AsyncSession, resource_type: ResourceType,
+                   resource_ref: str) -> ResourceDescriptor | None:
+        if resource_type is not ResourceType.AGENTDEFINITION:
+            return None
+        try:
+            agent_id = uuid.UUID(str(resource_ref))
+        except (ValueError, TypeError):
+            return None
+        row = await session.get(AgentDefinitionRow, agent_id)
+        if row is None or row.status == AgentStatus.DELETED.value:
+            return None
+        return ResourceDescriptor(
+            resource_type=ResourceType.AGENTDEFINITION,
+            resource_ref=str(row.agent_id),
+            owner_user_id=row.owner_user_id,
+            # v1 agents are private (the table's check constraint says so too).
+            visibility=Visibility.PRIVATE,
+            graph_id=row.graph_id,
+            source_user_id=row.owner_user_id,
+        )
+
+
+__all__ = ["AgentDefinitionLoader", "model_entry_facts", "registries_from_config"]

@@ -94,6 +94,12 @@ _RESOURCE_OPERATION_TIERS: dict[tuple[ResourceType, Operation], RiskCategory] = 
     # `consequential` send stays consequential, a `low_read` query stays
     # automatic. `[PROPOSED]`, docs/DECISION_REGISTER.md §2.
     (ResourceType.TOOL_ACTION, Operation.CREATE): RiskCategory.LOW_READ,
+    # `[PROPOSED]` (docs/29 §23.1, OD-AF-3 — pending the owner's signature):
+    # creating or changing an agent fixes what it may ever attempt, so it is
+    # never automatic — the owner approves the compiled spec. Deleting is
+    # already consequential by the operation table.
+    (ResourceType.AGENTDEFINITION, Operation.CREATE): RiskCategory.CONSEQUENTIAL,
+    (ResourceType.AGENTDEFINITION, Operation.WRITE): RiskCategory.CONSEQUENTIAL,
 }
 
 

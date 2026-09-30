@@ -302,6 +302,11 @@ MUTANTS: tuple[Mutant, ...] = (
            "    return current is None or spec.template_version < current.version",
            "    return current is None or spec.template_version > current.version",
            (*PY, "tests/agents/test_compiler.py")),
+    Mutant("M-AG14", "Agent store: a spec altered at rest is loaded without verifying its hash",
+           "server/agents/service.py",
+           "            verify_spec_hash(spec)\n            and spec.spec_hash == row.spec_hash\n",
+           "            True\n            and spec.spec_hash == row.spec_hash\n",
+           (*PY, "tests/agents/test_service.py")),
 )
 
 

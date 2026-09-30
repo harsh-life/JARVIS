@@ -1,0 +1,329 @@
+"""Owner-private agent definitions: previews, versions, lifecycle
+(docs/29 §4, §9.4, §14, §22).
+
+This service **stores and loads; it never authorizes**. Every public path to
+it — the `agent.*` tool adapters and the `/agents` endpoints — asks the
+authorization engine first (`server/composition/agents.py`), with the owner
+and visibility dimensions of the `agentdefinition` resource. What the service
+guarantees by itself:
+
+* **No definition before approval.** A compile writes only a preview: bound
+  to its owner and (when compiled inside a task) that task, single-use,
+  expiring. A definition row and its first spec version are written together
+  when an approved preview is consumed, so a rejected or expired approval
+  leaves nothing behind. (docs/29 §14.1's `awaiting_confirmation` is the
+  preview's role here; no definition row is ever parked in that state.)
+* **Specs are immutable.** An update is a new version compiled against the
+  current one; a preview compiled against a version that is no longer current
+  is refused.
+* **Tampering is detected on load** (docs/29 §9.6 rule 8, AGENT-T33): a stored
+  spec whose hash does not recompute, or that no longer matches its head row,
+  revokes the agent (`spec_tampered`) and is never returned.
+* **Deletion leaves a tombstone** — ids and timestamps; the name is cleared
+  and every spec version and pending preview purged (docs/29 §22.1).
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Callable, Mapping
+
+from pydantic import ValidationError
+from sqlalchemy import delete, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from server.agents.compiler import (
+    CompileTarget,
+    OwnerContext,
+    TriggerPreview,
+    compile_draft,
+    verify_spec_hash,
+)
+from server.agents.registry import AgentRegistries
+from server.agents.rendering import budget_line, can_lines, cannot_lines, spec_view, trigger_line
+from server.storage.models import AgentCompilePreviewRow, AgentDefinitionRow, AgentSpecVersionRow
+from shared.schemas.agent_factory import (
+    AgentDraft,
+    AgentStatus,
+    AgentView,
+    CompiledAgentSpec,
+    CompileOutcome,
+    SpecBudget,
+)
+from shared.schemas.enums import Visibility
+
+# Statuses that still count against the per-owner quota and can be updated.
+_LIVE = (AgentStatus.ACTIVE.value, AgentStatus.PAUSED.value, AgentStatus.NEEDS_REAPPROVAL.value)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+class PreviewRefused(Exception):
+    """An approved preview cannot be applied (stale, tampered, already used,
+    over quota). Nothing was written."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class AgentDefinitionService:
+    def __init__(
+        self,
+        registries: AgentRegistries,
+        *,
+        preview_ttl_minutes: int,
+        max_agents_per_user: int = 5,
+        clock: Callable[[], datetime] = _utcnow,
+    ) -> None:
+        self._registries = registries
+        self._ttl = timedelta(minutes=preview_ttl_minutes)
+        self._max_agents = max_agents_per_user
+        self._clock = clock
+
+    @property
+    def registries(self) -> AgentRegistries:
+        return self._registries
+
+    def now(self) -> datetime:
+        return self._clock()
+
+    # ── compiling ───────────────────────────────────────────────────────
+
+    async def active_count(self, session: AsyncSession, owner_user_id: uuid.UUID) -> int:
+        return int((await session.execute(
+            select(func.count()).select_from(AgentDefinitionRow).where(
+                AgentDefinitionRow.owner_user_id == owner_user_id, AgentDefinitionRow.status.in_(_LIVE))
+        )).scalar_one())
+
+    async def compile(
+        self,
+        session: AsyncSession,
+        *,
+        draft: AgentDraft,
+        owner: OwnerContext,
+        task_id: uuid.UUID | None,
+        agent: AgentDefinitionRow | None,
+        runtime_health: Mapping[str, bool],
+        trigger_preview: TriggerPreview,
+    ) -> CompileOutcome:
+        now = self._clock()
+        await session.execute(delete(AgentCompilePreviewRow).where(AgentCompilePreviewRow.expires_at <= now))
+        target = CompileTarget(
+            agent_id=agent.agent_id if agent is not None else uuid.uuid4(),
+            version=agent.current_version + 1 if agent is not None else 1,
+            created_at=now,
+        )
+        result = compile_draft(draft, owner=owner, target=target, registries=self._registries,
+                               runtime_health=runtime_health, trigger_preview=trigger_preview)
+        if result.kind != "compiled" or result.spec is None:
+            return CompileOutcome(kind=result.kind, questions=result.questions, reason_codes=result.reason_codes)
+        spec = result.spec
+        compile_id = uuid.uuid4()
+        expires_at = now + self._ttl
+        session.add(AgentCompilePreviewRow(
+            compile_id=compile_id, owner_user_id=owner.owner_user_id, task_id=task_id, agent_id=spec.agent_id,
+            base_version=agent.current_version if agent is not None else None,
+            spec_hash=spec.spec_hash, spec_json=spec.model_dump(mode="json"), created_at=now, expires_at=expires_at,
+        ))
+        await session.flush()
+        return CompileOutcome(kind="compiled", compile_id=compile_id, expires_at=expires_at,
+                              spec_preview=spec_view(spec, self._registries))
+
+    async def load_preview(
+        self,
+        session: AsyncSession,
+        *,
+        compile_id: uuid.UUID,
+        owner_user_id: uuid.UUID,
+        task_id: uuid.UUID | None,
+        for_agent: uuid.UUID | None,
+    ) -> AgentCompilePreviewRow | None:
+        """The preview, if it is this owner's, compiled in this task (or both
+        outside any task), unexpired, and for the intended target: a new agent
+        (`for_agent=None`) or an update of exactly `for_agent`."""
+
+        row = await session.get(AgentCompilePreviewRow, compile_id)
+        if row is None or row.owner_user_id != owner_user_id or row.task_id != task_id:
+            return None
+        if _as_utc(row.expires_at) <= self._clock():
+            return None
+        if for_agent is None:
+            return row if row.base_version is None else None
+        return row if row.base_version is not None and row.agent_id == for_agent else None
+
+    def preview_spec(self, preview: AgentCompilePreviewRow) -> CompiledAgentSpec:
+        try:
+            spec = CompiledAgentSpec.model_validate(preview.spec_json)
+        except ValidationError:
+            raise PreviewRefused("preview_invalid") from None
+        if spec.spec_hash != preview.spec_hash or not verify_spec_hash(spec):
+            raise PreviewRefused("preview_tampered")
+        if spec.agent_id != preview.agent_id or spec.owner_user_id != preview.owner_user_id:
+            raise PreviewRefused("preview_tampered")
+        return spec
+
+    async def create_from_preview(
+        self,
+        session: AsyncSession,
+        preview: AgentCompilePreviewRow,
+        *,
+        created_by_device_id: uuid.UUID | None,
+        created_from_task_id: uuid.UUID | None,
+    ) -> tuple[AgentDefinitionRow, CompiledAgentSpec]:
+        spec = self.preview_spec(preview)
+        if preview.base_version is not None or spec.version != 1:
+            raise PreviewRefused("not_a_creation")
+        if await session.get(AgentDefinitionRow, spec.agent_id) is not None:
+            raise PreviewRefused("already_created")
+        # Re-checked at write time: two approvals racing past the compile-time check.
+        if await self.active_count(session, spec.owner_user_id) >= self._max_agents:
+            raise PreviewRefused("agent_quota_reached")
+        now = self._clock()
+        definition = AgentDefinitionRow(
+            agent_id=spec.agent_id, owner_user_id=spec.owner_user_id, graph_id=spec.graph_id, name=spec.name,
+            status=AgentStatus.ACTIVE.value, current_version=1, visibility=Visibility.PRIVATE,
+            created_from_task_id=created_from_task_id, created_by_device_id=created_by_device_id,
+            created_at=now, updated_at=now,
+        )
+        session.add(definition)
+        await session.flush()
+        session.add(AgentSpecVersionRow(agent_id=spec.agent_id, version=1, spec_hash=spec.spec_hash,
+                                        spec_json=spec.model_dump(mode="json"), created_at=now))
+        await session.delete(preview)
+        await session.flush()
+        return definition, spec
+
+    async def update_from_preview(
+        self, session: AsyncSession, definition: AgentDefinitionRow, preview: AgentCompilePreviewRow
+    ) -> tuple[AgentDefinitionRow, CompiledAgentSpec]:
+        spec = self.preview_spec(preview)
+        if definition.status not in _LIVE:
+            raise PreviewRefused("not_updatable")
+        if preview.agent_id != definition.agent_id or preview.base_version != definition.current_version:
+            raise PreviewRefused("stale_preview")
+        if spec.version != definition.current_version + 1 or spec.owner_user_id != definition.owner_user_id:
+            raise PreviewRefused("stale_preview")
+        now = self._clock()
+        session.add(AgentSpecVersionRow(agent_id=spec.agent_id, version=spec.version, spec_hash=spec.spec_hash,
+                                        spec_json=spec.model_dump(mode="json"), created_at=now))
+        definition.current_version = spec.version
+        definition.name = spec.name
+        definition.updated_at = now
+        if definition.status == AgentStatus.NEEDS_REAPPROVAL.value:
+            # The owner approved a recompiled version: that is the re-approval.
+            definition.status = AgentStatus.ACTIVE.value
+            definition.status_reason = None
+        await session.delete(preview)
+        await session.flush()
+        return definition, spec
+
+    # ── loading ─────────────────────────────────────────────────────────
+
+    async def _current_spec(self, session: AsyncSession, definition: AgentDefinitionRow) -> CompiledAgentSpec | None:
+        row = await session.get(AgentSpecVersionRow, (definition.agent_id, definition.current_version))
+        if row is None:
+            return None
+        try:
+            spec = CompiledAgentSpec.model_validate(row.spec_json)
+        except ValidationError:
+            return None
+        intact = (
+            verify_spec_hash(spec)
+            and spec.spec_hash == row.spec_hash
+            and spec.agent_id == definition.agent_id
+            and spec.version == definition.current_version
+            and spec.owner_user_id == definition.owner_user_id
+            and spec.graph_id == definition.graph_id
+        )
+        return spec if intact else None
+
+    async def load(
+        self, session: AsyncSession, agent_id: uuid.UUID
+    ) -> tuple[AgentDefinitionRow, CompiledAgentSpec | None] | None:
+        """The head row and its verified current spec; `None` for an absent or
+        deleted agent. A revoked agent, or one whose spec fails verification
+        (which revokes it now), comes back with no spec."""
+
+        definition = await session.get(AgentDefinitionRow, agent_id)
+        if definition is None or definition.status == AgentStatus.DELETED.value:
+            return None
+        if definition.status == AgentStatus.REVOKED.value:
+            return definition, None
+        spec = await self._current_spec(session, definition)
+        if spec is None:
+            definition.status = AgentStatus.REVOKED.value
+            definition.status_reason = "spec_tampered"
+            definition.updated_at = self._clock()
+            await session.flush()
+            return definition, None
+        return definition, spec
+
+    async def list_for_owner(
+        self, session: AsyncSession, owner_user_id: uuid.UUID
+    ) -> list[tuple[AgentDefinitionRow, CompiledAgentSpec | None]]:
+        rows = (await session.execute(
+            select(AgentDefinitionRow.agent_id).where(
+                AgentDefinitionRow.owner_user_id == owner_user_id,
+                AgentDefinitionRow.status != AgentStatus.DELETED.value,
+            ).order_by(AgentDefinitionRow.created_at, AgentDefinitionRow.agent_id)
+        )).scalars().all()
+        loaded = []
+        for agent_id in rows:
+            item = await self.load(session, agent_id)
+            if item is not None:
+                loaded.append(item)
+        return loaded
+
+    # ── deleting ────────────────────────────────────────────────────────
+
+    async def delete(self, session: AsyncSession, definition: AgentDefinitionRow) -> None:
+        now = self._clock()
+        await session.execute(delete(AgentSpecVersionRow).where(AgentSpecVersionRow.agent_id == definition.agent_id))
+        await session.execute(delete(AgentCompilePreviewRow).where(AgentCompilePreviewRow.agent_id == definition.agent_id))
+        definition.status = AgentStatus.DELETED.value
+        definition.status_reason = None
+        definition.name = None
+        definition.deleted_at = now
+        definition.updated_at = now
+        await session.flush()
+
+    # ── views ───────────────────────────────────────────────────────────
+
+    def view(self, definition: AgentDefinitionRow, spec: CompiledAgentSpec | None) -> AgentView:
+        common = dict(
+            agent_id=definition.agent_id, name=definition.name or "", status=AgentStatus(definition.status),
+            current_version=definition.current_version, created_at=_as_utc(definition.created_at),
+            updated_at=_as_utc(definition.updated_at),
+        )
+        if spec is None:
+            return AgentView(**common, template_id="", template_description="", runtime_display_name="",
+                             model_profile_display_name="", can=(), cannot=(), trigger_display="",
+                             budget=SpecBudget(per_run=0.0, per_month=0.0))
+        template = self._registries.templates.get(spec.template_id)
+        runtime = self._registries.runtimes.get(spec.selection.runtime_id)
+        model = self._registries.model_profiles.get(spec.selection.model_profile_id)
+        return AgentView(
+            **common,
+            template_id=spec.template_id,
+            template_description=template.description if template else "",
+            runtime_display_name=(runtime.display_name if runtime else "") or spec.selection.runtime_id,
+            model_profile_display_name=(model.profile.display_name if model else "") or spec.selection.model_profile_id,
+            can=can_lines(spec),
+            cannot=cannot_lines(spec),
+            trigger_display=trigger_line(spec),
+            budget=spec.budget,
+        )
+
+    def budget_display(self, spec: CompiledAgentSpec) -> str:
+        return budget_line(spec)
+
+
+__all__ = ["AgentDefinitionService", "PreviewRefused"]
