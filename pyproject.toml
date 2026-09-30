@@ -67,6 +67,10 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["server*", "shared*"]
 
+# docs/29 §5: the shipped agent templates are repository data files.
+[tool.setuptools.package-data]
+"server.agents" = ["templates/*.yaml", "templates/README.md"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
@@ -129,7 +133,7 @@ containers = ["server"]
 layers = [
     "composition",
     "dashboard",
-    "agent | modeltools | tools | memory | vault | scheduler | voice | evaluation",
+    "agent | agents | modeltools | tools | memory | vault | scheduler | voice | evaluation",
     "models",
     "gateway",
     "auth",
@@ -268,6 +272,7 @@ type = "forbidden"
 source_modules = [
     "server.dashboard",
     "server.agent",
+    "server.agents",
     "server.tools",
     "server.modeltools",
     "server.models",
@@ -385,6 +390,7 @@ type = "forbidden"
 source_modules = ["server.dashboard"]
 forbidden_modules = [
     "server.agent",
+    "server.agents",
     "server.tools",
     "server.modeltools",
     "server.models",
@@ -418,7 +424,7 @@ forbidden_modules = [
 [[tool.importlinter.contracts]]
 name = "Tools/agent cannot reach raw process or socket primitives (09 §8/10 §3, REPO-T5)"
 type = "forbidden"
-source_modules = ["server.tools", "server.modeltools", "server.agent"]
+source_modules = ["server.tools", "server.modeltools", "server.agent", "server.agents"]
 forbidden_modules = ["subprocess", "socket"]
 # Direct imports only. server.tools legitimately (and necessarily) depends
 # transitively on socket through server.net's egress client, and on
@@ -567,3 +573,95 @@ type = "forbidden"
 source_modules = ["server.voice"]
 forbidden_modules = ["subprocess", "socket"]
 allow_indirect_imports = true
+
+# ── docs/29 — the Agent Factory (AF-C1…AF-C6) ─────────────────────────────
+# `[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]` (docs/29 §3.1, OD-AF-1). The
+# factory sits in the application band beside the runtime (layers contract
+# above), so it and `server.agent` cannot import each other: the native
+# provider will start runs through a Protocol the composition root satisfies.
+# The rule every contract below serves: NO MODEL OR AGENT RUNTIME CAN CREATE
+# AUTHORITY.
+
+# AF-C1: the factory never touches the SecretStore. Provider keys stay behind
+# `server.models`' adapters, resolved by the existing path at the call.
+[[tool.importlinter.contracts]]
+name = "AF-C1: the Agent Factory never imports secrets (docs/29 §3.1)"
+type = "forbidden"
+source_modules = ["server.agents"]
+forbidden_modules = ["server.secrets"]
+
+# AF-C2: the deterministic core — ability table, registries, selector,
+# compiler — is pure: no store, no runtime, no tool, no model adapter, no
+# execution primitive, no grant or confirmation path, no authorization
+# engine. It is tested without a database (docs/29 §9.1).
+[[tool.importlinter.contracts]]
+name = "AF-C2: the compiler, selector and registries are pure (docs/29 §3.1)"
+type = "forbidden"
+source_modules = [
+    "server.agents.abilities",
+    "server.agents.registry",
+    "server.agents.selector",
+    "server.agents.compiler",
+    "server.agents.hashing",
+    "server.agents.rendering",
+    "server.agents.gateway.model_routing",
+]
+forbidden_modules = [
+    "sqlalchemy",
+    "server.storage",
+    "server.agent",
+    "server.tools",
+    "server.modeltools",
+    "server.models",
+    "server.execution",
+    "server.fs",
+    "server.net",
+    "server.graph",
+    "server.capabilities.grants",
+    "server.capabilities.confirmation",
+    "server.gateway",
+    "server.composition",
+    "server.agents.service",
+]
+
+# AF-C3: a runtime provider decides nothing. Authorization stays in the
+# runtime/engine path; a provider cannot reach the engine, the grant tables or
+# the SecretStore — and no third-party agent framework is imported (docs/29
+# §30.3: never inside the gateway process).
+[[tool.importlinter.contracts]]
+name = "AF-C3: runtime providers never reach authorization (docs/29 §3.1)"
+type = "forbidden"
+source_modules = ["server.agents.providers"]
+forbidden_modules = ["server.graph", "server.capabilities", "server.secrets", "server.gateway"]
+
+# The envelope gate (docs/29 §10.3) lives in the runtime and is pure: it can
+# only remove, so it must not be able to reach anything that grants.
+[[tool.importlinter.contracts]]
+name = "The agent envelope gate is pure (docs/29 §10.3)"
+type = "forbidden"
+source_modules = ["server.agent.envelope"]
+forbidden_modules = ["server.storage", "server.tools", "server.models", "server.execution", "sqlalchemy"]
+
+# AF-C4: the scheduler still executes nothing. A reminder may one day carry an
+# `agent_id` as data (docs/29 §17); the scheduler never imports the factory.
+[[tool.importlinter.contracts]]
+name = "AF-C4: the scheduler never imports the Agent Factory (docs/29 §17)"
+type = "forbidden"
+source_modules = ["server.scheduler"]
+forbidden_modules = ["server.agents"]
+
+# AF-C5: the Judge is never an authority — it cannot create, change or
+# authorize an agent (docs/29 §18, AGENT-T26).
+[[tool.importlinter.contracts]]
+name = "AF-C5: the Judge never imports the Agent Factory (docs/29 §18)"
+type = "forbidden"
+source_modules = ["server.evaluation"]
+forbidden_modules = ["server.agents"]
+
+# AF-C6: agent state and notebooks are never read by authorization code.
+[[tool.importlinter.contracts]]
+name = "AF-C6: authorization never imports the Agent Factory (docs/29 §20.1)"
+type = "forbidden"
+source_modules = ["server.graph", "server.capabilities", "server.auth", "server.security"]
+forbidden_modules = ["server.agents"]
+

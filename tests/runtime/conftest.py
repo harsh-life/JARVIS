@@ -462,6 +462,7 @@ async def make_harness(tmp_path, monkeypatch) -> AsyncIterator[Callable]:
         memory_provider: Any = None,
         vault_index: Any = None,
         scheduler_tool: bool | None = None,
+        agent_tools: bool | None = None,
     ) -> Harness:
         storage = SQLAlchemyStorageBackend(database_url_for(tmp_path / f"{uuid.uuid4().hex}.db"))
         await storage.init_models()
@@ -510,7 +511,7 @@ async def make_harness(tmp_path, monkeypatch) -> AsyncIterator[Callable]:
             app_config, storage=storage, security=core, provider_factory=factory,
             extra_tools=tools, memory_store=memory_store, break_glass_registry=break_glass,
             memory_provider=memory_provider, vault_index=vault_index, scheduler_tool=scheduler_tool,
-            voice_transport=transport,
+            voice_transport=transport, agent_tools=agent_tools,
         )
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
         opened.append((client, storage))

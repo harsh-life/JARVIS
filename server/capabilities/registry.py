@@ -45,7 +45,9 @@ one entry, `model.invoke`, because it owns model-tools (06). The execution
 branch added `net.request`, because it owns the egress boundary (10) that
 capability needed to exist before it could be granted. The scheduler build
 (docs/22) added `scheduler.create`, now that the scheduler it gates exists.
-`memory`/`vault` agent-proposed writes remain deliberately absent.
+`memory`/`vault` agent-proposed writes remain deliberately absent. The Agent
+Factory (docs/29, a proposal) added `agent.define`, `agent.inspect` and
+`agent.delete` — held only by the factory worker, never by an agent.
 """
 
 from __future__ import annotations
@@ -59,6 +61,9 @@ from shared.schemas.enums import RiskCategory
 
 SCHEDULER_CREATE_CAPABILITY = "scheduler.create"
 CREATE_REMINDER_OPERATION = "create_reminder"
+AGENT_DEFINE_CAPABILITY = "agent.define"
+AGENT_INSPECT_CAPABILITY = "agent.inspect"
+AGENT_DELETE_CAPABILITY = "agent.delete"
 
 
 class UnknownCapability(Exception):
@@ -266,6 +271,43 @@ def _registry() -> Mapping[str, CapabilityDefinition]:
             ),
             operations=MappingProxyType({"invoke": RiskCategory.LOW_READ}),
             scope_keys=frozenset({"model_tool_id"}),
+        ),
+        # `[PROPOSED]` — docs/29 §23.1, the Agent Factory (tiers pending the
+        # owner's signature, OD-AF-3). These are what the *factory worker* — an
+        # ordinary user task — may use to define agents on the user's behalf.
+        # They are never mappable into any agent's envelope (docs/29 §9.3,
+        # `server/agents/abilities.py`), so no agent run can ever hold one: an
+        # agent never creates, changes or deletes agents. Creating or changing
+        # an agent is `consequential` (the owner approves the compiled spec);
+        # compiling a preview and inspecting one's own agents are reads.
+        # `compile_update` is this build's addition: compiling a new version
+        # names the agent it updates, so the engine checks ownership (D3/D4)
+        # before anything is compiled.
+        CapabilityDefinition(
+            name=AGENT_DEFINE_CAPABILITY,
+            description=(
+                "Compile an agent definition from the user's goal and, with the user's "
+                "confirmation of the compiled spec, create or update it (docs/29)."
+            ),
+            operations=MappingProxyType({
+                "compile": RiskCategory.LOW_READ,
+                "compile_update": RiskCategory.LOW_READ,
+                "create": RiskCategory.CONSEQUENTIAL,
+                "update": RiskCategory.CONSEQUENTIAL,
+            }),
+            scope_keys=frozenset(),
+        ),
+        CapabilityDefinition(
+            name=AGENT_INSPECT_CAPABILITY,
+            description="List and read the user's own agent definitions (docs/29).",
+            operations=MappingProxyType({"list": RiskCategory.LOW_READ, "get": RiskCategory.LOW_READ}),
+            scope_keys=frozenset(),
+        ),
+        CapabilityDefinition(
+            name=AGENT_DELETE_CAPABILITY,
+            description="Delete one of the user's agent definitions, with confirmation (docs/29).",
+            operations=MappingProxyType({"delete": RiskCategory.CONSEQUENTIAL}),
+            scope_keys=frozenset(),
         ),
     )
     return MappingProxyType({d.name: d for d in definitions})

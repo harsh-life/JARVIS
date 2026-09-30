@@ -269,7 +269,7 @@ def _fixture_project(tmp_path: Path, violation: tuple[str, str]) -> Path:
 
     root = tmp_path / "fixture"
     packages = ["server", "server/memory", "server/vault", "server/secrets", "server/dashboard", "server/scheduler",
-                "server/voice", "server/evaluation", "server/intelligence", "server/execution", "server/agent",
+                "server/voice", "server/evaluation", "server/intelligence", "server/execution", "server/agent", "server/agents",
                 "server/tools", "server/modeltools", "server/gateway", "server/composition", "server/security",
                 "server/auth", "server/graph", "server/capabilities", "server/models", "server/fs", "server/net",
                 "server/config", "server/storage", "shared", "mem0"]

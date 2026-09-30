@@ -275,6 +275,21 @@ and the Judge's control layer. No browser UI ships (OD-DASH-2).
 The owner decisions these builds leave open — OD-JDG-1..4, OD-DASH-1/2 — are
 listed in `docs/DECISION_REGISTER.md` §2G/§3; none is ratified by being built.
 
+**Agent Factory, Phase 1** (`docs/29`, `[PROPOSAL — NOT CANONICAL UNTIL
+RATIFIED]`; off by default, `agents.enabled: false`). An ordinary user task can
+turn a repeated goal into an owner-private agent *definition*: the worker
+writes a strict `AgentDraft` (intent only — no owner, graph, capability, tier,
+budget ceiling, runtime, model or endpoint), a pure deterministic compiler
+selects an operator-enabled template, runtime and model profile and compiles an
+immutable, hashed spec whose envelope is only a *ceiling*, and the owner
+approves the deterministically rendered card (`agent.define.create` is
+`consequential`). Definitions are listed, read, updated as new versions and
+deleted through `agent.*` tools or `/api/v1/agents`, all decided by the
+authorization engine. **No agent runs yet** (Phase 2): the envelope gate,
+runtime-provider Protocol and model-as-tool routing are declared and tested
+but not wired. Unattended execution, external runtimes, MCP, Letta and Darwin
+are not built. Decisions: `docs/DECISION_REGISTER.md` §2J (none ratified).
+
 **Still not built** (each is a later, separate subsystem; nothing in the
 runtime depends on it): **Darwin**, a real **IntelligenceProvider** (only
 `GET /intelligence/status` → `{enabled: false}`), account deletion
@@ -325,7 +340,8 @@ shared/    schemas/  — canonical Pydantic data contracts, importable by both
                         both sides read
 tests/     pytest suite (tests/foundation/, tests/security_core/, tests/runtime/,
                           tests/execution/, tests/integration/, tests/memory/,
-                          tests/scheduler/, tests/voice/, tests/evaluation/, tests/dashboard/)
+                          tests/scheduler/, tests/voice/, tests/evaluation/, tests/dashboard/,
+                          tests/agents/)
 docs/      RUNNING_*.md, OD_A1_BR_T2.md, CAPABILITY_MATRIX.md, DECISION_REGISTER.md
 Working Markdown/   the architecture/PRD document package (source of truth)
 ```

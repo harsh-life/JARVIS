@@ -22,6 +22,7 @@ from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
+from shared.schemas.agent_factory import AgentModelProfile
 from shared.schemas.push import FcmClientOptions, PushProvider
 
 # A secret reference names *where* to obtain a secret; it is never the
@@ -777,6 +778,73 @@ class SecurityConfig(StrictModel):
     capability_defaults: dict = Field(default_factory=dict)
 
 
+class AgentRuntimeToggle(StrictModel):
+    enabled: bool = False
+
+
+_RUNTIME_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{2,40}$")
+
+
+class AgentsConfig(StrictModel):
+    """The Agent Factory (docs/29 §24). `[PROPOSAL — NOT CANONICAL UNTIL
+    RATIFIED]` — additive to `15` §2, and every default is the safe reading:
+
+    * `enabled: false` — the whole feature is off: no agent tool is registered,
+      the `/agents` endpoints answer `503`, and the existing system is
+      unchanged.
+    * no template is enabled and no model profile exists until an operator
+      adds them;
+    * budgets default to `0.0`, which refuses every paid model call (OD-02) —
+      an agent whose only eligible model is paid cannot be compiled;
+    * unattended execution cannot be switched on: docs/29 §15 needs the PRD §22
+      amendment (OD-AF-2) *and* an implementation this build does not have.
+
+    Cross-references (template ids, `model_ref` targets, implemented
+    providers, cost classes, runtime providers) are checked when the registries
+    are built at startup (`server/agents/registry`), fail-closed.
+    """
+
+    enabled: bool = False
+    enabled_templates: list[str] = Field(default_factory=list)
+    max_agents_per_user: int = Field(default=5, ge=1, le=100)
+    compile_preview_ttl_minutes: int = Field(default=15, ge=1, le=120)
+    default_budget_per_run: float = Field(default=0.0, ge=0.0)
+    default_budget_per_month: float = Field(default=0.0, ge=0.0)
+    delegation_max_days: int = Field(default=30, ge=1, le=365)
+    unattended_enabled: bool = False
+    standing_delegation_ratified: bool = False
+    model_profiles: list[AgentModelProfile] = Field(default_factory=list)
+    model_profiles_open_to_all: list[str] = Field(default_factory=list)
+    runtimes: dict[str, AgentRuntimeToggle] = Field(
+        default_factory=lambda: {"native": AgentRuntimeToggle(enabled=True)}
+    )
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "AgentsConfig":
+        if self.unattended_enabled and not self.standing_delegation_ratified:
+            raise ValueError(
+                "agents.unattended_enabled requires agents.standing_delegation_ratified "
+                "(docs/29 §15.8: the PRD §22 amendment must land first)"
+            )
+        if self.unattended_enabled:
+            raise ValueError(
+                "agents.unattended_enabled: unattended agent execution (docs/29 §15, Phase 5) is not "
+                "implemented in this build"
+            )
+        if len(set(self.enabled_templates)) != len(self.enabled_templates):
+            raise ValueError("agents.enabled_templates lists a template twice")
+        ids = [p.profile_id for p in self.model_profiles]
+        if len(set(ids)) != len(ids):
+            raise ValueError("agents.model_profiles defines a profile_id twice")
+        unknown = sorted(set(self.model_profiles_open_to_all) - set(ids))
+        if unknown:
+            raise ValueError(f"agents.model_profiles_open_to_all names unknown profiles {unknown}")
+        bad = sorted(k for k in self.runtimes if not _RUNTIME_KEY_RE.match(k))
+        if bad:
+            raise ValueError(f"agents.runtimes: invalid runtime ids {bad}")
+        return self
+
+
 class SecretsStoreConfig(StrictModel):
     """`kek_source` names *where* the KEK comes from (e.g. an env var an
     operator sets out-of-band) — never the KEK itself (12_SECRETSTORE.md
@@ -800,6 +868,8 @@ class AppConfig(StrictModel):
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     android: AndroidConfig = Field(default_factory=AndroidConfig)
+    # docs/29 — the Agent Factory, off by default.
+    agents: AgentsConfig = Field(default_factory=AgentsConfig)
     security: SecurityConfig
     secrets: SecretsStoreConfig
 

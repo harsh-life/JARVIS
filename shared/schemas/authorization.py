@@ -98,6 +98,11 @@ class ResourceType(str, Enum):
     # that touches a real resource (a `FileResource`) declares that type instead
     # and gets ownership (D3) and visibility (D4).
     TOOL_ACTION = "tool_action"
+    # `[PROPOSED]` (docs/29 §4.1, OD-AF-10 — pending the owner's signature on
+    # this `01`/`04` enum addition): an Agent Factory definition. Owner-private
+    # in v1 and decided on ownership and visibility exactly like any other
+    # resource; only the owner can read, update, run or delete it.
+    AGENTDEFINITION = "agentdefinition"
 
 
 class DenialSurface(str, Enum):
