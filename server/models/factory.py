@@ -15,6 +15,10 @@ from server.models.openai_compatible import OpenAICompatibleProvider
 from server.models.provider import KeyProvider, ModelProvider, ModelSpec
 
 _OPENAI_COMPATIBLE = frozenset({"openai", "deepseek", "groq", "openai_compatible"})
+# Every provider `build_provider` has an adapter for — read by the Agent
+# Factory's model-profile registry, which refuses a profile on any other
+# (docs/29 §6.2).
+IMPLEMENTED_PROVIDERS = frozenset({"ollama"}) | _OPENAI_COMPATIBLE
 
 
 class ProviderNotImplemented(Exception):

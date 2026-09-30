@@ -1,0 +1,28 @@
+# docs/29 §5.5 — watch allowed pages for changes. [PROPOSAL — NOT CANONICAL]
+# The notebook is the agent's own state (docs/29 §16.3), not a capability.
+template_id: web_monitor_basic
+version: 1
+description: >-
+  Checks web pages the server operator already allows, compares them with
+  what it noted last time in its own notebook, and reports changes to the
+  owner's inbox. Read-only outside its own notebook.
+task_tags: [monitoring, extraction]
+abilities: [read_web_allowlisted, read_agent_notebook, write_agent_notebook]
+run_mode: observe
+risk_ceiling: low_read
+required_model_features: [structured_output]
+preferred_runtime: native
+fallback_runtimes: []
+min_isolation: in_process
+memory_policy: {user_memory_read: false, vault_read: false, vault_domains: [], notebook: read_write}
+trigger_support: [on_demand, reminder, unattended]
+output_support: [inbox]
+max_run_seconds: 120
+max_model_calls_per_run: 8
+max_tool_calls_per_run: 16
+default_budget_per_run: 0.05
+default_budget_per_month: 1.0
+unattended_supported: true
+supported_endpoints: [android, desktop]
+required_infrastructure: [none]
+priority: 10

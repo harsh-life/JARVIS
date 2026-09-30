@@ -1,0 +1,28 @@
+# docs/29 §5.5 — tidy files inside a granted sandbox. [PROPOSAL — NOT CANONICAL]
+# Writes are low_write (create/modify only). Deleting is excluded from every
+# v1 template (docs/29 §9.3), and this class never runs unattended.
+template_id: file_organizer
+version: 1
+description: >-
+  Reads and reorganizes files inside a sandbox the owner granted: creates and
+  rewrites files there, never deletes one. Runs only when the owner asks.
+task_tags: [document_processing]
+abilities: [read_sandbox_files, write_sandbox_files]
+run_mode: execute
+risk_ceiling: low_write
+required_model_features: [structured_output]
+preferred_runtime: native
+fallback_runtimes: []
+min_isolation: in_process
+memory_policy: {user_memory_read: false, vault_read: false, vault_domains: [], notebook: none}
+trigger_support: [on_demand, reminder]
+output_support: [inbox]
+max_run_seconds: 120
+max_model_calls_per_run: 12
+max_tool_calls_per_run: 32
+default_budget_per_run: 0.05
+default_budget_per_month: 1.0
+unattended_supported: false
+supported_endpoints: [android, desktop]
+required_infrastructure: [none]
+priority: 0

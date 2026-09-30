@@ -1,0 +1,28 @@
+# docs/29 §5.5 — read-only research and digest. [PROPOSAL — NOT CANONICAL]
+# Reviewed against server/agents/templates/README.md's checklist.
+template_id: research_digest
+version: 1
+description: >-
+  Reads web sources the server operator already allows, the owner's JARVIS
+  memory and knowledge vault, and writes a concise digest for the owner's
+  inbox. Read-only: it changes nothing anywhere.
+task_tags: [research, summarization, reporting, security_research]
+abilities: [read_web_allowlisted, read_user_memory, read_vault]
+run_mode: observe
+risk_ceiling: low_read
+required_model_features: [structured_output]
+preferred_runtime: native
+fallback_runtimes: []
+min_isolation: in_process
+memory_policy: {user_memory_read: true, vault_read: true, vault_domains: [], notebook: none}
+trigger_support: [on_demand, reminder, unattended]
+output_support: [inbox]
+max_run_seconds: 120
+max_model_calls_per_run: 12
+max_tool_calls_per_run: 16
+default_budget_per_run: 0.05
+default_budget_per_month: 1.0
+unattended_supported: true
+supported_endpoints: [android, desktop]
+required_infrastructure: [none]
+priority: 10

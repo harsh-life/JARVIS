@@ -25,6 +25,7 @@ from fastapi import FastAPI
 from server.agent import AgentRuntime, ConcurrencyGate, ConcurrencyLimits, RuntimeBounds
 from server.agent.breaker import BreakerLimits
 from server.agent.recovery import RecoveryPolicy
+from server.composition.agents import registries_from_config
 from server.composition.break_glass import BreakGlassRegistry
 from server.composition.execution_tools import build_execution_tools
 from server.composition.console import build_console
@@ -241,6 +242,9 @@ def build_application(
 
     core = security or build_security_core(config)
     factory = provider_factory or build_provider
+    # docs/29 §24: the Agent Factory's registries are validated at every
+    # startup, fail-closed, whether or not `agents.enabled`.
+    agent_registries = registries_from_config(config)
     # 20 §2: the one store of break-glass records, shared by the executor
     # (claim), the runtime's security adapter (settle/end) and the superuser
     # control path (activate/revoke). Inert unless the operator enabled it.

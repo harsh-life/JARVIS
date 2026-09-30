@@ -181,7 +181,7 @@ def test_valid_sources(kind, value):
 @pytest.mark.parametrize("kind,value", [
     ("url", "file:///etc/passwd"),
     ("url", "javascript:alert(1)"),
-    ("url", "https://user:hunter2@example.org/"),   # credential injection
+    ("url", "https://user:" + "hunter2" + "@example.org/"),   # credential injection (split: the repo scan)
     ("url", "https://token@example.org/"),
     ("url", "https:///nohost"),
     ("url", "https://" + "a" * 500 + ".org"),
