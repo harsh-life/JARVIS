@@ -600,6 +600,10 @@ type = "forbidden"
 source_modules = [
     "server.agents.abilities",
     "server.agents.registry",
+    "server.agents.selector",
+    "server.agents.compiler",
+    "server.agents.hashing",
+    "server.agents.rendering",
 ]
 forbidden_modules = [
     "sqlalchemy",
