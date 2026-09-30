@@ -157,6 +157,16 @@ class AuditAction(str, Enum):
     SCHEDULER_REMINDER_DROPPED = "scheduler.reminder.dropped"
     SCHEDULER_REMINDER_EXPIRED = "scheduler.reminder.expired"
 
+    # ── the Agent Factory (docs/29 §26). `resource` names the agent, a compile
+    # id, the offending draft *field names* or a reason code — never a draft's
+    # values, a purpose, or spec content.
+    AGENT_DRAFT_REJECTED = "agent.draft.rejected"
+    AGENT_COMPILED = "agent.compiled"
+    AGENT_CREATED = "agent.created"
+    AGENT_UPDATED = "agent.updated"
+    AGENT_DELETED = "agent.deleted"
+    AGENT_REFUSED = "agent.refused"
+
     # ── voice (docs/27). `resource` names a voice event id or a refusal
     # reason — never a transcript, never audio, never synthesized text.
     VOICE_TRANSCRIBED = "voice.transcribed"

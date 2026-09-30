@@ -35,3 +35,7 @@ async def make_user(storage: SQLAlchemyStorageBackend) -> uuid.UUID:
         await session.commit()
     return user_id
 
+
+
+# The production composition root with a scripted model (tests/runtime).
+from tests.runtime.conftest import make_harness  # noqa: E402,F401

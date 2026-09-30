@@ -20,6 +20,7 @@ from server.execution.device_hub import DeviceHub
 from server.gateway.errors import install_error_handlers
 from server.gateway.request_context import RequestIdMiddleware
 from server.gateway.agent_port import AgentTaskPort
+from server.gateway.agents_port import AgentFactoryPort
 from server.gateway.control_port import SupervisorControlPort
 from server.gateway.console_port import OperatorConsolePort
 from server.gateway.evaluation_control_port import EvaluationControlPort
@@ -30,6 +31,7 @@ from server.gateway.routers import admin as admin_routes
 from server.gateway.routers import evaluation_control as evaluation_control_routes
 from server.gateway.routers import (
     agent,
+    agents,
     auth,
     capabilities,
     control,
@@ -79,6 +81,7 @@ def create_app(
     voice_port: VoicePort | None = None,
     evaluation_control: EvaluationControlPort | None = None,
     operator_console: OperatorConsolePort | None = None,
+    agent_factory: AgentFactoryPort | None = None,
     background: Sequence[BackgroundService] = (),
 ) -> FastAPI:
     """Build the FastAPI app.
@@ -144,6 +147,7 @@ def create_app(
     v1.include_router(graphs.router)
     v1.include_router(capabilities.router)
     v1.include_router(agent.router)
+    v1.include_router(agents.router)
     v1.include_router(control.router)
     v1.include_router(evaluation_control_routes.router)
     v1.include_router(admin_routes.router)
@@ -160,6 +164,9 @@ def create_app(
     # `server.agent` in the layering (16 §2) and cannot import it. Without one,
     # the agent endpoints answer `503 dependency_unavailable` explicitly.
     app.state.agent_tasks = agent_tasks
+    # docs/29 — the Agent Factory, assembled above this layer. Without one
+    # (`agents.enabled: false`), the `/agents` endpoints answer `503`.
+    app.state.agent_factory = agent_factory
     # 18 §5.4 — likewise assembled above this layer. Without one, the control
     # endpoints answer `503` (after superuser authentication).
     app.state.supervisor_control = supervisor_control

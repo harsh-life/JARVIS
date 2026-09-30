@@ -25,7 +25,14 @@ from fastapi import FastAPI
 from server.agent import AgentRuntime, ConcurrencyGate, ConcurrencyLimits, RuntimeBounds
 from server.agent.breaker import BreakerLimits
 from server.agent.recovery import RecoveryPolicy
-from server.composition.agents import registries_from_config
+from server.agents.service import AgentDefinitionService
+from server.composition.agents import (
+    AgentDefinitionLoader,
+    AgentFactory,
+    AgentFactoryFacade,
+    agent_tool_definitions,
+    registries_from_config,
+)
 from server.composition.break_glass import BreakGlassRegistry
 from server.composition.execution_tools import build_execution_tools
 from server.composition.console import build_console
@@ -210,6 +217,7 @@ def build_application(
     memory_provider: MemoryProvider | None = None,
     vault_index: VaultIndex | None = None,
     scheduler_tool: bool | None = None,
+    agent_tools: bool | None = None,
     voice_transport: "httpx.AsyncBaseTransport | None" = None,
     evaluation_provider: EvaluationProvider | None = None,
 ) -> FastAPI:
@@ -267,6 +275,22 @@ def build_application(
     include_scheduler_tool = (extra_tools is None) if scheduler_tool is None else scheduler_tool
     if scheduler_service is not None and config.scheduler.agent_tool_enabled and include_scheduler_tool:
         tool_definitions = [*tool_definitions, reminder_tool_definition(scheduler_service)]
+    # docs/29: the Agent Factory — nothing at all unless `agents.enabled`. Its
+    # tools join the chosen tool set through the same registry validation, and
+    # its resource type is decided by the same engine as every other.
+    agent_factory: AgentFactory | None = None
+    if config.agents.enabled:
+        agent_factory = AgentFactory(
+            config=config, core=core,
+            service=AgentDefinitionService(
+                agent_registries, preview_ttl_minutes=config.agents.compile_preview_ttl_minutes,
+                max_agents_per_user=config.agents.max_agents_per_user,
+            ),
+        )
+        core.resource_loader.register(ResourceType.AGENTDEFINITION, AgentDefinitionLoader())
+        include_agent_tools = (extra_tools is None) if agent_tools is None else agent_tools
+        if include_agent_tools:
+            tool_definitions = [*tool_definitions, *agent_tool_definitions(agent_factory)]
     tools = build_tool_registry(config, provider_factory=factory, extra_tools=tool_definitions)
 
     provider = memory_provider
@@ -361,6 +385,9 @@ def build_application(
         unlock_secrets_on_startup=unlock_secrets_on_startup,
         reconcile_tasks_on_startup=reconcile_tasks_on_startup,
         agent_tasks=facade,
+        agent_factory=(
+            AgentFactoryFacade(factory=agent_factory, core=core) if agent_factory is not None else None
+        ),
         # 18 §5.4: the operator control path. Reached only through
         # `/api/v1/admin/control/*`, behind `get_superuser`.
         supervisor_control=SupervisorControl(runtime=runtime, facade=facade, latch=latch,

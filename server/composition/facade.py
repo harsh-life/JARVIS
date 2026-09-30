@@ -19,6 +19,7 @@ from server.agent import (
 )
 from server.agent.ports import Hydration, TaskEnvironment, UsageLimitReached
 from server.auth.errors import StepUpRequired
+from server.composition.agents import agent_factory_scope
 from server.composition.break_glass import BreakGlassRegistry
 from server.composition.improvements import TuningCache
 from server.composition.latch import InProcessLatch, SupervisorGate
@@ -169,8 +170,9 @@ class AgentTaskFacade:
         token = CURRENT_SECRET_RESOLVER.set(resolve)
         try:
             # docs/22 §1: a reminder tool call writes in this request's own
-            # transaction (the pilot's SQLite has one writer).
-            with reminder_scope(session, audit):
+            # transaction (the pilot's SQLite has one writer); so does an
+            # Agent Factory tool call (docs/29).
+            with reminder_scope(session, audit), agent_factory_scope(session, audit):
                 yield
         finally:
             CURRENT_SECRET_RESOLVER.reset(token)

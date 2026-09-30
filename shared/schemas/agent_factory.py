@@ -689,11 +689,89 @@ class AgentListResponse(_Strict):
     items: tuple[AgentView, ...]
 
 
+class AgentDetail(_Strict):
+    """`GET /agents/{id}`: the head and, when it verifies, its current spec's
+    user-safe view (a revoked agent has none)."""
+
+    agent: AgentView
+    spec: CompiledAgentSpecView | None = None
+
+
 class CreateAgentRequest(_Strict):
     """`POST /agents` and `PATCH /agents/{id}` (docs/29 §23.2): only the id of
     a preview the same owner compiled — never a spec."""
 
     compile_id: UUID
+
+
+# ── the runtime-provider boundary (docs/29 §7.3, §11.2; interface only) ────
+
+
+class ToolDescriptor(_Strict):
+    """One tool operation a run may call, derived from envelope ∩ enabled
+    tools (docs/29 §11.2). A description, never a grant."""
+
+    tool_id: str
+    operation: str
+    input_schema: dict = Field(default_factory=dict)
+    description: str = ""
+
+
+class AgentRunContext(_Strict):
+    """Everything a runtime provider receives for one run (docs/29 §11.2).
+
+    Structurally, there is no field for a principal, a session, a device, a
+    SecretStore handle or a provider key (§7.3): a provider can act only by
+    calling back into JARVIS — in-process for the native runtime, through the
+    Agent Gateway with short-lived run tokens for a future external one — and
+    JARVIS authorizes every call. `run_token` is opaque, per run, revocable,
+    and never logged (§11.3; Phase 3/6)."""
+
+    run_id: UUID
+    agent_id: UUID
+    version: int
+    spec_hash: str
+    input_text: str
+    deadline: datetime
+    model_endpoint: str | None = None
+    tool_endpoint: str | None = None
+    run_token: str | None = Field(default=None, repr=False)
+    tool_manifest: tuple[ToolDescriptor, ...] = ()
+    model_alias: Literal["agent-model"] = "agent-model"
+
+
+class RuntimeRef(_Strict):
+    runtime_id: str
+    agent_id: UUID
+    version: int
+    external_ref: str | None = None
+
+
+class RunHandle(_Strict):
+    runtime_id: str
+    run_id: UUID
+    external_ref: str | None = None
+
+
+class ProviderHealth(_Strict):
+    ok: bool
+    detail: str = ""
+
+
+class CancelReason(str, Enum):
+    OWNER_STOP = "owner_stop"
+    EMERGENCY_STOP = "emergency_stop"
+    SPEC_CHANGED = "spec_changed"
+    PRINCIPAL_REVOKED = "principal_revoked"
+    BUDGET_EXCEEDED = "budget_exceeded"
+    DELETED = "deleted"
+    DEADLINE = "deadline"
+
+
+class DeprovisionReceipt(_Strict):
+    ref: RuntimeRef
+    removed: bool
+    detail: str = ""
 
 
 # ── the future model-as-tool request (docs/29 §12; interface only) ─────────
@@ -727,15 +805,18 @@ class ModelCallRequest(_Strict):
 __all__ = [
     "AbilityName",
     "AgentConfirmationCard",
+    "AgentDetail",
     "AgentDraft",
     "AgentListResponse",
     "AgentModelProfile",
+    "AgentRunContext",
     "AgentRunStatus",
     "AgentRuntimeProfile",
     "AgentSelection",
     "AgentStatus",
     "AgentTemplate",
     "AgentView",
+    "CancelReason",
     "CancellationMode",
     "ClarificationQuestion",
     "CompileOutcome",
@@ -744,6 +825,7 @@ __all__ = [
     "CompiledTrigger",
     "CostClass",
     "CreateAgentRequest",
+    "DeprovisionReceipt",
     "EnvelopeEntry",
     "FORBIDDEN_DRAFT_FIELDS",
     "HydrationSpec",
@@ -762,13 +844,17 @@ __all__ = [
     "Observability",
     "OutputKind",
     "PersistenceModel",
+    "ProviderHealth",
     "RequiredApi",
+    "RunHandle",
+    "RuntimeRef",
     "RuntimeType",
     "SourceKind",
     "SourceRef",
     "SpecBounds",
     "SpecBudget",
     "TaskTag",
+    "ToolDescriptor",
     "ToolInterface",
     "TriggerKind",
     "TriggerRequest",
