@@ -732,6 +732,19 @@ class AgentRunListResponse(_Strict):
     items: tuple[AgentRunView, ...]
 
 
+class NotebookEntryView(_Strict):
+    """docs/29 §16.3: one of the agent's own notes, shown to its owner. The
+    value is what the agent wrote — data, never instructions."""
+
+    key: str
+    value: str
+    updated_at: datetime
+
+
+class NotebookResponse(_Strict):
+    items: tuple[NotebookEntryView, ...]
+
+
 # ── the runtime-provider boundary (docs/29 §7.3, §11.2; interface only) ────
 
 
@@ -871,6 +884,8 @@ __all__ = [
     "ModelRef",
     "NetworkRequirement",
     "NotebookAccess",
+    "NotebookEntryView",
+    "NotebookResponse",
     "Observability",
     "OutputKind",
     "PersistenceModel",

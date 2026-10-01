@@ -49,6 +49,7 @@ from shared.schemas.agent_factory import (
     CompiledAgentSpecView,
     CompileOutcome,
     CreateAgentRequest,
+    NotebookResponse,
     RunAgentRequest,
 )
 from shared.schemas.authorization import Principal
@@ -232,3 +233,26 @@ async def resume_agent(
 ) -> AgentView:
     return await _factory(request).resume(session, principal=principal, agent_id=agent_id,
                                           confirmation_token=confirmation_token, audit=audit)
+
+
+@router.get("/agents/{agent_id}/notebook", response_model=NotebookResponse)
+async def get_notebook(
+    request: Request,
+    agent_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> NotebookResponse:
+    return await _factory(request).notebook(session, principal=principal, agent_id=agent_id, audit=audit)
+
+
+@router.delete("/agents/{agent_id}/notebook", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_notebook(
+    request: Request,
+    agent_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> Response:
+    await _factory(request).clear_notebook(session, principal=principal, agent_id=agent_id, audit=audit)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

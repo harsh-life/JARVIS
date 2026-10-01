@@ -1062,3 +1062,23 @@ class AgentRunRow(Base):
         Index("ix_agent_runs_agent_started", "agent_id", "started_at"),
         Index("ix_agent_runs_owner", "owner_user_id"),
     )
+
+
+class AgentNotebookEntryRow(Base):
+    """docs/29 §16.3 — one note in an agent's own notebook: its operational
+    state between runs. Owner-private and per agent (the key is the agent's
+    plus its own key), bounded in count and size by the service, deleted with
+    the agent. It is not memory: nothing here is ever extracted into Mem0."""
+
+    __tablename__ = "agent_notebook_entries"
+
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("agent_definitions.agent_id"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    value: Mapped[str] = mapped_column(String, nullable=False)
+    updated_by_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_agent_notebook_entries_owner", "owner_user_id"),)

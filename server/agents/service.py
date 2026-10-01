@@ -25,6 +25,7 @@ guarantees by itself:
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Mapping
@@ -45,6 +46,7 @@ from server.agents.rendering import budget_line, can_lines, cannot_lines, spec_v
 from server.storage.models import (
     AgentCompilePreviewRow,
     AgentDefinitionRow,
+    AgentNotebookEntryRow,
     AgentRunRow,
     AgentSpecVersionRow,
     AgentTask,
@@ -55,6 +57,7 @@ from shared.schemas.agent_factory import (
     AgentRunStatus,
     AgentRunView,
     AgentStatus,
+    NotebookEntryView,
     AgentView,
     CompiledAgentSpec,
     CompileOutcome,
@@ -68,6 +71,12 @@ _RUN_STATUS = {
     AgentTaskStatus.CANCELLED: AgentRunStatus.CANCELLED,
 }
 _TERMINAL_TASK = frozenset(_RUN_STATUS)
+
+# docs/29 §16.3: the notebook's bounds (`[IMPL]`: docs/29 fixes no numbers).
+NOTEBOOK_MAX_ENTRIES = 200
+NOTEBOOK_MAX_VALUE_CHARS = 8000
+_NOTEBOOK_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$")
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 # Statuses that still count against the per-owner quota and can be updated.
 _LIVE = (AgentStatus.ACTIVE.value, AgentStatus.PAUSED.value, AgentStatus.NEEDS_REAPPROVAL.value)
@@ -320,6 +329,70 @@ class AgentDefinitionService:
         # step's re-validation, and its record says it was stopped.
         for run in await self.live_runs(session, definition.agent_id):
             await self.run_cancelled(session, run.run_id, reason="deleted")
+        await self.purge_runtime_state(session, definition.agent_id)
+        await session.flush()
+
+    async def purge_runtime_state(self, session: AsyncSession, agent_id: uuid.UUID) -> None:
+        """What JARVIS keeps for an agent at runtime, beyond its definition and
+        run records: removed with the agent (docs/29 §14.4)."""
+
+        await self.notebook_clear(session, agent_id)
+
+    # ── the notebook (docs/29 §16.3) ────────────────────────────────────
+
+    async def notebook_get(self, session: AsyncSession, agent_id: uuid.UUID, key: str) -> str | None:
+        row = await session.get(AgentNotebookEntryRow, (agent_id, key))
+        return row.value if row is not None else None
+
+    async def notebook_keys(self, session: AsyncSession, agent_id: uuid.UUID) -> list[str]:
+        return list((await session.execute(
+            select(AgentNotebookEntryRow.key).where(AgentNotebookEntryRow.agent_id == agent_id)
+            .order_by(AgentNotebookEntryRow.key)
+        )).scalars().all())
+
+    async def notebook_entries(self, session: AsyncSession, agent_id: uuid.UUID,
+                               owner_user_id: uuid.UUID) -> list[AgentNotebookEntryRow]:
+        return list((await session.execute(
+            select(AgentNotebookEntryRow).where(AgentNotebookEntryRow.agent_id == agent_id,
+                                                AgentNotebookEntryRow.owner_user_id == owner_user_id)
+            .order_by(AgentNotebookEntryRow.key)
+        )).scalars().all())
+
+    async def notebook_put(self, session: AsyncSession, *, agent_id: uuid.UUID, owner_user_id: uuid.UUID,
+                           run_id: uuid.UUID, key: str, value: str) -> str | None:
+        """Store one note; `None`, or why it was refused. Bounded: a key is a
+        short slug, a value at most `NOTEBOOK_MAX_VALUE_CHARS` printable
+        characters, and at most `NOTEBOOK_MAX_ENTRIES` notes per agent (an
+        existing note can always be replaced)."""
+
+        if not _NOTEBOOK_KEY.fullmatch(key):
+            return "invalid_key"
+        if len(value) > NOTEBOOK_MAX_VALUE_CHARS:
+            return "value_too_long"
+        if _CONTROL.search(value):
+            return "invalid_value"
+        row = await session.get(AgentNotebookEntryRow, (agent_id, key))
+        if row is None:
+            count = (await session.execute(select(func.count()).select_from(AgentNotebookEntryRow)
+                                           .where(AgentNotebookEntryRow.agent_id == agent_id))).scalar_one()
+            if count >= NOTEBOOK_MAX_ENTRIES:
+                return "notebook_full"
+            row = AgentNotebookEntryRow(agent_id=agent_id, key=key, owner_user_id=owner_user_id, value=value,
+                                        updated_by_run_id=run_id, updated_at=self._clock())
+            session.add(row)
+        else:
+            if row.owner_user_id != owner_user_id:
+                return "invalid_key"
+            row.value, row.updated_by_run_id, row.updated_at = value, run_id, self._clock()
+        await session.flush()
+        return None
+
+    @staticmethod
+    def notebook_view(row: AgentNotebookEntryRow) -> NotebookEntryView:
+        return NotebookEntryView(key=row.key, value=row.value, updated_at=_as_utc(row.updated_at))
+
+    async def notebook_clear(self, session: AsyncSession, agent_id: uuid.UUID) -> None:
+        await session.execute(delete(AgentNotebookEntryRow).where(AgentNotebookEntryRow.agent_id == agent_id))
         await session.flush()
 
     # ── pause / resume (docs/29 §14.1) ──────────────────────────────────

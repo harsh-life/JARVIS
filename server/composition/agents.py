@@ -57,6 +57,8 @@ from server.capabilities.registry import (
     AGENT_INSPECT_CAPABILITY,
 )
 from server.config.schema import LOCAL_MODEL_PROVIDERS, AppConfig
+from server.memory.gate import LexiconEmotionClassifier
+from server.security.secret_patterns import find_secret
 from server.gateway.errors import AppError
 from server.gateway.security import SecurityCore
 from server.graph.authorization import AccessRequest, AuthorizationOutcome
@@ -96,7 +98,9 @@ from shared.schemas.agent_factory import (
     AgentView,
     CancelReason,
     CompiledAgentSpec,
+    NotebookResponse,
     RunHandle,
+    RuntimeRef,
     CompiledAgentSpecView,
     CompileOutcome,
     CreateAgentRequest,
@@ -570,6 +574,8 @@ def agent_tool_definitions(factory: AgentFactory) -> list[ToolDefinition]:
 
 # ── present-user runs (docs/29 §7.4, Phase 2) ─────────────────────────────
 
+_EMOTION = LexiconEmotionClassifier()
+
 
 class AgentRunCoordinator:
     """`AgentRunPort` (server/agent/agent_run.py) for one request's store
@@ -616,11 +622,41 @@ class AgentRunCoordinator:
                           f"agentrun:{binding.run_id}:{status.value}{suffix}",
                           AuditResult.SUCCESS if status is AgentTaskStatus.COMPLETED else AuditResult.FAILURE)
 
+    async def _run_owner(self, binding: AgentRunBinding) -> uuid.UUID | None:
+        run = await self._session.get(AgentRunRow, binding.run_id)
+        return run.owner_user_id if run is not None and run.agent_id == binding.agent_id else None
+
     async def notebook_get(self, binding: AgentRunBinding, key: str) -> str | None:
-        return None
+        if not binding.notebook:
+            return None
+        return await self._service.notebook_get(self._session, binding.agent_id, key)
+
+    async def notebook_keys(self, binding: AgentRunBinding) -> list[str]:
+        if not binding.notebook:
+            return []
+        return await self._service.notebook_keys(self._session, binding.agent_id)
 
     async def notebook_put(self, binding: AgentRunBinding, key: str, value: str) -> str | None:
-        return "notebook_unavailable"
+        """docs/29 §16.3: the agent's own note, never memory. The same gates
+        as a memory write refuse it (21 §4): nothing credential-shaped, nothing
+        emotional or relational — the notebook is operational state."""
+
+        if not binding.notebook:
+            return "notebook_not_enabled"
+        owner = await self._run_owner(binding)
+        if owner is None:
+            return "agent_unavailable"
+        if find_secret(f"{key}\n{value}") is not None:
+            return "secret_like_content"
+        if _EMOTION.flags(f"{key} {value}"):
+            return "sensitive_content"
+        refused = await self._service.notebook_put(self._session, agent_id=binding.agent_id, owner_user_id=owner,
+                                                   run_id=binding.run_id, key=key, value=value)
+        if refused is None:
+            await self._audit_logger.record(actor=AuditActor.AGENT, action=AuditAction.AGENT_NOTEBOOK_WRITTEN,
+                                            resource=f"agentnotebook:{binding.agent_id}:put:run:{binding.run_id}",
+                                            result=AuditResult.SUCCESS, user_id=owner)
+        return refused
 
     async def route_model(self, binding: AgentRunBinding, arguments: Mapping[str, Any]) -> RoutedModelCall | str:
         """docs/29 §12: the request names a role and a preference only — a
@@ -697,7 +733,7 @@ class _PresentUserRun:
         raise NotImplementedError("run status is read from the run record")
 
     async def purge(self, agent_id: uuid.UUID) -> None:
-        return None
+        await self._service.purge_runtime_state(self._session, agent_id)
 
     async def export(self, agent_id: uuid.UUID) -> bytes:
         return b""
@@ -893,6 +929,11 @@ class AgentFactoryFacade:
             # docs/29 §14.4: no run of a deleted agent continues, and no paused
             # action of one can still be confirmed.
             await self._stop_runs(session, audit, principal, agent_id, CancelReason.DELETED)
+            # The runtime keeps nothing past the agent (notebook, inbox).
+            port = _PresentUserRun(tasks=self._tasks, service=self._factory.service, session=session,
+                                   principal=principal, audit=audit)
+            await NativeRuntimeProvider(port).deprovision(
+                RuntimeRef(runtime_id=NATIVE_RUNTIME_ID, agent_id=agent_id, version=loaded[0].current_version))
         await self._factory.service.delete(session, loaded[0])
         await self._audit(audit, principal, AuditAction.AGENT_DELETED, f"agentdefinition:{agent_id}")
 
@@ -1075,6 +1116,22 @@ class AgentFactoryFacade:
         await service.resume(session, definition)
         await self._audit(audit, principal, AuditAction.AGENT_RESUMED, f"agentdefinition:{agent_id}")
         return service.view(definition, current)
+
+    async def notebook(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                       audit: AuditLogger) -> NotebookResponse:
+        await self._owned(session, audit, principal, agent_id, Operation.READ)
+        rows = await self._factory.service.notebook_entries(session, agent_id, principal.user_id)
+        return NotebookResponse(items=tuple(
+            self._factory.service.notebook_view(r) for r in rows if r.owner_user_id == principal.user_id
+        ))
+
+    async def clear_notebook(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                             audit: AuditLogger) -> None:
+        """Removing the agent's own notes only removes: no confirmation."""
+
+        await self._owned(session, audit, principal, agent_id, Operation.READ)
+        await self._factory.service.notebook_clear(session, agent_id)
+        await self._audit(audit, principal, AuditAction.AGENT_NOTEBOOK_CLEARED, f"agentnotebook:{agent_id}")
 
     async def _owned_run(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
                          agent_id: uuid.UUID, run_id: uuid.UUID) -> AgentRunRow:

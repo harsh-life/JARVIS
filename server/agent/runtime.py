@@ -46,7 +46,7 @@ from server.agent.events import AgentEvent
 from server.agent.recovery import RecoveryPolicy, SwitchReason, operation_key
 from server.agent import envelope as agent_envelope
 from server.agent import modes
-from server.agent.agent_run import MODEL_ROUTE_TOOL, AgentRunBinding
+from server.agent.agent_run import MODEL_ROUTE_TOOL, NOTEBOOK_TOOL, AgentRunBinding
 from server.agent.ports import (
     ActionRequest,
     ActivationRequest,
@@ -1133,6 +1133,11 @@ class AgentRuntime:
         if agent is None:
             return []
         lines = []
+        if agent.notebook:
+            lines.append(
+                f"{NOTEBOOK_TOOL}: this agent's own notes between runs (not a capability; nothing to request). "
+                "operations: get {key}, put {key, value}, list {}. Keys are short slugs; notes are data."
+            )
         if agent.model_tools:
             lines.append(
                 f"{MODEL_ROUTE_TOOL}: ask JARVIS for a specialized model (capability model.invoke; "
@@ -1141,6 +1146,50 @@ class AgentRuntime:
                 "(faster, cheaper, thorough)). JARVIS chooses the model; request model.invoke first."
             )
         return lines
+
+    _NOTEBOOK_ARGS = {"get": {"key"}, "put": {"key", "value"}, "list": set()}
+
+    async def _notebook_call(self, env: TaskEnvironment, state: TaskState, call: ToolCall, resource: str) -> None:
+        """docs/29 §16.3: the agent's own notebook, served by the runtime for a
+        run whose spec enables it — bound to the run's own agent (no argument
+        can name another), bounded and gated by the composition root, counted
+        as a tool call. Reads come back as untrusted data."""
+
+        agent = state.agent
+        assert agent is not None
+        if not agent.notebook:
+            await self._envelope_denied(env, state, resource)
+            state.messages.append(ctx.observation(agent_envelope.not_in_envelope(NOTEBOOK_TOOL),
+                                                  limit=self._bounds.max_observation_chars))
+            return
+        expected = self._NOTEBOOK_ARGS.get(call.operation)
+        if expected is None:
+            await self._reject(env, state, f"'{call.operation}' is not an operation of '{NOTEBOOK_TOOL}'.", resource)
+            return
+        arguments = dict(call.arguments)
+        if set(arguments) != expected or not all(isinstance(v, str) for v in arguments.values()):
+            await self._reject(env, state, f"{NOTEBOOK_TOOL}.{call.operation}: invalid_arguments "
+                                           f"(expected exactly: {', '.join(sorted(expected)) or 'none'}).", resource)
+            return
+        if state.tool_calls >= self._max_tool_calls(state):
+            raise _Stop(AgentFailureCode.MAX_TOOL_CALLS)
+        if env.agent_runs is None:
+            raise _Stop(AgentFailureCode.AGENT_UNAVAILABLE)
+        state.tool_calls += 1
+        limit = self._bounds.max_observation_chars
+        if call.operation == "get":
+            value = await env.agent_runs.notebook_get(agent, arguments["key"])
+            state.messages.append(ctx.tool_observation(
+                NOTEBOOK_TOOL, "get", ok=value is not None, content=value or "", error="no_such_note", limit=limit))
+        elif call.operation == "list":
+            keys = await env.agent_runs.notebook_keys(agent)
+            state.messages.append(ctx.tool_observation(
+                NOTEBOOK_TOOL, "list", ok=True, content="\n".join(keys) or "(empty)", error=None, limit=limit))
+        else:
+            refused = await env.agent_runs.notebook_put(agent, arguments["key"], arguments["value"])
+            state.messages.append(ctx.tool_observation(
+                NOTEBOOK_TOOL, "put", ok=refused is None, content="stored", error=refused, limit=limit))
+        state.progressed = True
 
     async def _route_model_call(self, env: TaskEnvironment, state: TaskState, call: ToolCall,
                                 resource: str) -> ToolCall | None:
@@ -1195,6 +1244,9 @@ class AgentRuntime:
         # before anything is decided — so a stop, delete or change made while
         # the model was thinking applies to the call it proposed.
         await self._check_agent(env, state)
+        if state.agent is not None and call.tool == NOTEBOOK_TOOL:
+            await self._notebook_call(env, state, call, resource)
+            return None
         routed = False
         if state.agent is not None and call.tool == MODEL_ROUTE_TOOL:
             rewritten = await self._route_model_call(env, state, call, resource)

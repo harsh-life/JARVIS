@@ -28,6 +28,7 @@ from shared.schemas.agent_factory import (
     CompiledAgentSpecView,
     CompileOutcome,
     CreateAgentRequest,
+    NotebookResponse,
 )
 from shared.schemas.authorization import Principal
 
@@ -92,6 +93,14 @@ class AgentFactoryPort(Protocol):
         self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
         confirmation_token: str | None, audit: AuditLogger,
     ) -> AgentView: ...
+
+    async def notebook(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+    ) -> NotebookResponse: ...
+
+    async def clear_notebook(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+    ) -> None: ...
 
 
 __all__ = ["AgentFactoryPort"]
