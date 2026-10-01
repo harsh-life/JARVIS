@@ -101,6 +101,19 @@ class RoutedModelCall:
 
 
 @dataclass(frozen=True)
+class ModelCallFacts:
+    """What a Model Gateway request names (docs/29 §12.2): an alias —
+    `agent-model` for the run's own model, `model-tool:<id>` for a model
+    reached as a tool — and, where the runtime already holds the configured
+    provider, which provider and model it is about to call, so the gateway can
+    refuse anything but exactly the approved one. Never an endpoint or a key."""
+
+    alias: str
+    provider: str | None = None
+    model: str | None = None
+
+
+@dataclass(frozen=True)
 class GatewayAdmission:
     """The Agent Gateway's answer to one request of the run: go ahead
     (`ticket`, handed back to `settle` with the response), the stored response
@@ -142,9 +155,17 @@ class AgentRunPort(Protocol):
         binding's. Anything else is the reason the run must stop."""
         ...
 
-    async def admit(self, binding: AgentRunBinding, request: AgentGatewayRequest) -> GatewayAdmission:
+    async def admit(self, binding: AgentRunBinding, request: AgentGatewayRequest,
+                    model: ModelCallFacts | None = None) -> GatewayAdmission:
         """docs/29 §11, §13.3 steps 1–3: one request of the run, through the
-        Agent Gateway — token, run, agent, freshness, nonce, replay."""
+        Agent Gateway — token, run, agent, freshness, nonce, replay; for a
+        model request (§12.2) also the alias, the approved profile, the
+        owner's current model policy and the exact model."""
+        ...
+
+    async def agent_budget(self, binding: AgentRunBinding, *, projected_cost: float) -> str | None:
+        """docs/29 §10.5 / §12.2: `None`, or `agent_budget_exhausted` when a
+        paid call would take the agent's month past its budget (read live)."""
         ...
 
     async def settle(self, binding: AgentRunBinding, admission: GatewayAdmission,
@@ -177,6 +198,7 @@ __all__ = [
     "AgentRunBinding",
     "AgentRunPort",
     "GatewayAdmission",
+    "ModelCallFacts",
     "RoutedModelCall",
     "RunTokens",
     "gateway_request",

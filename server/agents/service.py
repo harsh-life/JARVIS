@@ -55,6 +55,7 @@ from server.storage.models import (
     AgentRunUsageRow,
     AgentSpecVersionRow,
     AgentTask,
+    UsageEvent,
 )
 from shared.schemas.agent import AgentFailureCode, AgentResult, AgentTaskStatus
 from shared.schemas.agent_factory import (
@@ -585,6 +586,24 @@ class AgentDefinitionService:
             .where(AgentRunRow.agent_id == agent_id, AgentRunRow.started_at >= start)
         )).scalar_one()
         return float(total or 0.0)
+
+    async def month_usage(self, session: AsyncSession, agent_id: uuid.UUID, now: datetime | None = None) -> float:
+        """docs/29 §10.5, read live for every paid call: what the agent's runs
+        started this calendar month (UTC) have spent — finished runs' totals,
+        plus the usage already attributed to its live runs (a live run's
+        `cost_total` is written when it ends), so concurrent runs share it."""
+
+        now = now or self._clock()
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        live = (await session.execute(
+            select(func.coalesce(func.sum(UsageEvent.estimated_cost), 0.0))
+            .select_from(AgentRunUsageRow)
+            .join(UsageEvent, UsageEvent.usage_id == AgentRunUsageRow.usage_id)
+            .join(AgentRunRow, AgentRunRow.run_id == AgentRunUsageRow.run_id)
+            .where(AgentRunRow.agent_id == agent_id, AgentRunRow.started_at >= start,
+                   AgentRunRow.finished_at.is_(None))
+        )).scalar_one()
+        return await self.month_spend(session, agent_id, now) + float(live or 0.0)
 
     async def run_cancelled(self, session: AsyncSession, run_id: uuid.UUID, *, reason: str) -> AgentRunRow | None:
         run = await session.get(AgentRunRow, run_id, populate_existing=True)

@@ -48,7 +48,14 @@ from server.agent.events import AgentEvent
 from server.agent.recovery import RecoveryPolicy, SwitchReason, operation_key
 from server.agent import envelope as agent_envelope
 from server.agent import modes
-from server.agent.agent_run import MODEL_ROUTE_TOOL, NOTEBOOK_TOOL, AgentRunBinding, GatewayAdmission, gateway_request
+from server.agent.agent_run import (
+    MODEL_ROUTE_TOOL,
+    NOTEBOOK_TOOL,
+    AgentRunBinding,
+    GatewayAdmission,
+    ModelCallFacts,
+    gateway_request,
+)
 from server.agent.ports import (
     ActionRequest,
     ActivationRequest,
@@ -167,6 +174,10 @@ _GATEWAY_STOPS: dict[str, AgentFailureCode] = {
     "budget_exceeded": AgentFailureCode.BUDGET_EXCEEDED,
     "agent_budget_exhausted": AgentFailureCode.AGENT_BUDGET_EXHAUSTED,
 }
+
+
+# docs/29 §11.2: the only model name an agent run asks the Model Gateway for.
+AGENT_MODEL_ALIAS = "agent-model"
 
 
 def _gateway_stop(code: str) -> AgentFailureCode:
@@ -884,7 +895,9 @@ class AgentRuntime:
         if state.agent is not None:
             # docs/29 §12: an agent run's model call is a request to the Model
             # Gateway — its model token, a fresh nonce — before anything else.
-            admission = await self._admit(env, state, RunTokenPurpose.MODEL, _model_digest(provider, messages))
+            admission = await self._admit(env, state, RunTokenPurpose.MODEL, _model_digest(provider, messages),
+                                          model=ModelCallFacts(alias=AGENT_MODEL_ALIAS, provider=spec.provider,
+                                                               model=spec.model))
             if admission.refused is not None:
                 raise _Stop(_gateway_stop(admission.refused))
             if admission.replayed is not None:
@@ -1441,8 +1454,28 @@ class AgentRuntime:
             self._breaker.record_denial(state)
             return None
 
+        admission = None
+        if routed:
+            # docs/29 §12: a model reached as a tool is a Model Gateway request
+            # too — the run's model token, the alias of that model tool, the
+            # spec's `model.invoke`, the profile and the owner's policy, now —
+            # after the envelope gate and the engine decided the call itself.
+            admission = await self._admit(
+                env, state, RunTokenPurpose.MODEL,
+                operation_key(handle.tool_id, call.operation, platform.value, call.arguments, resource_ref, scope),
+                model=ModelCallFacts(alias=f"model-tool:{handle.tool_id}"))
+            if admission.refused is not None:
+                raise _Stop(_gateway_stop(admission.refused))
+            if admission.replayed is not None:
+                for role, content in admission.replayed.get("observations", []):
+                    state.messages.append(ctx.ChatMessage(str(role), str(content)))
+                return None
+        before = len(state.messages)
         output = await self._execute(env, state, handle, call.operation, platform, dict(call.arguments),
                                      resource_ref, scope, remaining)
+        if admission is not None:
+            await self._settle(env, state, admission,
+                               {"observations": [[m.role, m.content] for m in state.messages[before:]]})
         self._maybe_wait_for_platform(state, output, tool=handle.tool_id, operation=call.operation,
                                       arguments=dict(call.arguments), platform=platform,
                                       resource_ref=call.resource_ref, scope=call.scope)
@@ -1671,6 +1704,16 @@ class AgentRuntime:
                               resource=f"limit:{exc.limit}")
             raise _Stop(AgentFailureCode.BUDGET_EXCEEDED if exc.is_budget
                         else AgentFailureCode.RATE_LIMITED) from None
+        if state.agent is not None and projected > 0:
+            # docs/29 §10.5 / §12.2: then the agent's month, read live from
+            # attributed usage — concurrent runs of one agent share it.
+            if env.agent_runs is None:
+                raise _Stop(AgentFailureCode.AGENT_UNAVAILABLE)
+            refused = await env.agent_runs.agent_budget(state.agent, projected_cost=projected)
+            if refused is not None:
+                await self._event(env, state, AgentEvent.LIMIT_EXCEEDED, AuditResult.BLOCKED,
+                                  resource="limit:agent_monthly_budget")
+                raise _Stop(_gateway_stop(refused))
 
     async def _meter_model(self, env: TaskEnvironment, state: TaskState, provider: ModelProvider,
                            *, units: int, cost: float) -> None:
@@ -2059,13 +2102,14 @@ class AgentRuntime:
         self._breaker.record_denial(state)
 
     async def _admit(self, env: TaskEnvironment, state: TaskState, purpose: RunTokenPurpose,
-                     digest: str) -> GatewayAdmission:
+                     digest: str, *, model: ModelCallFacts | None = None) -> GatewayAdmission:
         """One request of this agent run to the Agent Gateway (docs/29 §11)."""
 
         assert state.agent is not None
         if env.agent_runs is None:
             raise _Stop(AgentFailureCode.AGENT_UNAVAILABLE)
-        admission = await env.agent_runs.admit(state.agent, gateway_request(state.agent, purpose, digest))
+        admission = await env.agent_runs.admit(state.agent, gateway_request(state.agent, purpose, digest),
+                                               model=model)
         outcome = ("refused" if admission.refused is not None
                    else "replayed" if admission.replayed is not None else "admitted")
         self._trace(state, f"agent.gateway.{outcome}", resource=f"gateway:{purpose.value}",

@@ -44,9 +44,10 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.agent.agent_run import AgentRunBinding, GatewayAdmission, RoutedModelCall, RunTokens
+from server.agent.agent_run import AgentRunBinding, GatewayAdmission, ModelCallFacts, RoutedModelCall, RunTokens
 from server.agents.compiler import OwnerContext, parse_draft, revalidation_required
-from server.agents.gateway.core import AgentGateway, GatewayAdmitted, GatewayDenied, GatewayReplayed
+from server.agents.gateway.core import AgentGateway, GatewayAdmitted, GatewayContext, GatewayDenied, GatewayReplayed
+from server.agents.gateway.model_gateway import budget_refusal, model_refusal
 from server.agents.gateway.model_routing import RouteRefused, route_model_call
 from server.agents.instructions import assemble_input
 from server.agents.providers.native import NativeRuntimeProvider
@@ -682,8 +683,30 @@ class AgentRunCoordinator:
             return AgentFailureCode.SPEC_CHANGED
         return None
 
-    async def admit(self, binding: AgentRunBinding, request: AgentGatewayRequest) -> GatewayAdmission:
-        outcome = await self._gateway.admit(self._session, request, is_member=self._is_member)
+    async def _model_screen(self, model: ModelCallFacts | None, context: GatewayContext) -> GatewayDenied | None:
+        """docs/29 §12.2: the Model Gateway's own check — the alias, the
+        approved profile, the owner's model policy now, the exact model."""
+
+        not_allowed = AgentGatewayErrorCode.MODEL_NOT_ALLOWED
+        if model is None:
+            return GatewayDenied(not_allowed, "no_alias")
+        loaded = await self._service.load(self._session, context.agent_id, fresh=True)
+        if loaded is None or loaded[1] is None or loaded[1].spec_hash != context.spec_hash:
+            return GatewayDenied(AgentGatewayErrorCode.AGENT_UNAVAILABLE, "spec")
+        definition, spec = loaded
+        owner_ref = await self._factory.primary_model_ref(self._session, user_id=definition.owner_user_id,
+                                                          graph_id=definition.graph_id)
+        refused = model_refusal(spec, self._factory.registries, alias=model.alias, provider=model.provider,
+                                model=model.model, owner_primary_model_ref=owner_ref)
+        return GatewayDenied(not_allowed, refused) if refused is not None else None
+
+    async def admit(self, binding: AgentRunBinding, request: AgentGatewayRequest,
+                    model: ModelCallFacts | None = None) -> GatewayAdmission:
+        screen = None
+        if request.purpose is RunTokenPurpose.MODEL:
+            async def screen(context: GatewayContext) -> GatewayDenied | None:
+                return await self._model_screen(model, context)
+        outcome = await self._gateway.admit(self._session, request, is_member=self._is_member, screen=screen)
         if isinstance(outcome, GatewayDenied):
             await self._denied(binding, request.purpose, outcome)
             return GatewayAdmission(refused=outcome.code.value)
@@ -695,6 +718,14 @@ class AgentRunCoordinator:
                      response: Mapping[str, Any]) -> None:
         if isinstance(admission.ticket, GatewayAdmitted):
             await self._gateway.settle(self._session, admission.ticket, _scrubbed(response))
+
+    async def agent_budget(self, binding: AgentRunBinding, *, projected_cost: float) -> str | None:
+        loaded = await self._service.load(self._session, binding.agent_id, fresh=True)
+        if loaded is None or loaded[1] is None:
+            return AgentGatewayErrorCode.AGENT_UNAVAILABLE.value
+        spent = await self._service.month_usage(self._session, binding.agent_id)
+        return budget_refusal(projected_cost=projected_cost, month_spent=spent,
+                              month_budget=loaded[1].budget.per_month)
 
     async def usage_recorded(self, binding: AgentRunBinding, *, usage_id: uuid.UUID, cost: float) -> None:
         await self._service.attribute_usage(self._session, binding.run_id, usage_id)

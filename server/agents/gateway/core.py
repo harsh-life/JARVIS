@@ -101,6 +101,9 @@ class GatewayReplayed:
 
 Authenticated = GatewayContext | GatewayDenied
 Admission = GatewayAdmitted | GatewayReplayed | GatewayDenied
+# A gateway-specific check of an authenticated request, before its nonce is
+# recorded (the Model Gateway's, docs/29 §12.2).
+Screen = Callable[[GatewayContext], Awaitable["GatewayDenied | None"]]
 
 
 class AgentGateway:
@@ -169,9 +172,12 @@ class AgentGateway:
                               spec_hash=run.spec_hash, owner_user_id=run.owner_user_id, purpose=purpose,
                               token_id=row.token_id)
 
-    async def admit(self, session: AsyncSession, request: AgentGatewayRequest, *, is_member: IsMember) -> Admission:
+    async def admit(self, session: AsyncSession, request: AgentGatewayRequest, *, is_member: IsMember,
+                    screen: Screen | None = None) -> Admission:
         """§13.3 steps 1–3 for one request: the token, the run, the agent,
-        then freshness, the nonce, and the replay/idempotency ledger."""
+        then freshness, the nonce, the gateway-specific `screen` (the Model
+        Gateway's alias, profile and policy check, §12.2), and the
+        replay/idempotency ledger."""
 
         context = await self.authenticate(session, run_id=request.run_id, agent_id=request.agent_id,
                                           purpose=request.purpose, token=request.run_token, is_member=is_member)
@@ -181,6 +187,10 @@ class AgentGateway:
             return GatewayDenied(AgentGatewayErrorCode.STALE_REQUEST, "sent_at")
         if not run_tokens.well_formed_nonce(request.request_nonce):
             return GatewayDenied(AgentGatewayErrorCode.SCHEMA_INVALID, "nonce")
+        if screen is not None:
+            screened = await screen(context)
+            if screened is not None:
+                return screened
         seen = await self._service.nonce_entry(session, context.token_id, request.request_nonce)
         if seen is not None:
             if seen.request_digest != request.request_digest:
