@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.security.audit import AuditLogger
 from shared.schemas.agent_factory import (
     AgentDetail,
+    AgentInboxItemView,
+    AgentInboxResponse,
     AgentListResponse,
     AgentRunListResponse,
     AgentRunView,
@@ -93,6 +95,19 @@ class AgentFactoryPort(Protocol):
         self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
         confirmation_token: str | None, audit: AuditLogger,
     ) -> AgentView: ...
+
+    async def inbox(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID | None, unread: bool,
+        audit: AuditLogger,
+    ) -> AgentInboxResponse: ...
+
+    async def mark_inbox_read(
+        self, session: AsyncSession, *, principal: Principal, item_id: uuid.UUID, audit: AuditLogger
+    ) -> AgentInboxItemView: ...
+
+    async def delete_inbox_item(
+        self, session: AsyncSession, *, principal: Principal, item_id: uuid.UUID, audit: AuditLogger
+    ) -> None: ...
 
     async def notebook(
         self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger

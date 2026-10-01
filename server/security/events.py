@@ -177,6 +177,9 @@ class AuditAction(str, Enum):
     # `resource` names the agent and the operation — never a key or a note.
     AGENT_NOTEBOOK_WRITTEN = "agent.notebook.written"
     AGENT_NOTEBOOK_CLEARED = "agent.notebook.cleared"
+    # `resource` is `agentinbox:<item_id>` — never the result's text.
+    AGENT_INBOX_DELIVERED = "agent.inbox.delivered"
+    AGENT_INBOX_DELETED = "agent.inbox.deleted"
     # `resource` is `capability:<name>` or `tool:<tool>.<operation>`.
     AGENT_ENVELOPE_DENIED = "agent.envelope.denied"
 

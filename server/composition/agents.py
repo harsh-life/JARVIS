@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -97,6 +98,8 @@ from shared.schemas.agent_factory import (
     AgentStatus,
     AgentView,
     CancelReason,
+    AgentInboxItemView,
+    AgentInboxResponse,
     CompiledAgentSpec,
     NotebookResponse,
     RunHandle,
@@ -575,6 +578,22 @@ def agent_tool_definitions(factory: AgentFactory) -> list[ToolDefinition]:
 # ── present-user runs (docs/29 §7.4, Phase 2) ─────────────────────────────
 
 _EMOTION = LexiconEmotionClassifier()
+INBOX_MAX_BODY_CHARS = 16_000  # docs/29 §22.1
+_UNSAFE_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def inbox_body(response: str | None) -> tuple[str, bool, bool]:
+    """A run's result as inbox text: (body, withheld, truncated). Plain text
+    only — control characters (terminal escapes included) are dropped — and
+    bounded. A result that looks like it carries a credential is not stored
+    at all (12 §2: a secret never lands in a record)."""
+
+    text = _UNSAFE_CHARS.sub("", response or "")
+    if find_secret(text) is not None:
+        return "", True, False
+    if len(text) > INBOX_MAX_BODY_CHARS:
+        return text[:INBOX_MAX_BODY_CHARS], False, True
+    return text, False, False
 
 
 class AgentRunCoordinator:
@@ -621,6 +640,15 @@ class AgentRunCoordinator:
         await self._audit(AuditAction.AGENT_RUN_FINISHED, run,
                           f"agentrun:{binding.run_id}:{status.value}{suffix}",
                           AuditResult.SUCCESS if status is AgentTaskStatus.COMPLETED else AuditResult.FAILURE)
+        if run is not None:
+            # docs/29 §19: the result goes to its owner's inbox, as data, and
+            # nowhere else. The run record's own status says how it ended (a
+            # stop recorded first stays a stop).
+            body, withheld, truncated = inbox_body(response)
+            item = await self._service.inbox_deliver(self._session, run, body=body, withheld=withheld,
+                                                     truncated=truncated)
+            if item is not None:
+                await self._audit(AuditAction.AGENT_INBOX_DELIVERED, run, f"agentinbox:{item.item_id}")
 
     async def _run_owner(self, binding: AgentRunBinding) -> uuid.UUID | None:
         run = await self._session.get(AgentRunRow, binding.run_id)
@@ -1001,7 +1029,7 @@ class AgentFactoryFacade:
         if result is not None and result.status is AgentTaskStatus.AWAITING_CONFIRMATION:
             await service.run_waiting(session, run_id)
         run = await service.get_run(session, run_id) or run
-        return service.run_view(run, task=result)
+        return service.run_view(run, task=result, inbox_item_id=await service.inbox_item_for_run(session, run_id))
 
     def _run_tasks(self) -> "AgentTaskFacade":
         if self._tasks is None:
@@ -1117,6 +1145,41 @@ class AgentFactoryFacade:
         await self._audit(audit, principal, AuditAction.AGENT_RESUMED, f"agentdefinition:{agent_id}")
         return service.view(definition, current)
 
+    async def inbox(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID | None,
+                    unread: bool, audit: AuditLogger) -> AgentInboxResponse:
+        """The caller's own inbox — the query is scoped to the authenticated
+        owner, and each item is re-checked against it."""
+
+        service = self._factory.service
+        if agent_id is not None:
+            await self._owned(session, audit, principal, agent_id, Operation.READ)
+        items = await service.inbox_list(session, owner_user_id=principal.user_id, agent_id=agent_id, unread=unread)
+        return AgentInboxResponse(items=tuple([
+            await service.inbox_view(session, i) for i in items if i.owner_user_id == principal.user_id
+        ]))
+
+    async def _owned_item(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
+                          item_id: uuid.UUID):
+        item = await self._factory.service.inbox_item(session, item_id)
+        if item is None or item.owner_user_id != principal.user_id:
+            raise _NOT_FOUND
+        # The engine still decides: the item is reachable only through the
+        # owner's own (live, undeleted) agent.
+        await self._owned(session, audit, principal, item.agent_id, Operation.READ)
+        return item
+
+    async def mark_inbox_read(self, session: AsyncSession, *, principal: Principal, item_id: uuid.UUID,
+                              audit: AuditLogger) -> AgentInboxItemView:
+        item = await self._owned_item(session, audit, principal, item_id)
+        await self._factory.service.inbox_mark_read(session, item)
+        return await self._factory.service.inbox_view(session, item)
+
+    async def delete_inbox_item(self, session: AsyncSession, *, principal: Principal, item_id: uuid.UUID,
+                                audit: AuditLogger) -> None:
+        item = await self._owned_item(session, audit, principal, item_id)
+        await self._factory.service.inbox_delete(session, item)
+        await self._audit(audit, principal, AuditAction.AGENT_INBOX_DELETED, f"agentinbox:{item_id}")
+
     async def notebook(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
                        audit: AuditLogger) -> NotebookResponse:
         await self._owned(session, audit, principal, agent_id, Operation.READ)
@@ -1146,14 +1209,16 @@ class AgentFactoryFacade:
         await self._owned(session, audit, principal, agent_id, Operation.READ)
         service = self._factory.service
         runs = await service.list_runs(session, agent_id=agent_id, owner_user_id=principal.user_id)
-        return AgentRunListResponse(items=tuple(
-            service.run_view(r) for r in runs if r.owner_user_id == principal.user_id
-        ))
+        return AgentRunListResponse(items=tuple([
+            service.run_view(r, inbox_item_id=await service.inbox_item_for_run(session, r.run_id))
+            for r in runs if r.owner_user_id == principal.user_id
+        ]))
 
     async def get_run(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
                       run_id: uuid.UUID, audit: AuditLogger) -> AgentRunView:
         run = await self._owned_run(session, audit, principal, agent_id, run_id)
-        return self._factory.service.run_view(run)
+        service = self._factory.service
+        return service.run_view(run, inbox_item_id=await service.inbox_item_for_run(session, run_id))
 
 
 __all__ = [

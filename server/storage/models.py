@@ -1082,3 +1082,29 @@ class AgentNotebookEntryRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (Index("ix_agent_notebook_entries_owner", "owner_user_id"),)
+
+
+class AgentInboxItemRow(Base):
+    """docs/29 §19 — one run's result, delivered to its owner and nobody else.
+    Data, never authority: plain text, bounded, not parsed. Deleted by the
+    owner or with the agent."""
+
+    __tablename__ = "agent_inbox_items"
+
+    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_definitions.agent_id"), nullable=False)
+    run_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_runs.run_id"), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    body: Mapped[str] = mapped_column(String, nullable=False)
+    withheld: Mapped[bool] = mapped_column(nullable=False, default=False)
+    truncated: Mapped[bool] = mapped_column(nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('completed','failed','cancelled')", name="ck_agent_inbox_items_status"),
+        Index("ix_agent_inbox_items_owner_created", "owner_user_id", "created_at"),
+        Index("ix_agent_inbox_items_agent", "agent_id"),
+    )

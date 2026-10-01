@@ -17,6 +17,9 @@ conventions:
   of the present owner, in the spec's mode, and answers with the run and its
   task (`202`: a run paused for confirmation is confirmed like any task). The
   body is empty: nothing about the run is the request's to name.
+* `GET /agents/inbox` (owner), `POST /agents/inbox/{item_id}/read`, `DELETE
+  /agents/inbox/{item_id}`: each finished run's result, delivered to its
+  owner only, as plain bounded text.
 * `POST /agents/{id}/runs/{run_id}/cancel` stops a run and `POST
   /agents/{id}/pause` pauses the agent and stops its live runs — the safe
   direction, never confirmed. `POST /agents/{id}/resume` gives authority back:
@@ -42,6 +45,8 @@ from server.gateway.errors import AppError
 from server.security.audit import AuditLogger
 from shared.schemas.agent_factory import (
     AgentDetail,
+    AgentInboxItemView,
+    AgentInboxResponse,
     AgentListResponse,
     AgentRunListResponse,
     AgentRunView,
@@ -118,6 +123,44 @@ async def list_agents(
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> AgentListResponse:
     return await _factory(request).list(session, principal=principal, audit=audit)
+
+
+# Declared before `/agents/{agent_id}` so `inbox` is never read as an agent id.
+@router.get("/agents/inbox", response_model=AgentInboxResponse)
+async def get_inbox(
+    request: Request,
+    agent_id: uuid.UUID | None = None,
+    unread: bool = False,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentInboxResponse:
+    return await _factory(request).inbox(session, principal=principal, agent_id=agent_id, unread=unread,
+                                         audit=audit)
+
+
+@router.post("/agents/inbox/{item_id}/read", response_model=AgentInboxItemView)
+async def mark_inbox_read(
+    request: Request,
+    item_id: uuid.UUID,
+    body: RunAgentRequest,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentInboxItemView:
+    return await _factory(request).mark_inbox_read(session, principal=principal, item_id=item_id, audit=audit)
+
+
+@router.delete("/agents/inbox/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_inbox_item(
+    request: Request,
+    item_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> Response:
+    await _factory(request).delete_inbox_item(session, principal=principal, item_id=item_id, audit=audit)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/agents/{agent_id}", response_model=AgentDetail)

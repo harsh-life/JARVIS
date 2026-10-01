@@ -732,6 +732,29 @@ class AgentRunListResponse(_Strict):
     items: tuple[AgentRunView, ...]
 
 
+class AgentInboxItemView(_Strict):
+    """docs/29 §19 / §23.3: one run's result for its owner. `body` is plain
+    text written by the agent — data to show, never instructions to follow.
+    `withheld` says the result looked like it carried a credential and was
+    not stored; `truncated` that it was cut to the inbox bound."""
+
+    item_id: UUID
+    agent_id: UUID
+    agent_name: str | None
+    run_id: UUID
+    status: Literal["completed", "failed", "cancelled"]
+    failure_code: str | None = None
+    body: str
+    withheld: bool = False
+    truncated: bool = False
+    created_at: datetime
+    read_at: datetime | None = None
+
+
+class AgentInboxResponse(_Strict):
+    items: tuple[AgentInboxItemView, ...]
+
+
 class NotebookEntryView(_Strict):
     """docs/29 §16.3: one of the agent's own notes, shown to its owner. The
     value is what the agent wrote — data, never instructions."""
@@ -848,6 +871,8 @@ __all__ = [
     "AgentConfirmationCard",
     "AgentDetail",
     "AgentDraft",
+    "AgentInboxItemView",
+    "AgentInboxResponse",
     "AgentListResponse",
     "AgentModelProfile",
     "AgentRunContext",

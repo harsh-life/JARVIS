@@ -46,6 +46,7 @@ from server.agents.rendering import budget_line, can_lines, cannot_lines, spec_v
 from server.storage.models import (
     AgentCompilePreviewRow,
     AgentDefinitionRow,
+    AgentInboxItemRow,
     AgentNotebookEntryRow,
     AgentRunRow,
     AgentSpecVersionRow,
@@ -55,6 +56,7 @@ from shared.schemas.agent import AgentFailureCode, AgentResult, AgentTaskStatus
 from shared.schemas.agent_factory import (
     AgentDraft,
     AgentRunStatus,
+    AgentInboxItemView,
     AgentRunView,
     AgentStatus,
     NotebookEntryView,
@@ -337,6 +339,68 @@ class AgentDefinitionService:
         run records: removed with the agent (docs/29 §14.4)."""
 
         await self.notebook_clear(session, agent_id)
+        await session.execute(delete(AgentInboxItemRow).where(AgentInboxItemRow.agent_id == agent_id))
+        await session.flush()
+
+    # ── the inbox (docs/29 §19) ─────────────────────────────────────────
+
+    async def inbox_deliver(self, session: AsyncSession, run: AgentRunRow, *, body: str, withheld: bool,
+                            truncated: bool) -> AgentInboxItemRow | None:
+        """One item per finished run, to the run's owner — there is no other
+        recipient. Idempotent: a run already delivered is not delivered twice."""
+
+        if run.finished_at is None:
+            return None
+        existing = (await session.execute(
+            select(AgentInboxItemRow).where(AgentInboxItemRow.run_id == run.run_id))).scalars().first()
+        if existing is not None:
+            return existing
+        item = AgentInboxItemRow(
+            item_id=uuid.uuid4(), owner_user_id=run.owner_user_id, agent_id=run.agent_id, run_id=run.run_id,
+            status=run.status, failure_code=run.failure_code,
+            body=body if run.status == AgentRunStatus.COMPLETED.value else "",
+            withheld=withheld, truncated=truncated, created_at=self._clock(),
+        )
+        session.add(item)
+        await session.flush()
+        return item
+
+    async def inbox_list(self, session: AsyncSession, *, owner_user_id: uuid.UUID,
+                         agent_id: uuid.UUID | None = None, unread: bool = False,
+                         limit: int = 100) -> list[AgentInboxItemRow]:
+        query = select(AgentInboxItemRow).where(AgentInboxItemRow.owner_user_id == owner_user_id)
+        if agent_id is not None:
+            query = query.where(AgentInboxItemRow.agent_id == agent_id)
+        if unread:
+            query = query.where(AgentInboxItemRow.read_at.is_(None))
+        query = query.order_by(AgentInboxItemRow.created_at.desc(), AgentInboxItemRow.item_id).limit(limit)
+        return list((await session.execute(query)).scalars().all())
+
+    async def inbox_item(self, session: AsyncSession, item_id: uuid.UUID) -> AgentInboxItemRow | None:
+        return await session.get(AgentInboxItemRow, item_id)
+
+    async def inbox_mark_read(self, session: AsyncSession, item: AgentInboxItemRow) -> None:
+        if item.read_at is None:
+            item.read_at = self._clock()
+            await session.flush()
+
+    async def inbox_delete(self, session: AsyncSession, item: AgentInboxItemRow) -> None:
+        await session.delete(item)
+        await session.flush()
+
+    async def inbox_item_for_run(self, session: AsyncSession, run_id: uuid.UUID) -> uuid.UUID | None:
+        return (await session.execute(
+            select(AgentInboxItemRow.item_id).where(AgentInboxItemRow.run_id == run_id))).scalars().first()
+
+    async def inbox_view(self, session: AsyncSession, item: AgentInboxItemRow) -> AgentInboxItemView:
+        definition = await session.get(AgentDefinitionRow, item.agent_id)
+        return AgentInboxItemView(
+            item_id=item.item_id, agent_id=item.agent_id,
+            agent_name=definition.name if definition is not None else None, run_id=item.run_id,
+            status=item.status, failure_code=item.failure_code, body=item.body, withheld=item.withheld,
+            truncated=item.truncated, created_at=_as_utc(item.created_at),
+            read_at=_as_utc(item.read_at) if item.read_at else None,
+        )
 
     # ── the notebook (docs/29 §16.3) ────────────────────────────────────
 
@@ -531,12 +595,13 @@ class AgentDefinitionService:
         return list(rows)
 
     @staticmethod
-    def run_view(run: AgentRunRow, *, task: AgentResult | None = None) -> AgentRunView:
+    def run_view(run: AgentRunRow, *, task: AgentResult | None = None,
+                 inbox_item_id: uuid.UUID | None = None) -> AgentRunView:
         return AgentRunView(
             run_id=run.run_id, agent_id=run.agent_id, version=run.version, status=AgentRunStatus(run.status),
             failure_code=run.failure_code, task_id=run.task_id, started_at=_as_utc(run.started_at),
             finished_at=_as_utc(run.finished_at) if run.finished_at else None, cost_total=run.cost_total,
-            task=task,
+            inbox_item_id=inbox_item_id, task=task,
         )
 
     # ── views ───────────────────────────────────────────────────────────
