@@ -183,6 +183,12 @@ class AuditAction(str, Enum):
     AGENT_EXPORTED = "agent.exported"
     # `resource` is `capability:<name>` or `tool:<tool>.<operation>`.
     AGENT_ENVELOPE_DENIED = "agent.envelope.denied"
+    # Phase 3, the Agent Gateway (docs/29 §11.3, §26): `resource` is
+    # `agentrun:<run_id>` plus the gateways, a reason, or the refusal's code
+    # and detail identifier — never a token, a nonce or a request's content.
+    AGENT_TOKEN_ISSUED = "agent.token.issued"
+    AGENT_TOKEN_REVOKED = "agent.token.revoked"
+    AGENT_GATEWAY_DENIED = "agent.gateway.denied"
 
     # ── voice (docs/27). `resource` names a voice event id or a refusal
     # reason — never a transcript, never audio, never synthesized text.

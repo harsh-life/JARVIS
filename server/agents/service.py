@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Mapping
 
 from pydantic import ValidationError
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.agents.compiler import (
@@ -41,14 +41,17 @@ from server.agents.compiler import (
     compile_draft,
     verify_spec_hash,
 )
+from server.agents.gateway.tokens import RETENTION, TokenFacts
 from server.agents.registry import AgentRegistries
 from server.agents.rendering import budget_line, can_lines, cannot_lines, spec_view, trigger_line
 from server.storage.models import (
     AgentCompilePreviewRow,
     AgentDefinitionRow,
+    AgentGatewayNonceRow,
     AgentInboxItemRow,
     AgentNotebookEntryRow,
     AgentRunRow,
+    AgentRunTokenRow,
     AgentRunUsageRow,
     AgentSpecVersionRow,
     AgentTask,
@@ -249,6 +252,8 @@ class AgentDefinitionService:
             # The owner approved a recompiled version: that is the re-approval.
             definition.status = AgentStatus.ACTIVE.value
             definition.status_reason = None
+        # docs/29 §11.3: no run token outlives the spec it was issued for.
+        await self.revoke_agent_tokens(session, definition.agent_id, "spec_changed")
         await session.delete(preview)
         await session.flush()
         return definition, spec
@@ -328,6 +333,7 @@ class AgentDefinitionService:
         definition.name = None
         definition.deleted_at = now
         definition.updated_at = now
+        await self.revoke_agent_tokens(session, definition.agent_id, "deleted")
         # No run of a deleted agent stays open: a live one fails its next
         # step's re-validation, and its record says it was stopped.
         for run in await self.live_runs(session, definition.agent_id):
@@ -471,6 +477,7 @@ class AgentDefinitionService:
         definition.status = AgentStatus.PAUSED.value
         definition.status_reason = "owner_paused"
         definition.updated_at = self._clock()
+        await self.revoke_agent_tokens(session, definition.agent_id, "paused")
         await session.flush()
         return True
 
@@ -584,10 +591,12 @@ class AgentDefinitionService:
         if run is None or run.finished_at is not None:
             return run
         return await self.run_finished(session, run_id, status=AgentTaskStatus.CANCELLED, failure=reason,
-                                       cost=run.cost_total)
+                                       cost=run.cost_total, revoke_reason=reason)
 
     async def run_finished(self, session: AsyncSession, run_id: uuid.UUID, *, status: AgentTaskStatus,
-                           failure: str | None, cost: float) -> AgentRunRow | None:
+                           failure: str | None, cost: float, revoke_reason: str = "finished") -> AgentRunRow | None:
+        # docs/29 §11.3: a run's tokens end with it, whichever way it ends.
+        await self.revoke_run_tokens(session, run_id, revoke_reason)
         # Fresh: a stop recorded by another request is never overwritten.
         run = await session.get(AgentRunRow, run_id, populate_existing=True)
         if run is None or run.finished_at is not None:
@@ -598,6 +607,76 @@ class AgentDefinitionService:
         run.finished_at = self._clock()
         await session.flush()
         return run
+
+    # ── run tokens and the gateway's ledger (docs/29 §11.3, Phase 3) ────
+
+    async def store_run_token(self, session: AsyncSession, *, run: AgentRunRow, token_hash: str, purpose: str,
+                              expires_at: datetime) -> AgentRunTokenRow:
+        row = AgentRunTokenRow(token_id=uuid.uuid4(), token_hash=token_hash, run_id=run.run_id,
+                               agent_id=run.agent_id, spec_hash=run.spec_hash, purpose=purpose,
+                               issued_at=self._clock(), expires_at=expires_at)
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def run_token(self, session: AsyncSession, token_hash: str) -> AgentRunTokenRow | None:
+        """Read fresh on every request: a revocation made by any other request
+        applies to the very next one (no cache, AGENT-T8)."""
+
+        return (await session.execute(
+            select(AgentRunTokenRow).where(AgentRunTokenRow.token_hash == token_hash)
+            .execution_options(populate_existing=True)
+        )).scalars().first()
+
+    @staticmethod
+    def token_facts(row: AgentRunTokenRow) -> TokenFacts:
+        return TokenFacts(token_hash=row.token_hash, run_id=row.run_id, agent_id=row.agent_id,
+                          spec_hash=row.spec_hash, purpose=row.purpose, expires_at=_as_utc(row.expires_at),
+                          revoked_at=_as_utc(row.revoked_at) if row.revoked_at is not None else None)
+
+    async def _revoke(self, session: AsyncSession, where, reason: str) -> int:
+        result = await session.execute(
+            update(AgentRunTokenRow).where(where, AgentRunTokenRow.revoked_at.is_(None))
+            .values(revoked_at=self._clock(), revoked_reason=reason)
+            .execution_options(synchronize_session=False)
+        )
+        await session.flush()
+        return int(result.rowcount or 0)
+
+    async def revoke_run_tokens(self, session: AsyncSession, run_id: uuid.UUID, reason: str) -> int:
+        return await self._revoke(session, AgentRunTokenRow.run_id == run_id, reason)
+
+    async def revoke_agent_tokens(self, session: AsyncSession, agent_id: uuid.UUID, reason: str) -> int:
+        return await self._revoke(session, AgentRunTokenRow.agent_id == agent_id, reason)
+
+    async def nonce_entry(self, session: AsyncSession, token_id: uuid.UUID, nonce: str) -> AgentGatewayNonceRow | None:
+        return await session.get(AgentGatewayNonceRow, (token_id, nonce), populate_existing=True)
+
+    async def record_nonce(self, session: AsyncSession, *, token_id: uuid.UUID, nonce: str,
+                           digest: str) -> AgentGatewayNonceRow:
+        row = AgentGatewayNonceRow(token_id=token_id, nonce=nonce, request_digest=digest, status="in_progress",
+                                   response=None, created_at=self._clock())
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def settle_nonce(self, session: AsyncSession, *, token_id: uuid.UUID, nonce: str,
+                           response: Mapping[str, object]) -> None:
+        row = await self.nonce_entry(session, token_id, nonce)
+        if row is not None and row.status == "in_progress":
+            row.status = "done"
+            row.response = dict(response)
+            await session.flush()
+
+    async def prune_gateway(self, session: AsyncSession) -> int:
+        """Tokens (and their nonces) more than `RETENTION` past expiry."""
+
+        cutoff = self._clock() - RETENTION
+        stale = select(AgentRunTokenRow.token_id).where(AgentRunTokenRow.expires_at < cutoff)
+        await session.execute(delete(AgentGatewayNonceRow).where(AgentGatewayNonceRow.token_id.in_(stale)))
+        result = await session.execute(delete(AgentRunTokenRow).where(AgentRunTokenRow.expires_at < cutoff))
+        await session.flush()
+        return int(result.rowcount or 0)
 
     async def _synced(self, session: AsyncSession, run: AgentRunRow) -> AgentRunRow:
         """A run whose task ended without its live state (a restart, a cancel

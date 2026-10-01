@@ -30,6 +30,7 @@ and is resolved only when `server.models` builds an adapter (06 §1).
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import re
 import uuid
@@ -43,8 +44,9 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.agent.agent_run import AgentRunBinding, RoutedModelCall
+from server.agent.agent_run import AgentRunBinding, GatewayAdmission, RoutedModelCall, RunTokens
 from server.agents.compiler import OwnerContext, parse_draft, revalidation_required
+from server.agents.gateway.core import AgentGateway, GatewayAdmitted, GatewayDenied, GatewayReplayed
 from server.agents.gateway.model_routing import RouteRefused, route_model_call
 from server.agents.instructions import assemble_input
 from server.agents.providers.native import NativeRuntimeProvider
@@ -59,7 +61,7 @@ from server.capabilities.registry import (
 )
 from server.config.schema import LOCAL_MODEL_PROVIDERS, AppConfig
 from server.memory.gate import LexiconEmotionClassifier
-from server.security.secret_patterns import find_secret
+from server.security.secret_patterns import find_secret, redact_secrets
 from server.gateway.errors import AppError
 from server.gateway.security import SecurityCore
 from server.graph.authorization import AccessRequest, AuthorizationOutcome
@@ -91,6 +93,8 @@ from shared.schemas.agent_factory import (
     AgentDetail,
     AgentDraft,
     AgentListResponse,
+    AgentGatewayErrorCode,
+    AgentGatewayRequest,
     AgentRunContext,
     AgentRunListResponse,
     AgentRunStatus,
@@ -111,6 +115,7 @@ from shared.schemas.agent_factory import (
     CompileOutcome,
     CreateAgentRequest,
     ModelCallRequest,
+    RunTokenPurpose,
 )
 from shared.schemas.authorization import DenialSurface, Operation, Principal, ResourceType
 from shared.schemas.enums import AgentConfigScopeType, AuditActor, AuditResult, RiskCategory, Visibility
@@ -203,10 +208,17 @@ class AgentFactory:
         self._config = config
         self._service = service
         self._core = core
+        # docs/29 §11: the one choke point every request of every agent run
+        # passes (in-process for native runs).
+        self._gateway = AgentGateway(service)
 
     @property
     def service(self) -> AgentDefinitionService:
         return self._service
+
+    @property
+    def gateway(self) -> AgentGateway:
+        return self._gateway
 
     @property
     def registries(self) -> AgentRegistries:
@@ -599,17 +611,38 @@ def inbox_body(response: str | None) -> tuple[str, bool, bool]:
     return text, False, False
 
 
+def _scrubbed(value: Any) -> Any:
+    """What the gateway's ledger keeps of a response: every string with
+    anything secret-shaped masked (docs/29 §13.3 step 11)."""
+
+    if isinstance(value, str):
+        return redact_secrets(value)[0]
+    if isinstance(value, Mapping):
+        return {str(k): _scrubbed(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_scrubbed(v) for v in value]
+    return value
+
+
+def _gateway_failure(code: AgentGatewayErrorCode) -> AgentFailureCode:
+    return AgentFailureCode.SPEC_CHANGED if code is AgentGatewayErrorCode.SPEC_CHANGED \
+        else AgentFailureCode.AGENT_UNAVAILABLE
+
+
 class AgentRunCoordinator:
     """`AgentRunPort` (server/agent/agent_run.py) for one request's store
-    transaction. It decides nothing about authority: `check` only answers
-    whether the definition the run is bound to still exists, is active and is
-    exactly that version and hash — read fresh from the store at every step,
-    never cached — and the rest records what happened."""
+    transaction. It decides nothing about authority: every request of the run
+    goes through the Agent Gateway (`check` at each step, `admit` for each
+    model or tool request), which only answers whether the request belongs to
+    a live run — its token, the run, and the definition the run is bound to,
+    still existing, active and exactly that version and hash — read fresh from
+    the store every time, never cached. The rest records what happened."""
 
     def __init__(self, factory: AgentFactory, session: AsyncSession, audit: AuditLogger,
                  core: SecurityCore) -> None:
         self._factory = factory
         self._service = factory.service
+        self._gateway = factory.gateway
         self._session = session
         self._audit_logger = audit
         self._core = core
@@ -627,16 +660,52 @@ class AgentRunCoordinator:
         run = await self._service.run_started(self._session, binding.run_id, task_id=task_id)
         await self._audit(AuditAction.AGENT_RUN_STARTED, run, f"agentrun:{binding.run_id}:task:{task_id}")
 
+    async def _denied(self, binding: AgentRunBinding, purpose: RunTokenPurpose, denied: GatewayDenied) -> None:
+        owner = await self._run_owner(binding)
+        await self._audit_logger.record(
+            actor=AuditActor.AGENT, action=AuditAction.AGENT_GATEWAY_DENIED,
+            resource=f"agentrun:{binding.run_id}:{purpose.value}:{denied.code.value}:{denied.detail}"[:128],
+            result=AuditResult.BLOCKED, user_id=owner)
+
     async def check(self, binding: AgentRunBinding) -> AgentFailureCode | None:
-        return await self._service.check_run(self._session, run_id=binding.run_id, agent_id=binding.agent_id,
-                                             version=binding.version, spec_hash=binding.spec_hash,
-                                             is_member=self._is_member)
+        tokens = binding.run_tokens
+        if tokens is None:
+            return AgentFailureCode.AGENT_UNAVAILABLE
+        outcome = await self._gateway.authenticate(
+            self._session, run_id=binding.run_id, agent_id=binding.agent_id, purpose=RunTokenPurpose.TOOL,
+            token=tokens.tool, is_member=self._is_member)
+        if isinstance(outcome, GatewayDenied):
+            await self._denied(binding, RunTokenPurpose.TOOL, outcome)
+            return _gateway_failure(outcome.code)
+        if (outcome.version, outcome.spec_hash) != (binding.version, binding.spec_hash):
+            # The runtime's own binding must be exactly the run the token is for.
+            return AgentFailureCode.SPEC_CHANGED
+        return None
+
+    async def admit(self, binding: AgentRunBinding, request: AgentGatewayRequest) -> GatewayAdmission:
+        outcome = await self._gateway.admit(self._session, request, is_member=self._is_member)
+        if isinstance(outcome, GatewayDenied):
+            await self._denied(binding, request.purpose, outcome)
+            return GatewayAdmission(refused=outcome.code.value)
+        if isinstance(outcome, GatewayReplayed):
+            return GatewayAdmission(replayed=outcome.response)
+        return GatewayAdmission(ticket=outcome)
+
+    async def settle(self, binding: AgentRunBinding, admission: GatewayAdmission,
+                     response: Mapping[str, Any]) -> None:
+        if isinstance(admission.ticket, GatewayAdmitted):
+            await self._gateway.settle(self._session, admission.ticket, _scrubbed(response))
 
     async def usage_recorded(self, binding: AgentRunBinding, *, usage_id: uuid.UUID, cost: float) -> None:
         await self._service.attribute_usage(self._session, binding.run_id, usage_id)
 
     async def finished(self, binding: AgentRunBinding, *, task_id: uuid.UUID, status: AgentTaskStatus,
                        response: str | None, failure: AgentFailureCode | None, cost: float) -> None:
+        # docs/29 §11.3: the run's tokens end with it.
+        if await self._gateway.revoke_run(self._session, binding.run_id, "finished"):
+            await self._audit_logger.record(actor=AuditActor.AGENT, action=AuditAction.AGENT_TOKEN_REVOKED,
+                                            resource=f"agentrun:{binding.run_id}:finished",
+                                            result=AuditResult.SUCCESS, user_id=await self._run_owner(binding))
         run = await self._service.run_finished(self._session, binding.run_id, status=status,
                                                failure=failure.value if failure else None, cost=cost)
         suffix = f":{failure.value}" if failure else ""
@@ -721,10 +790,11 @@ class _PresentUserRun:
     ordinary task of that principal, in the binding's mode, under its ceiling.
     There is no other way for a native run to start — no background path."""
 
-    def __init__(self, *, tasks: "AgentTaskFacade", service: AgentDefinitionService, session: AsyncSession,
+    def __init__(self, *, tasks: "AgentTaskFacade", factory: AgentFactory, session: AsyncSession,
                  principal: Principal, audit: AuditLogger, binding: AgentRunBinding | None = None) -> None:
         self._tasks = tasks
-        self._service = service
+        self._service = factory.service
+        self._gateway = factory.gateway
         self._session = session
         self._principal = principal
         self._audit = audit
@@ -737,6 +807,11 @@ class _PresentUserRun:
             binding.run_id, binding.agent_id, binding.version, binding.spec_hash
         ):
             raise ValueError("the run context does not match its binding")
+        if not ctx.run_token or not ctx.model_run_token:
+            # docs/29 §11: no run reaches a model or a tool except through the
+            # Agent Gateway, and the gateway admits nothing without its token.
+            raise ValueError("a native run starts only with its two run tokens")
+        binding = dataclasses.replace(binding, run_tokens=RunTokens(model=ctx.model_run_token, tool=ctx.run_token))
         self.result = await self._tasks.submit(self._session, principal=self._principal, user_input=ctx.input_text,
                                                audit=self._audit, mode=binding.run_mode, agent=binding)
         return AgentRunStatus.RUNNING
@@ -751,6 +826,14 @@ class _PresentUserRun:
         run = await self._service.get_run(self._session, run_id)
         if run is None or run.finished_at is not None:
             return
+        # docs/29 §11.3, AGENT-T23: the run's tokens are revoked first, before
+        # the runtime is told — from here on the gateway admits nothing of
+        # this run, whatever the runtime is doing.
+        if await self._gateway.revoke_run(self._session, run_id, reason.value):
+            await self._audit.record(actor=AuditActor.USER, action=AuditAction.AGENT_TOKEN_REVOKED,
+                                     resource=f"agentrun:{run_id}:{reason.value}", result=AuditResult.SUCCESS,
+                                     user_id=self._principal.user_id, device_id=self._principal.device_id,
+                                     session_id=self._principal.session_id)
         if run.task_id is not None:
             try:
                 await self._tasks.cancel(self._session, principal=self._principal, task_id=run.task_id,
@@ -965,7 +1048,7 @@ class AgentFactoryFacade:
             # action of one can still be confirmed.
             await self._stop_runs(session, audit, principal, agent_id, CancelReason.DELETED)
             # The runtime keeps nothing past the agent (notebook, inbox).
-            port = _PresentUserRun(tasks=self._tasks, service=self._factory.service, session=session,
+            port = _PresentUserRun(tasks=self._tasks, factory=self._factory, session=session,
                                    principal=principal, audit=audit)
             await NativeRuntimeProvider(port).deprovision(
                 RuntimeRef(runtime_id=NATIVE_RUNTIME_ID, agent_id=agent_id, version=loaded[0].current_version))
@@ -1021,17 +1104,23 @@ class AgentFactoryFacade:
         run_budget = min(spec.budget.per_run, max(0.0, spec.budget.per_month - spent))
         run_id = uuid.uuid4()
         run = await service.create_run(session, spec=spec, run_id=run_id)
+        deadline = self._factory.run_deadline(spec)
+        # docs/29 §11.3: the run's two gateway tokens — the only credential
+        # its runtime holds, and only for this run.
+        issued = await self._factory.gateway.issue(session, run, deadline=deadline)
+        await self._audit(audit, principal, AuditAction.AGENT_TOKEN_ISSUED, f"agentrun:{run_id}:model,tool")
         binding = AgentRunBinding.from_spec(spec, run_id=run_id, model_ref=profile.profile.model_ref,
                                             budget_per_run=run_budget,
                                             input_text=self._factory.run_input(spec, run_id))
-        provider_port = _PresentUserRun(tasks=tasks, service=service, session=session, principal=principal,
+        provider_port = _PresentUserRun(tasks=tasks, factory=self._factory, session=session, principal=principal,
                                         audit=audit, binding=binding)
         provider = NativeRuntimeProvider(provider_port)
         await provider.provision(spec)
         try:
             await provider.start_run(AgentRunContext(
                 run_id=run_id, agent_id=spec.agent_id, version=spec.version, spec_hash=spec.spec_hash,
-                input_text=binding.input_text, deadline=self._factory.run_deadline(spec),
+                input_text=binding.input_text, deadline=deadline,
+                run_token=issued.tool, model_run_token=issued.model,
             ))
         except AppError:
             # No task was created (a limit, the supervisor latch): the run
@@ -1089,7 +1178,7 @@ class AgentFactoryFacade:
         live = await service.live_runs(session, agent_id)
         if not live:
             return
-        port = _PresentUserRun(tasks=self._run_tasks(), service=service, session=session, principal=principal,
+        port = _PresentUserRun(tasks=self._run_tasks(), factory=self._factory, session=session, principal=principal,
                                audit=audit)
         provider = NativeRuntimeProvider(port)
         for run in live:
@@ -1104,7 +1193,7 @@ class AgentFactoryFacade:
         run = await self._owned_run(session, audit, principal, agent_id, run_id)
         service = self._factory.service
         if run.finished_at is None:
-            port = _PresentUserRun(tasks=self._run_tasks(), service=service, session=session,
+            port = _PresentUserRun(tasks=self._run_tasks(), factory=self._factory, session=session,
                                    principal=principal, audit=audit)
             await NativeRuntimeProvider(port).cancel_run(
                 RunHandle(runtime_id=NATIVE_RUNTIME_ID, run_id=run_id), CancelReason.OWNER_STOP)
@@ -1202,7 +1291,7 @@ class AgentFactoryFacade:
 
         definition, spec = await self._owned(session, audit, principal, agent_id, Operation.READ)
         service = self._factory.service
-        port = _PresentUserRun(tasks=self._run_tasks(), service=service, session=session, principal=principal,
+        port = _PresentUserRun(tasks=self._run_tasks(), factory=self._factory, session=session, principal=principal,
                                audit=audit)
         state = await NativeRuntimeProvider(port).export_state(
             RuntimeRef(runtime_id=NATIVE_RUNTIME_ID, agent_id=agent_id, version=definition.current_version))

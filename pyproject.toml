@@ -606,6 +606,7 @@ source_modules = [
     "server.agents.rendering",
     "server.agents.instructions",
     "server.agents.gateway.model_routing",
+    "server.agents.gateway.tokens",
 ]
 forbidden_modules = [
     "sqlalchemy",

@@ -810,10 +810,15 @@ class AgentRunContext(_Strict):
 
     Structurally, there is no field for a principal, a session, a device, a
     SecretStore handle or a provider key (§7.3): a provider can act only by
-    calling back into JARVIS — in-process for the native runtime, through the
-    Agent Gateway with short-lived run tokens for a future external one — and
-    JARVIS authorizes every call. `run_token` is opaque, per run, revocable,
-    and never logged (§11.3; Phase 3/6)."""
+    calling back into JARVIS through the Agent Gateway — in-process for the
+    native runtime (Phase 3), over an authenticated network surface for a
+    future external one (Phase 6) — presenting one of its two run tokens, and
+    JARVIS authorizes every call.
+
+    The two tokens (§11.3) are opaque, per run and per purpose, short-lived,
+    revocable and never logged: `run_token` is the Tool Gateway's,
+    `model_run_token` the Model Gateway's. Each is useless outside this run,
+    this agent, this spec hash and its own gateway."""
 
     run_id: UUID
     agent_id: UUID
@@ -824,8 +829,63 @@ class AgentRunContext(_Strict):
     model_endpoint: str | None = None
     tool_endpoint: str | None = None
     run_token: str | None = Field(default=None, repr=False)
+    model_run_token: str | None = Field(default=None, repr=False)
     tool_manifest: tuple[ToolDescriptor, ...] = ()
     model_alias: Literal["agent-model"] = "agent-model"
+
+
+# ── the Agent Gateway (docs/29 §11–§13; Phase 3 in-process) ────────────────
+
+
+class RunTokenPurpose(str, Enum):
+    """docs/29 §11.3: a run gets one token per gateway. A token presented to
+    the other gateway is invalid."""
+
+    MODEL = "model"
+    TOOL = "tool"
+
+
+class AgentGatewayErrorCode(str, Enum):
+    """Why the Agent Gateway refused a request (docs/29 §12.3, §13.2). Plain
+    identifiers: no policy internals beyond the refusal itself."""
+
+    INVALID_RUN_TOKEN = "invalid_run_token"   # unknown, malformed, wrong purpose or binding, expired, revoked
+    REPLAY = "replay"                         # the nonce was already used for something else
+    STALE_REQUEST = "stale_request"           # |now - sent_at| beyond the freshness window
+    SCHEMA_INVALID = "schema_invalid"         # a malformed nonce or request
+    RUN_NOT_RUNNING = "run_not_running"       # the run finished, or is not this agent's
+    AGENT_UNAVAILABLE = "agent_unavailable"   # deleted, paused, revoked, not the owner's, out of its graph
+    SPEC_CHANGED = "spec_changed"             # the agent has a newer version than the run's
+    MODEL_NOT_ALLOWED = "model_not_allowed"   # a model the run's spec does not select
+    BUDGET_EXCEEDED = "budget_exceeded"
+    AGENT_BUDGET_EXHAUSTED = "agent_budget_exhausted"
+
+
+class AgentGatewayRequest(_Strict):
+    """What every request an agent run sends to the Agent Gateway carries
+    (docs/29 §11.3, §13.2), whichever gateway and whichever runtime.
+
+    * `run_id`, `agent_id` — the run the caller claims; they must be exactly
+      the run and agent the token was issued for.
+    * `run_token` — that gateway's run token (never logged, never shown).
+    * `request_nonce` — 128 bits or more, base64url; never reused for a
+      different request on the same token.
+    * `sent_at` — when the request was made; a request outside the freshness
+      window is refused.
+    * `request_digest` — the canonical hash of exactly what is asked
+      (`operation_key` for a tool call). A retry of the same request with the
+      same nonce is answered from the stored response, never executed twice.
+
+    The gateway, not this shape, decides whether a token or nonce is
+    well-formed: a malformed one is a refusal with a code, never a crash."""
+
+    run_id: UUID
+    agent_id: UUID
+    purpose: RunTokenPurpose
+    run_token: str = Field(max_length=512, repr=False)
+    request_nonce: str = Field(max_length=512)
+    sent_at: datetime
+    request_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class RuntimeRef(_Strict):
@@ -896,6 +956,8 @@ __all__ = [
     "AgentDetail",
     "AgentDraft",
     "AgentExport",
+    "AgentGatewayErrorCode",
+    "AgentGatewayRequest",
     "AgentInboxItemView",
     "AgentInboxResponse",
     "AgentListResponse",
@@ -944,6 +1006,7 @@ __all__ = [
     "RequiredApi",
     "RunAgentRequest",
     "RunHandle",
+    "RunTokenPurpose",
     "RuntimeRef",
     "RuntimeType",
     "SourceKind",
