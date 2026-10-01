@@ -892,6 +892,10 @@ class ImprovementCandidateRow(Base):
     decided_by: Mapped[str | None] = mapped_column(String, nullable=True)
     decision_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     config_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # docs/29 §18 (Phase 3): for an owner-scoped target (`agent.purpose`), the
+    # agent whose run was evaluated — set from the trace, never by the Judge.
+    # Such a candidate is reviewed by that agent's owner, never a superuser.
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
 
 
 class ConfigVersion(Base):

@@ -8,6 +8,8 @@
 | `POST /api/v1/admin/control/break-glass` `{task_id, user_id, executables, max_invocations?, expires_in_seconds?, reason}` | activate break-glass for one live task (20 §2.2) |
 | `POST /api/v1/admin/control/break-glass/revoke` `{task_id, reason}` | end that task's break-glass record now |
 | `GET /api/v1/admin/control/break-glass` | the live break-glass records |
+| `POST /api/v1/admin/control/agents/{agent_id}/pause` `{reason}` | pause one agent (docs/29 §14.3): its live runs stopped, its run tokens revoked; its owner cannot resume past it |
+| `POST /api/v1/admin/control/agents/{agent_id}/release` `{reason}` | lift that hold; the agent stays paused for its owner to resume |
 
 Every route depends on `get_superuser` (`Authorization: Superuser <token>`); an
 ordinary Bearer token is refused before the handler runs (DASH-004,
@@ -38,6 +40,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.gateway.control_port import (
+    AgentControlReport,
     BreakGlassRefusalKind,
     BreakGlassRequestRefused,
     BreakGlassView,
@@ -253,3 +256,66 @@ async def list_break_glass(
 ) -> BreakGlassListResponse:
     views = await _control(request).list_break_glass(session, audit, principal=principal)
     return BreakGlassListResponse(records=[BreakGlassRecordResponse.of(v) for v in views])
+
+
+# ── one agent (docs/29 §14.3, §23.2; Phase 3) ────────────────────────────
+
+
+class AgentControlRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = _REASON
+
+
+class AgentControlResponse(BaseModel):
+    agent_id: uuid.UUID
+    status: str
+    tokens_revoked: int
+    stopped: list[uuid.UUID]
+    signalled: list[uuid.UUID]
+    already_terminal: list[uuid.UUID]
+
+    @classmethod
+    def of(cls, report: AgentControlReport) -> "AgentControlResponse":
+        return cls(agent_id=report.agent_id, status=report.status, tokens_revoked=report.tokens_revoked,
+                   stopped=report.tasks.stopped, signalled=report.tasks.signalled,
+                   already_terminal=report.tasks.already_terminal)
+
+
+@router.post("/agents/{agent_id}/pause", response_model=AgentControlResponse)
+async def pause_agent(
+    agent_id: uuid.UUID,
+    body: AgentControlRequest,
+    request: Request,
+    principal: SuperuserPrincipal = Depends(get_superuser),
+    session: AsyncSession = Depends(get_db_session),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentControlResponse:
+    """The breaker's operator stop for every live run of the agent, then the
+    agent paused on the operator's authority. It stops; it resumes nothing."""
+
+    try:
+        report = await _control(request).pause_agent(session, audit, principal=principal, agent_id=agent_id,
+                                                     reason=body.reason)
+    except ControlTargetNotFound:
+        raise AppError(ErrorCode.NOT_FOUND, "no such agent") from None
+    return AgentControlResponse.of(report)
+
+
+@router.post("/agents/{agent_id}/release", response_model=AgentControlResponse)
+async def release_agent(
+    agent_id: uuid.UUID,
+    body: AgentControlRequest,
+    request: Request,
+    principal: SuperuserPrincipal = Depends(get_superuser),
+    session: AsyncSession = Depends(get_db_session),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentControlResponse:
+    """Lift the operator's hold. Nothing runs or resumes because of it."""
+
+    try:
+        report = await _control(request).release_agent(session, audit, principal=principal, agent_id=agent_id,
+                                                       reason=body.reason)
+    except ControlTargetNotFound:
+        raise AppError(ErrorCode.NOT_FOUND, "no such agent") from None
+    return AgentControlResponse.of(report)

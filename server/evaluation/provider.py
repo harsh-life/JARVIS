@@ -142,6 +142,16 @@ is handed to a deterministic circuit breaker, which may or may not act on it.
 """
 
 
+_AGENT_RUN = """\
+This task is a run of one user's agent ("agent_run" in the record). For it you may
+also suggest a clearer wording of that agent's purpose:
+   {"target": "agent.purpose", "proposed_change": "<the purpose, reworded>", ...}
+Only the agent's owner sees it, and only the owner can decide to apply it. Nothing
+else about an agent — what it may do, its budget, schedule, model or runtime — can
+be suggested.
+"""
+
+
 class LLMJudge:
     """The default evaluator: one model call per evaluation, over one trace."""
 
@@ -159,7 +169,7 @@ class LLMJudge:
             return False
 
     async def messages(self, trace: TaskTrace) -> list[ChatMessage]:
-        system = _ROLE
+        system = _ROLE + (_AGENT_RUN if trace.agent else "")
         rubric = await self._rubric() if self._rubric is not None else None
         if rubric:
             system += "\nOperator-approved rubric (guidance on scoring only):\n" + rubric + "\n"

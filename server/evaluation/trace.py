@@ -92,6 +92,10 @@ class TraceSource:
     elapsed_seconds: float
     messages: tuple[SourceMessage, ...] = ()
     events: tuple[SourceEvent, ...] = ()
+    # docs/29 §18: set when the task is a run of a user's agent.
+    agent_id: uuid.UUID | None = None
+    agent_run_id: uuid.UUID | None = None
+    agent_version: int | None = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +135,12 @@ class TaskTrace:
     redactions: tuple[str, ...] = ()
     truncated: bool = False
     total_steps: int = 0
+    # docs/29 §18: which agent run this task is (ids and version only).
+    agent: dict[str, Any] | None = None
+
+    @property
+    def agent_id(self) -> uuid.UUID | None:
+        return uuid.UUID(self.agent["agent_id"]) if self.agent else None
 
     def refs(self) -> set[str]:
         return {s.ref for s in self.steps}
@@ -154,6 +164,7 @@ class TaskTrace:
             "breaker_trips": list(self.trips),
             "steps": [s.as_dict() for s in self.steps],
             "steps_omitted": self.truncated,
+            **({"agent_run": self.agent} if self.agent else {}),
         }
 
     def to_json(self) -> str:
@@ -237,6 +248,8 @@ def build_trace(source: TraceSource, *, kind: EvaluationKind, max_chars: int,
         redactions=tuple(clean.hits),
         truncated=truncated,
         total_steps=total,
+        agent=({"agent_id": str(source.agent_id), "run_id": str(source.agent_run_id),
+                "version": source.agent_version} if source.agent_id is not None else None),
     )
 
 

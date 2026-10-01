@@ -24,6 +24,10 @@ conventions:
   /agents/{id}/pause` pauses the agent and stops its live runs — the safe
   direction, never confirmed. `POST /agents/{id}/resume` gives authority back:
   it is re-checked and confirmed like a change to the agent.
+* `GET /agents/{id}/candidates` (Phase 3): the Judge's suggested rewordings
+  of the agent's purpose, for its owner only. `POST …/{candidate_id}/compile`
+  turns one into an update preview (nothing changes until the owner confirms
+  the ordinary `PATCH`); `POST …/{candidate_id}/dismiss` declines it.
 * Another user's agent or preview is `404`, indistinguishable from an absent
   one (04 §7, AGENT-T9).
 
@@ -49,6 +53,8 @@ from shared.schemas.agent_factory import (
     AgentInboxItemView,
     AgentInboxResponse,
     AgentListResponse,
+    AgentPurposeCandidateList,
+    AgentPurposeCandidateView,
     AgentRunListResponse,
     AgentRunView,
     AgentView,
@@ -311,3 +317,42 @@ async def export_agent(
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> AgentExport:
     return await _factory(request).export(session, principal=principal, agent_id=agent_id, audit=audit)
+
+
+@router.get("/agents/{agent_id}/candidates", response_model=AgentPurposeCandidateList)
+async def list_candidates(
+    request: Request,
+    agent_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentPurposeCandidateList:
+    return await _factory(request).candidates(session, principal=principal, agent_id=agent_id, audit=audit)
+
+
+@router.post("/agents/{agent_id}/candidates/{candidate_id}/compile", response_model=CompileOutcome)
+async def compile_candidate(
+    request: Request,
+    agent_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    body: RunAgentRequest,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> CompileOutcome:
+    return await _factory(request).compile_candidate(session, principal=principal, agent_id=agent_id,
+                                                     candidate_id=candidate_id, audit=audit)
+
+
+@router.post("/agents/{agent_id}/candidates/{candidate_id}/dismiss", response_model=AgentPurposeCandidateView)
+async def dismiss_candidate(
+    request: Request,
+    agent_id: uuid.UUID,
+    candidate_id: uuid.UUID,
+    body: RunAgentRequest,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentPurposeCandidateView:
+    return await _factory(request).dismiss_candidate(session, principal=principal, agent_id=agent_id,
+                                                     candidate_id=candidate_id, audit=audit)

@@ -31,6 +31,11 @@ from server.config.schema import AppConfig
 from server.dashboard.ports import ComponentProbes, LiveStateView, SecretResolvability
 from server.dashboard.redaction import config_view, redact_user_text, scrub
 from server.storage.models import (
+    AgentDefinitionRow,
+    AgentRunRow,
+    AgentRunTokenRow,
+    AgentRunUsageRow,
+    AgentSpecVersionRow,
     AgentTask,
     AuditEvent,
     ConfigVersion,
@@ -402,6 +407,100 @@ class OperatorConsole:
         effective = self._config.model_dump(mode="json")
         return {"effective": await config_view(effective, self._secrets.resolves)}
 
+    # ── 11. agents (docs/29 §23.2, §26; Phase 3) ───────────────────────
+
+    async def agents(self, session: AsyncSession, *, limit: int = 100) -> dict:
+        """Every agent and its runs: ids, owner, state, version, selection,
+        budget and spend, runs by status and failure, the last run and its
+        evaluation, and whether the operator holds it. An agent's name is user
+        content (shown as its length); its purpose, sources, results, notebook,
+        inbox and run tokens are never read here."""
+
+        now = _utcnow()
+        month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        counts = dict((await session.execute(
+            select(AgentDefinitionRow.status, func.count()).where(AgentDefinitionRow.status != "deleted")
+            .group_by(AgentDefinitionRow.status)
+        )).all())
+        rows = (await session.execute(
+            select(AgentDefinitionRow).where(AgentDefinitionRow.status != "deleted")
+            .order_by(AgentDefinitionRow.created_at.desc()).limit(_limit(limit))
+        )).scalars().all()
+        ids = [r.agent_id for r in rows]
+        specs = {(s.agent_id, s.version): s.spec_json for s in (await session.execute(
+            select(AgentSpecVersionRow).where(AgentSpecVersionRow.agent_id.in_(ids))
+        )).scalars()}
+        runs = (await session.execute(
+            select(AgentRunRow).where(AgentRunRow.agent_id.in_(ids)).order_by(AgentRunRow.started_at.desc())
+        )).scalars().all()
+        live_spend = dict((await session.execute(
+            select(AgentRunRow.agent_id, func.coalesce(func.sum(UsageEvent.estimated_cost), 0.0))
+            .select_from(AgentRunUsageRow)
+            .join(UsageEvent, UsageEvent.usage_id == AgentRunUsageRow.usage_id)
+            .join(AgentRunRow, AgentRunRow.run_id == AgentRunUsageRow.run_id)
+            .where(AgentRunRow.agent_id.in_(ids), AgentRunRow.finished_at.is_(None),
+                   AgentRunRow.started_at >= month)
+            .group_by(AgentRunRow.agent_id)
+        )).all())
+        tokens = dict((await session.execute(
+            select(AgentRunTokenRow.agent_id, func.count())
+            .where(AgentRunTokenRow.agent_id.in_(ids), AgentRunTokenRow.revoked_at.is_(None),
+                   AgentRunTokenRow.expires_at > now)
+            .group_by(AgentRunTokenRow.agent_id)
+        )).all())
+        by_agent: dict = {}
+        for run in runs:
+            by_agent.setdefault(run.agent_id, []).append(run)
+        last_tasks = [rs[0].task_id for rs in by_agent.values() if rs[0].task_id is not None]
+        evaluations: dict = {}
+        for ev in (await session.execute(
+            select(TaskEvaluation).where(TaskEvaluation.task_id.in_(last_tasks)).order_by(TaskEvaluation.created_at)
+        )).scalars():
+            evaluations[ev.task_id] = ev
+        def utc(value: datetime) -> datetime:
+            return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+        per_day = Counter(_iso(r.started_at)[:10] for r in runs if utc(r.started_at) >= now - timedelta(days=7))
+        failures = Counter(r.failure_code for r in runs if r.status == "failed" and r.failure_code)
+
+        def view(row: AgentDefinitionRow) -> dict:
+            spec = specs.get((row.agent_id, row.current_version)) or {}
+            selection = spec.get("selection") or {}
+            budget = spec.get("budget") or {}
+            mine = by_agent.get(row.agent_id, [])
+            spent = sum(r.cost_total for r in mine if utc(r.started_at) >= month and r.finished_at is not None)
+            last = mine[0] if mine else None
+            evaluation = evaluations.get(last.task_id) if last is not None and last.task_id else None
+            return {
+                "agent_id": str(row.agent_id), "owner_user_id": str(row.owner_user_id),
+                "graph_id": _id(row.graph_id), "name": redact_user_text(row.name),
+                "status": row.status, "status_reason": row.status_reason,
+                "current_version": row.current_version, "spec_hash": spec.get("spec_hash"),
+                "template_id": spec.get("template_id"), "runtime_id": selection.get("runtime_id"),
+                "model_profile_id": selection.get("model_profile_id"),
+                "budget": {"per_run": budget.get("per_run"), "per_month": budget.get("per_month"),
+                           "month_spent": round(spent + float(live_spend.get(row.agent_id, 0.0)), 6)},
+                "runs": {"total": len(mine), "live": sum(1 for r in mine if r.finished_at is None),
+                         "by_status": dict(Counter(r.status for r in mine))},
+                "last_run": None if last is None else {
+                    "run_id": str(last.run_id), "status": last.status, "failure_code": last.failure_code,
+                    "started_at": _iso(last.started_at), "finished_at": _iso(last.finished_at),
+                    "cost_total": last.cost_total,
+                    "evaluation": None if evaluation is None else {
+                        "outcome": evaluation.outcome, "anomaly": evaluation.anomaly,
+                        "quality": evaluation.quality, "stop_requested": evaluation.stop_requested},
+                },
+                "control": {"operator_paused": row.status_reason == "operator_paused",
+                            "live_tokens": int(tokens.get(row.agent_id, 0))},
+                "created_at": _iso(row.created_at), "updated_at": _iso(row.updated_at),
+            }
+
+        return {
+            "counts": {"by_status": counts, "runs_last_7_days": dict(sorted(per_day.items())),
+                       "failures_by_code": dict(failures)},
+            "agents": [view(r) for r in rows],
+        }
+
     # ── the unredacted view (DASH-006) — the route audits before calling ─
 
     async def task_content(self, session: AsyncSession, task_id: uuid.UUID) -> dict | None:
@@ -432,7 +531,7 @@ class OperatorConsole:
 
 def view_names() -> tuple[str, ...]:
     return ("health", "tasks", "recovery", "break_glass", "evaluations", "usage", "memory", "devices",
-            "audit", "configuration")
+            "audit", "configuration", "agents")
 
 
 __all__: Any = ["OperatorConsole", "view_names"]

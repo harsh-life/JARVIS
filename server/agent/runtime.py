@@ -2018,6 +2018,9 @@ class AgentRuntime:
             elapsed_seconds=time.monotonic() - state.created_monotonic,
             transcript=tuple((m.role, m.content) for m in state.messages[2:]),
             events=tuple(state.trace_events),
+            agent_id=state.agent.agent_id if state.agent is not None else None,
+            agent_run_id=state.agent.run_id if state.agent is not None else None,
+            agent_version=state.agent.version if state.agent is not None else None,
         )
 
     def _notify_step(self, state: TaskState) -> None:

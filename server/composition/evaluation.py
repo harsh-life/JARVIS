@@ -50,6 +50,7 @@ from server.composition.improvements import EvaluationSwitchboard, TuningCache
 from server.composition.models import ProviderFactory, spec_from_entry
 from server.composition.secret_context import CURRENT_SECRET_RESOLVER, SecretUnavailable, key_provider_for
 from server.config.schema import AppConfig
+from server.evaluation.candidates import OWNER_SCOPED_TARGETS
 from server.evaluation.metering import MeteredJudgeModel
 from server.evaluation.ports import EvaluationRecord
 from server.evaluation.provider import EvaluationProvider, LLMJudge, RulesJudge
@@ -211,6 +212,9 @@ class StorageEvaluationSink:
             session.add(ImprovementCandidateRow(
                 candidate_id=candidate_id, evaluation_id=evaluation_id, task_id=record.task_id,
                 source_user_id=record.user_id, evaluator_id=record.evaluator_id, target=accepted.target,
+                # docs/29 §18: an owner-scoped candidate names its agent, from
+                # the trace — never from anything the Judge wrote.
+                agent_id=record.agent_id if accepted.target in OWNER_SCOPED_TARGETS else None,
                 subject=accepted.subject, proposed_value=str(accepted.value),
                 expected_effect=accepted.expected_effect, evidence=list(accepted.evidence),
                 status=CandidateStatus.PENDING.value, created_at=record.created_at,
@@ -274,6 +278,7 @@ def trace_source(snapshot: TaskSnapshot) -> TraceSource:
         elapsed_seconds=snapshot.elapsed_seconds,
         messages=tuple(SourceMessage(role, content) for role, content in snapshot.transcript),
         events=tuple(SourceEvent(**vars(e)) for e in snapshot.events),
+        agent_id=snapshot.agent_id, agent_run_id=snapshot.agent_run_id, agent_version=snapshot.agent_version,
     )
 
 

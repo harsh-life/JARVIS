@@ -167,7 +167,8 @@ class EvaluationService:
         if evaluation is not None:
             for candidate in evaluation.improvement_candidates:
                 try:
-                    accepted.append(validate_candidate(candidate, task_id=str(trace.task_id)))
+                    accepted.append(validate_candidate(candidate, task_id=str(trace.task_id),
+                                                       agent_run=trace.agent is not None))
                 except CandidateRejected as exc:
                     head = split_target(candidate.target)[0].split(".", 1)[0][:32].lower()
                     rejected.append(RejectedCandidate(code=exc.code, category=exc.category,
@@ -176,7 +177,7 @@ class EvaluationService:
                 stop = await self._request_stop(trace.task_id, evaluation.anomaly_reason or "anomaly", kind)
 
         record = EvaluationRecord(
-            task_id=trace.task_id, user_id=trace.user_id, graph_id=trace.graph_id,
+            task_id=trace.task_id, user_id=trace.user_id, graph_id=trace.graph_id, agent_id=trace.agent_id,
             evaluator_id=self._provider.id, evaluator_version=self._provider.version, kind=kind,
             outcome=outcome, created_at=self._clock(), reason_code=reason, evaluation=evaluation,
             accepted_candidates=tuple(accepted), rejected_candidates=tuple(rejected),

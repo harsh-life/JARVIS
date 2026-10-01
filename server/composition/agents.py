@@ -50,11 +50,12 @@ from server.agents.gateway.core import AgentGateway, GatewayAdmitted, GatewayCon
 from server.agents.gateway.model_gateway import budget_refusal, model_refusal
 from server.agents.gateway.model_routing import RouteRefused, route_model_call
 from server.agents.instructions import assemble_input
+from server.agents.revision import authority_of, redraft_with_purpose
 from server.agents.providers.native import NativeRuntimeProvider
 from server.agents.registry.runtimes import NATIVE_RUNTIME_ID
 from server.agents.registry import AgentRegistries, ModelEntryFacts, build_registries
 from server.agents.rendering import render_card, spec_view
-from server.agents.service import AgentDefinitionService, PreviewRefused
+from server.agents.service import OPERATOR_PAUSED, AgentDefinitionService, PreviewRefused
 from server.capabilities.registry import (
     AGENT_DEFINE_CAPABILITY,
     AGENT_DELETE_CAPABILITY,
@@ -106,6 +107,8 @@ from shared.schemas.agent_factory import (
     AgentExport,
     AgentInboxItemView,
     AgentInboxResponse,
+    AgentPurposeCandidateList,
+    AgentPurposeCandidateView,
     AgentSpecVersionExport,
     CompiledAgentSpec,
     NotebookEntryView,
@@ -1256,6 +1259,11 @@ class AgentFactoryFacade:
         if spec is None:
             raise await self._refuse_run(audit, principal, agent_id, "agent_revoked",
                                          "this agent is revoked and cannot be resumed")
+        if definition.status_reason == OPERATOR_PAUSED:
+            # docs/29 §14.3: the operator's pause holds until the operator
+            # releases it.
+            raise await self._refuse_run(audit, principal, agent_id, OPERATOR_PAUSED,
+                                         "this agent was paused by the server operator")
         if definition.status == AgentStatus.ACTIVE.value:
             return service.view(definition, spec)
         if definition.status != AgentStatus.PAUSED.value:
@@ -1273,6 +1281,11 @@ class AgentFactoryFacade:
         if loaded is None or loaded[0].owner_user_id != principal.user_id:
             raise _NOT_FOUND
         definition, current = loaded
+        if definition.status_reason == OPERATOR_PAUSED:
+            # Re-read after the engine's decision: an operator's pause that
+            # landed meanwhile still holds.
+            raise await self._refuse_run(audit, principal, agent_id, OPERATOR_PAUSED,
+                                         "this agent was paused by the server operator")
         if current is None or current.spec_hash != spec.spec_hash or definition.status != AgentStatus.PAUSED.value:
             raise await self._refuse_run(audit, principal, agent_id, "spec_changed",
                                          "the agent changed while the resume was being confirmed")
@@ -1360,6 +1373,79 @@ class AgentFactoryFacade:
         await self._owned(session, audit, principal, agent_id, Operation.READ)
         await self._factory.service.notebook_clear(session, agent_id)
         await self._audit(audit, principal, AuditAction.AGENT_NOTEBOOK_CLEARED, f"agentnotebook:{agent_id}")
+
+    # ── the Judge's purpose suggestions (docs/29 §18) ──────────────────
+
+    async def _candidate_view(self, session: AsyncSession, row) -> AgentPurposeCandidateView:
+        run = await self._factory.service.run_for_task(session, row.task_id)
+        return AgentPurposeCandidateView(
+            candidate_id=row.candidate_id, agent_id=row.agent_id, run_id=run.run_id if run is not None else None,
+            status=row.status, proposed_purpose=redact_secrets(row.proposed_value)[0],
+            expected_effect=redact_secrets(row.expected_effect or "")[0], created_at=row.created_at,
+            decided_at=row.decided_at,
+        )
+
+    async def candidates(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                         audit: AuditLogger) -> AgentPurposeCandidateList:
+        """Only the agent's owner sees the Judge's suggestions for it."""
+
+        await self._owned(session, audit, principal, agent_id, Operation.READ)
+        rows = await self._factory.service.purpose_candidates(session, agent_id, principal.user_id)
+        return AgentPurposeCandidateList(items=tuple([
+            await self._candidate_view(session, r) for r in rows if r.source_user_id == principal.user_id
+        ]))
+
+    async def _owned_candidate(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
+                               agent_id: uuid.UUID, candidate_id: uuid.UUID):
+        definition, spec = await self._owned(session, audit, principal, agent_id, Operation.READ)
+        row = await self._factory.service.purpose_candidate(session, candidate_id)
+        if row is None or row.agent_id != agent_id or row.source_user_id != principal.user_id:
+            raise _NOT_FOUND
+        if row.status != "pending":
+            raise AppError(ErrorCode.CONFLICT, "this suggestion was already decided",
+                           details={"reason": "candidate_decided"})
+        return definition, spec, row
+
+    async def compile_candidate(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                                candidate_id: uuid.UUID, audit: AuditLogger) -> CompileOutcome:
+        """docs/29 §18: the owner turns a purpose suggestion into an update
+        preview — the agent's own spec, recompiled with only the new purpose.
+        It applies nothing: the update is then the ordinary, confirmed
+        `PATCH /agents/{id}`. A recompile that would change anything but the
+        purpose (the envelope, a ceiling, the budget, the trigger, the runtime
+        or the model) is refused."""
+
+        definition, spec, row = await self._owned_candidate(session, audit, principal, agent_id, candidate_id)
+        service = self._factory.service
+        if spec is None:
+            raise AppError(ErrorCode.CONFLICT, "that agent is revoked", details={"reason": "agent_revoked"})
+        try:
+            draft = redraft_with_purpose(spec, row.proposed_value, self._factory.registries)
+        except ValidationError:
+            raise AppError(ErrorCode.CONFLICT, "this suggestion is not a valid purpose",
+                           details={"reason": "candidate_invalid"}) from None
+        outcome = await self._factory.compile(session, user_id=principal.user_id, graph_id=definition.graph_id,
+                                              draft=draft, task_id=None, agent=definition)
+        if outcome.kind != "compiled" or outcome.compile_id is None:
+            raise AppError(ErrorCode.CONFLICT, "this agent cannot be recompiled as it is",
+                           details={"reason": "not_compilable", "reason_codes": list(outcome.reason_codes)})
+        preview = await service.load_preview(session, compile_id=outcome.compile_id, owner_user_id=principal.user_id,
+                                             task_id=None, for_agent=agent_id)
+        if preview is None or authority_of(service.preview_spec(preview)) != authority_of(spec):
+            await service.discard_preview(session, outcome.compile_id)
+            raise AppError(ErrorCode.CONFLICT, "applying this suggestion would change more than the purpose",
+                           details={"reason": "changes_more_than_purpose"})
+        await service.decide_candidate(session, row, approved=True, reason=f"compiled:{outcome.compile_id}")
+        await self._audit(audit, principal, AuditAction.AGENT_CANDIDATE_COMPILED,
+                          f"candidate:{candidate_id}:agentpreview:{outcome.compile_id}")
+        return outcome
+
+    async def dismiss_candidate(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                                candidate_id: uuid.UUID, audit: AuditLogger) -> AgentPurposeCandidateView:
+        _, _, row = await self._owned_candidate(session, audit, principal, agent_id, candidate_id)
+        await self._factory.service.decide_candidate(session, row, approved=False, reason="owner_dismissed")
+        await self._audit(audit, principal, AuditAction.AGENT_CANDIDATE_DISMISSED, f"candidate:{candidate_id}")
+        return await self._candidate_view(session, row)
 
     async def _owned_run(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
                          agent_id: uuid.UUID, run_id: uuid.UUID) -> AgentRunRow:

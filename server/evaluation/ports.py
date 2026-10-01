@@ -82,6 +82,8 @@ class EvaluationRecord:
     usage: tuple[JudgeUsage, ...] = ()
     redactions: tuple[str, ...] = ()
     stop: StopDecision = field(default_factory=StopDecision)
+    # docs/29 §18: the agent whose run this task was (owner-scoped candidates).
+    agent_id: uuid.UUID | None = None
 
 
 class EvaluationSink(Protocol):

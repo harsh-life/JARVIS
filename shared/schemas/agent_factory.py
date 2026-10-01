@@ -768,6 +768,25 @@ class NotebookResponse(_Strict):
     items: tuple[NotebookEntryView, ...]
 
 
+class AgentPurposeCandidateView(_Strict):
+    """docs/29 §18: the Judge's suggested rewording of one of the owner's
+    agents' purpose. Shown to that agent's owner only; it changes nothing until
+    the owner compiles it into an update and confirms that update."""
+
+    candidate_id: UUID
+    agent_id: UUID
+    run_id: UUID | None = None
+    status: Literal["pending", "approved", "rejected"]
+    proposed_purpose: str
+    expected_effect: str = ""
+    created_at: datetime
+    decided_at: datetime | None = None
+
+
+class AgentPurposeCandidateList(_Strict):
+    items: tuple[AgentPurposeCandidateView, ...]
+
+
 class AgentSpecVersionExport(_Strict):
     version: int
     spec_hash: str
@@ -962,6 +981,8 @@ __all__ = [
     "AgentInboxResponse",
     "AgentListResponse",
     "AgentModelProfile",
+    "AgentPurposeCandidateList",
+    "AgentPurposeCandidateView",
     "AgentRunContext",
     "AgentRunListResponse",
     "AgentRunStatus",
