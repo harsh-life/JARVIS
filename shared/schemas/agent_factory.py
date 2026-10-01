@@ -768,6 +768,30 @@ class NotebookResponse(_Strict):
     items: tuple[NotebookEntryView, ...]
 
 
+class AgentSpecVersionExport(_Strict):
+    version: int
+    spec_hash: str
+    created_at: datetime
+    spec: CompiledAgentSpec
+
+
+class AgentExport(_Strict):
+    """docs/29 §23.2 `GET /agents/{id}/export`: the owner's own agent — its
+    definition, every (hash-verified) spec version, its runs, its notebook and
+    its inbox. Structurally nothing else: no provider key or `secret_ref` (a
+    spec names a model *profile*, never a key), no session, device or
+    confirmation token, no grant, decision or audit row."""
+
+    format: Literal["jarvis.agent.export"] = "jarvis.agent.export"
+    format_version: Literal[1] = 1
+    exported_at: datetime
+    agent: AgentView
+    spec_versions: tuple[AgentSpecVersionExport, ...]
+    runs: tuple[AgentRunView, ...]
+    notebook: tuple[NotebookEntryView, ...]
+    inbox: tuple[AgentInboxItemView, ...]
+
+
 # ── the runtime-provider boundary (docs/29 §7.3, §11.2; interface only) ────
 
 
@@ -871,6 +895,7 @@ __all__ = [
     "AgentConfirmationCard",
     "AgentDetail",
     "AgentDraft",
+    "AgentExport",
     "AgentInboxItemView",
     "AgentInboxResponse",
     "AgentListResponse",
@@ -881,6 +906,7 @@ __all__ = [
     "AgentRunView",
     "AgentRuntimeProfile",
     "AgentSelection",
+    "AgentSpecVersionExport",
     "AgentStatus",
     "AgentTemplate",
     "AgentView",

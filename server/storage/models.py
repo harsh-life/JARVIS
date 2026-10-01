@@ -1084,6 +1084,19 @@ class AgentNotebookEntryRow(Base):
     __table_args__ = (Index("ix_agent_notebook_entries_owner", "owner_user_id"),)
 
 
+class AgentRunUsageRow(Base):
+    """docs/29 §17 / §22.1 — which usage events an agent run caused. A join
+    table, so the locked `usage_events` entity (01) is unchanged: every model
+    and tool call of a run is a normal ledger row, and this attributes it."""
+
+    __tablename__ = "agent_run_usage"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_runs.run_id"), primary_key=True)
+    usage_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("usage_events.usage_id"), primary_key=True)
+
+    __table_args__ = (Index("ix_agent_run_usage_usage", "usage_id", unique=True),)
+
+
 class AgentInboxItemRow(Base):
     """docs/29 §19 — one run's result, delivered to its owner and nobody else.
     Data, never authority: plain text, bounded, not parsed. Deleted by the

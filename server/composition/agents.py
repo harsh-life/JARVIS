@@ -98,9 +98,12 @@ from shared.schemas.agent_factory import (
     AgentStatus,
     AgentView,
     CancelReason,
+    AgentExport,
     AgentInboxItemView,
     AgentInboxResponse,
+    AgentSpecVersionExport,
     CompiledAgentSpec,
+    NotebookEntryView,
     NotebookResponse,
     RunHandle,
     RuntimeRef,
@@ -630,7 +633,7 @@ class AgentRunCoordinator:
                                              is_member=self._is_member)
 
     async def usage_recorded(self, binding: AgentRunBinding, *, usage_id: uuid.UUID, cost: float) -> None:
-        return None
+        await self._service.attribute_usage(self._session, binding.run_id, usage_id)
 
     async def finished(self, binding: AgentRunBinding, *, task_id: uuid.UUID, status: AgentTaskStatus,
                        response: str | None, failure: AgentFailureCode | None, cost: float) -> None:
@@ -764,7 +767,11 @@ class _PresentUserRun:
         await self._service.purge_runtime_state(self._session, agent_id)
 
     async def export(self, agent_id: uuid.UUID) -> bytes:
-        return b""
+        """What the native runtime keeps for the agent: its notebook."""
+
+        rows = await self._service.notebook_entries(self._session, agent_id, self._principal.user_id)
+        return json.dumps({"notebook": [self._service.notebook_view(r).model_dump(mode="json") for r in rows]},
+                          sort_keys=True).encode()
 
 
 # ── the owner's HTTP path (docs/29 §23.2) ──────────────────────────────────
@@ -969,10 +976,10 @@ class AgentFactoryFacade:
     # ── runs ────────────────────────────────────────────────────────────
 
     async def _refuse_run(self, audit: AuditLogger, principal: Principal, agent_id: uuid.UUID, reason: str,
-                          message: str) -> AppError:
+                          message: str, code: ErrorCode = ErrorCode.CONFLICT) -> AppError:
         await self._audit(audit, principal, AuditAction.AGENT_RUN_REFUSED, f"agentdefinition:{agent_id}:{reason}",
                           AuditResult.BLOCKED)
-        return AppError(ErrorCode.CONFLICT, message, details={"reason": reason})
+        return AppError(code, message, details={"reason": reason})
 
     async def run(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
                   audit: AuditLogger) -> AgentRunView:
@@ -1004,10 +1011,18 @@ class AgentFactoryFacade:
                                          "this agent belongs to another graph than this session's")
         profile = await self._still_runnable(session, audit, principal, definition, spec)
         service = self._factory.service
+        # docs/29 §17: the month's budget. A spent month refuses the run; the
+        # run's own ceiling is never more than what is left of the month (a
+        # zero monthly budget leaves only free — local — model calls).
+        spent = await service.month_spend(session, agent_id)
+        if spec.budget.per_month > 0 and spent >= spec.budget.per_month:
+            raise await self._refuse_run(audit, principal, agent_id, AgentFailureCode.AGENT_BUDGET_EXHAUSTED.value,
+                                         "this agent's monthly budget is spent", code=ErrorCode.RATE_LIMITED)
+        run_budget = min(spec.budget.per_run, max(0.0, spec.budget.per_month - spent))
         run_id = uuid.uuid4()
         run = await service.create_run(session, spec=spec, run_id=run_id)
         binding = AgentRunBinding.from_spec(spec, run_id=run_id, model_ref=profile.profile.model_ref,
-                                            budget_per_run=spec.budget.per_run,
+                                            budget_per_run=run_budget,
                                             input_text=self._factory.run_input(spec, run_id))
         provider_port = _PresentUserRun(tasks=tasks, service=service, session=session, principal=principal,
                                         audit=audit, binding=binding)
@@ -1179,6 +1194,36 @@ class AgentFactoryFacade:
         item = await self._owned_item(session, audit, principal, item_id)
         await self._factory.service.inbox_delete(session, item)
         await self._audit(audit, principal, AuditAction.AGENT_INBOX_DELETED, f"agentinbox:{item_id}")
+
+    async def export(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                     audit: AuditLogger) -> AgentExport:
+        """docs/29 §23.2: owner-only (engine READ, then the owner check); the
+        runtime's own state comes from the provider's `export_state`."""
+
+        definition, spec = await self._owned(session, audit, principal, agent_id, Operation.READ)
+        service = self._factory.service
+        port = _PresentUserRun(tasks=self._run_tasks(), service=service, session=session, principal=principal,
+                               audit=audit)
+        state = await NativeRuntimeProvider(port).export_state(
+            RuntimeRef(runtime_id=NATIVE_RUNTIME_ID, agent_id=agent_id, version=definition.current_version))
+        runtime_state = json.loads(state or b"{}")
+        runs = await service.list_runs(session, agent_id=agent_id, owner_user_id=principal.user_id, limit=1000)
+        inbox = await service.inbox_list(session, owner_user_id=principal.user_id, agent_id=agent_id, limit=1000)
+        exported = AgentExport(
+            exported_at=datetime.now(timezone.utc),
+            agent=service.view(definition, spec),
+            spec_versions=tuple(
+                AgentSpecVersionExport(version=row.version, spec_hash=row.spec_hash,
+                                       created_at=s.created_at, spec=s)
+                for row, s in await service.verified_spec_versions(session, agent_id)
+            ),
+            runs=tuple([service.run_view(r, inbox_item_id=await service.inbox_item_for_run(session, r.run_id))
+                        for r in runs if r.owner_user_id == principal.user_id]),
+            notebook=tuple(NotebookEntryView.model_validate(n) for n in runtime_state.get("notebook", [])),
+            inbox=tuple([await service.inbox_view(session, i) for i in inbox if i.owner_user_id == principal.user_id]),
+        )
+        await self._audit(audit, principal, AuditAction.AGENT_EXPORTED, f"agentdefinition:{agent_id}")
+        return exported
 
     async def notebook(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
                        audit: AuditLogger) -> NotebookResponse:

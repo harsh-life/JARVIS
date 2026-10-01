@@ -230,7 +230,10 @@ class UsagePort(Protocol):
         provider: str | None = None,
         model: str | None = None,
         tool_id: str | None = None,
-    ) -> None: ...
+    ) -> uuid.UUID | None:
+        """The ledger row's id, when the implementation has one (what an agent
+        run's attribution joins on, docs/29 §17)."""
+        ...
 
 
 # ── tools (07) ─────────────────────────────────────────────────────────────

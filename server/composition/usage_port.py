@@ -81,8 +81,8 @@ class RuntimeUsageAdapter:
         provider: str | None = None,
         model: str | None = None,
         tool_id: str | None = None,
-    ) -> None:
-        await self._policy.ledger.record(
+    ) -> uuid.UUID:
+        usage_id = await self._policy.ledger.record(
             self._session,
             request_id=self._request_id,
             user_id=principal.user_id,
@@ -101,3 +101,4 @@ class RuntimeUsageAdapter:
             admission_id = self._admitted.popleft()
             self._policy.recorded(admission_id, self._session.sync_session)
             self._recorded.append(admission_id)
+        return usage_id

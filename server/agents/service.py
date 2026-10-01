@@ -49,6 +49,7 @@ from server.storage.models import (
     AgentInboxItemRow,
     AgentNotebookEntryRow,
     AgentRunRow,
+    AgentRunUsageRow,
     AgentSpecVersionRow,
     AgentTask,
 )
@@ -543,6 +544,40 @@ class AgentDefinitionService:
         if run is not None and run.finished_at is None:
             run.status = AgentRunStatus.WAITING.value
             await session.flush()
+
+    async def verified_spec_versions(self, session: AsyncSession,
+                                     agent_id: uuid.UUID) -> list[tuple[AgentSpecVersionRow, CompiledAgentSpec]]:
+        """Every stored version whose hash still verifies (a tampered one is
+        left out of anything handed to the owner)."""
+
+        rows = (await session.execute(
+            select(AgentSpecVersionRow).where(AgentSpecVersionRow.agent_id == agent_id)
+            .order_by(AgentSpecVersionRow.version)
+        )).scalars().all()
+        verified = []
+        for row in rows:
+            try:
+                spec = CompiledAgentSpec.model_validate(row.spec_json)
+            except ValidationError:
+                continue
+            if verify_spec_hash(spec) and spec.spec_hash == row.spec_hash and spec.version == row.version:
+                verified.append((row, spec))
+        return verified
+
+    async def attribute_usage(self, session: AsyncSession, run_id: uuid.UUID, usage_id: uuid.UUID) -> None:
+        session.add(AgentRunUsageRow(run_id=run_id, usage_id=usage_id))
+        await session.flush()
+
+    async def month_spend(self, session: AsyncSession, agent_id: uuid.UUID, now: datetime | None = None) -> float:
+        """What the agent's runs started this calendar month (UTC) cost."""
+
+        now = now or self._clock()
+        start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        total = (await session.execute(
+            select(func.coalesce(func.sum(AgentRunRow.cost_total), 0.0))
+            .where(AgentRunRow.agent_id == agent_id, AgentRunRow.started_at >= start)
+        )).scalar_one()
+        return float(total or 0.0)
 
     async def run_cancelled(self, session: AsyncSession, run_id: uuid.UUID, *, reason: str) -> AgentRunRow | None:
         run = await session.get(AgentRunRow, run_id, populate_existing=True)

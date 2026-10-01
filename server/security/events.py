@@ -180,6 +180,7 @@ class AuditAction(str, Enum):
     # `resource` is `agentinbox:<item_id>` — never the result's text.
     AGENT_INBOX_DELIVERED = "agent.inbox.delivered"
     AGENT_INBOX_DELETED = "agent.inbox.deleted"
+    AGENT_EXPORTED = "agent.exported"
     # `resource` is `capability:<name>` or `tool:<tool>.<operation>`.
     AGENT_ENVELOPE_DENIED = "agent.envelope.denied"
 

@@ -97,24 +97,27 @@ class UsageLedger:
         provider: str | None = None,
         model: str | None = None,
         tool_id: str | None = None,
-    ) -> None:
-        session.add(
-            UsageEvent(
-                request_id=request_id,
-                user_id=user_id,
-                device_id=device_id,
-                session_id=session_id,
-                graph_id=graph_id,
-                kind=kind,
-                provider=provider,
-                model=model,
-                tool_id=tool_id,
-                tokens_or_units=max(0, int(units)),
-                estimated_cost=max(0.0, float(estimated_cost)),
-                timestamp=_utcnow(),
-            )
+    ) -> uuid.UUID:
+        """Add one ledger row; returns its `usage_id` (what an attribution,
+        e.g. an agent run's, joins on — docs/29 §17)."""
+
+        event = UsageEvent(
+            request_id=request_id,
+            user_id=user_id,
+            device_id=device_id,
+            session_id=session_id,
+            graph_id=graph_id,
+            kind=kind,
+            provider=provider,
+            model=model,
+            tool_id=tool_id,
+            tokens_or_units=max(0, int(units)),
+            estimated_cost=max(0.0, float(estimated_cost)),
+            timestamp=_utcnow(),
         )
+        session.add(event)
         await session.flush()
+        return event.usage_id
 
     async def calls_since(
         self,

@@ -1464,11 +1464,12 @@ class AgentRuntime:
                                               task_id=state.task_id)
         state.cost += output.estimated_cost
         # USAGE-001: exactly one UsageEvent per execution, success or failure.
-        await env.usage.record(
+        usage_id = await env.usage.record(
             principal=state.principal, graph_id=state.graph_id, kind=output.usage_kind,
             units=output.units, estimated_cost=output.estimated_cost,
             provider=output.provider, model=output.model, tool_id=handle.tool_id,
         )
+        await self._attribute(env, state, usage_id, output.estimated_cost)
         self._trace(state, f"usage.{output.usage_kind.value}", resource=f"tool:{handle.tool_id}",
                     units=output.units, cost=output.estimated_cost)
         # Execution-layer failures (sandbox_violation, egress_denied,
@@ -1593,11 +1594,12 @@ class AgentRuntime:
     async def _meter_model(self, env: TaskEnvironment, state: TaskState, provider: ModelProvider,
                            *, units: int, cost: float) -> None:
         state.cost += cost
-        await env.usage.record(
+        usage_id = await env.usage.record(
             principal=state.principal, graph_id=state.graph_id, kind=UsageKind.MODEL_CALL,
             units=units, estimated_cost=cost, provider=provider.spec.provider,
             model=provider.spec.model,
         )
+        await self._attribute(env, state, usage_id, cost)
         self._trace(state, "usage.model_call", resource=f"worker:{_worker_id(provider)}", units=units, cost=cost)
 
     # ── lifecycle ───────────────────────────────────────────────────────
@@ -1947,6 +1949,14 @@ class AgentRuntime:
         # The selected profile's configured entry, through the same key path.
         return await env.models.resolve(principal=state.principal, graph_id=state.graph_id,
                                         agent_model_ref=state.agent.model_ref)
+
+    @staticmethod
+    async def _attribute(env: TaskEnvironment, state: TaskState, usage_id: uuid.UUID | None, cost: float) -> None:
+        """docs/29 §17: every usage event of an agent run is joined to the run
+        — no agent call is free or invisible."""
+
+        if state.agent is not None and env.agent_runs is not None and usage_id is not None:
+            await env.agent_runs.usage_recorded(state.agent, usage_id=usage_id, cost=cost)
 
     @staticmethod
     def _envelope(state: TaskState) -> agent_envelope.Envelope | None:

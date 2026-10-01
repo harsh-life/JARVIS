@@ -45,6 +45,7 @@ from server.gateway.errors import AppError
 from server.security.audit import AuditLogger
 from shared.schemas.agent_factory import (
     AgentDetail,
+    AgentExport,
     AgentInboxItemView,
     AgentInboxResponse,
     AgentListResponse,
@@ -299,3 +300,14 @@ async def clear_notebook(
 ) -> Response:
     await _factory(request).clear_notebook(session, principal=principal, agent_id=agent_id, audit=audit)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/agents/{agent_id}/export", response_model=AgentExport)
+async def export_agent(
+    request: Request,
+    agent_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentExport:
+    return await _factory(request).export(session, principal=principal, agent_id=agent_id, audit=audit)
