@@ -368,7 +368,7 @@ def build_application(
         vault=vault_facade,
         tuning=tuning,
         agent_runs=(
-            (lambda session, audit: AgentRunCoordinator(agent_factory.service, session, audit, core))
+            (lambda session, audit: AgentRunCoordinator(agent_factory, session, audit, core))
             if agent_factory is not None else None
         ),
     )

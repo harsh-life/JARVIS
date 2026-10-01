@@ -46,7 +46,7 @@ from server.agent.events import AgentEvent
 from server.agent.recovery import RecoveryPolicy, SwitchReason, operation_key
 from server.agent import envelope as agent_envelope
 from server.agent import modes
-from server.agent.agent_run import AgentRunBinding
+from server.agent.agent_run import MODEL_ROUTE_TOOL, AgentRunBinding
 from server.agent.ports import (
     ActionRequest,
     ActivationRequest,
@@ -804,6 +804,7 @@ class AgentRuntime:
                 self._visible_tools(state), state.active_capability_names(), state.mode,
                 guidance=tuning.system_prompt if tuning else None,
                 descriptions=tuning.tool_descriptions if tuning else None,
+                runtime_tools=self._runtime_tools(state),
             )
         )
         messages = ctx.compact(messages, max_chars=self._bounds.max_context_chars)
@@ -1120,8 +1121,52 @@ class AgentRuntime:
             # docs/29 §10.3: an agent's worker is shown only what its envelope
             # could ever reach (the gate still refuses anything else).
             reachable = {e.capability for e in envelope.entries}
-            handles = [h for h in handles if h.required_capability in reachable]
+            # A model tool is reached only through `agent.model` routing
+            # (docs/29 §12), never by naming it.
+            handles = [h for h in handles if h.required_capability in reachable and not h.is_model_tool]
         return handles
+
+    @staticmethod
+    def _runtime_tools(state: TaskState) -> list[str]:
+        agent = state.agent
+        if agent is None:
+            return []
+        lines = []
+        if agent.model_tools:
+            lines.append(
+                f"{MODEL_ROUTE_TOOL}: ask JARVIS for a specialized model (capability model.invoke; "
+                "operations: invoke [low_read]; arguments: prompt, optional role "
+                "(writing, coding_suitable, long_context, vision, ...), optional preference "
+                "(faster, cheaper, thorough)). JARVIS chooses the model; request model.invoke first."
+            )
+        return lines
+
+    async def _route_model_call(self, env: TaskEnvironment, state: TaskState, call: ToolCall,
+                                resource: str) -> ToolCall | None:
+        """docs/29 §12: an agent's model-as-tool request, resolved by JARVIS to
+        one permitted, configured model tool. The result is an ordinary
+        `model.invoke` call that then passes the envelope gate, activation and
+        the engine like any other — routing chooses, it never authorizes."""
+
+        agent = state.agent
+        assert agent is not None
+        if not agent.model_tools:
+            await self._envelope_denied(env, state, resource)
+            state.messages.append(ctx.observation(agent_envelope.not_in_envelope("model.invoke"),
+                                                  limit=self._bounds.max_observation_chars))
+            return None
+        if call.operation != "invoke":
+            await self._reject(env, state, f"'{call.operation}' is not an operation of '{MODEL_ROUTE_TOOL}'.",
+                               resource)
+            return None
+        if env.agent_runs is None:
+            raise _Stop(AgentFailureCode.AGENT_UNAVAILABLE)
+        routed = await env.agent_runs.route_model(agent, dict(call.arguments))
+        if isinstance(routed, str):
+            await self._reject(env, state, f"No model was routed for this request ({routed}).", resource)
+            return None
+        self._trace(state, "agent.model.routed", resource=f"tool:{routed.tool_id}.invoke")
+        return ToolCall(type="tool_call", tool=routed.tool_id, operation="invoke", arguments=dict(routed.arguments))
 
     async def _reject(self, env: TaskEnvironment, state: TaskState, message: str, resource: str,
                       decision: PermissionDecisionValue | None = None) -> None:
@@ -1144,11 +1189,23 @@ class AgentRuntime:
                                   resource=f"stall:{state.task_id}:loop")
                 await self._switch(env, state, models, SwitchReason.LOOP, stuck=AgentFailureCode.STALLED)
                 return None
+        routed = False
+        if state.agent is not None and call.tool == MODEL_ROUTE_TOOL:
+            rewritten = await self._route_model_call(env, state, call, resource)
+            if rewritten is None:
+                return None
+            call, routed = rewritten, True
+            resource = f"tool:{call.tool}.{call.operation}"
         handle = self._tools.resolve(call.tool)
         if handle is None or (
             state.allowed_tool_ids is not None and call.tool not in state.allowed_tool_ids
         ):
             await self._reject(env, state, f"Tool '{call.tool}' is not available.", resource)
+            return None
+        if state.agent is not None and handle.is_model_tool and not routed:
+            await self._reject(env, state, f"In an agent run a model is reached only through "
+                                           f"'{MODEL_ROUTE_TOOL}'; JARVIS chooses which.", resource)
+            self._breaker.record_denial(state)
             return None
 
         spec = handle.operations.get(call.operation)

@@ -38,11 +38,13 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Iterator, Mapping
 from urllib.parse import urlsplit
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.agent.agent_run import AgentRunBinding, RoutedModelCall
 from server.agents.compiler import OwnerContext, parse_draft, revalidation_required
+from server.agents.gateway.model_routing import RouteRefused, route_model_call
 from server.agents.instructions import assemble_input
 from server.agents.providers.native import NativeRuntimeProvider
 from server.agents.registry import AgentRegistries, ModelEntryFacts, build_registries
@@ -96,6 +98,7 @@ from shared.schemas.agent_factory import (
     CompiledAgentSpecView,
     CompileOutcome,
     CreateAgentRequest,
+    ModelCallRequest,
 )
 from shared.schemas.authorization import DenialSurface, Operation, Principal, ResourceType
 from shared.schemas.enums import AgentConfigScopeType, AuditActor, AuditResult, RiskCategory, Visibility
@@ -197,8 +200,8 @@ class AgentFactory:
     def registries(self) -> AgentRegistries:
         return self._service.registries
 
-    async def _primary_model_ref(self, session: AsyncSession, *, user_id: uuid.UUID,
-                                 graph_id: uuid.UUID | None) -> str:
+    async def primary_model_ref(self, session: AsyncSession, *, user_id: uuid.UUID,
+                                graph_id: uuid.UUID | None) -> str:
         """docs/29 §6.2 via OD-RT-3: the owner's resolved primary as a model
         reference. `agent.primary` only when the server configuration is what
         applies to them; a user's (or their graph's) own configured model is
@@ -250,7 +253,7 @@ class AgentFactory:
         return OwnerContext(
             owner_user_id=user_id,
             graph_id=graph_id,
-            owner_primary_model_ref=await self._primary_model_ref(session, user_id=user_id, graph_id=graph_id),
+            owner_primary_model_ref=await self.primary_model_ref(session, user_id=user_id, graph_id=graph_id),
             budget_per_run_policy=agents.default_budget_per_run,
             budget_per_month_policy=agents.default_budget_per_month,
             active_agent_count=await self._service.active_count(session, user_id),
@@ -573,9 +576,10 @@ class AgentRunCoordinator:
     exactly that version and hash — read fresh from the store at every step,
     never cached — and the rest records what happened."""
 
-    def __init__(self, service: AgentDefinitionService, session: AsyncSession, audit: AuditLogger,
+    def __init__(self, factory: AgentFactory, session: AsyncSession, audit: AuditLogger,
                  core: SecurityCore) -> None:
-        self._service = service
+        self._factory = factory
+        self._service = factory.service
         self._session = session
         self._audit_logger = audit
         self._core = core
@@ -617,7 +621,28 @@ class AgentRunCoordinator:
         return "notebook_unavailable"
 
     async def route_model(self, binding: AgentRunBinding, arguments: Mapping[str, Any]) -> RoutedModelCall | str:
-        return "model_routing_unavailable"
+        """docs/29 §12: the request names a role and a preference only — a
+        provider, model, profile, endpoint or key is a validation failure.
+        The profile is chosen from the stored spec's envelope, the operator's
+        registries and the owner's *current* model policy; nothing the agent
+        says can make a profile eligible."""
+
+        try:
+            request = ModelCallRequest.model_validate(dict(arguments))
+        except ValidationError:
+            return "invalid_request"
+        loaded = await self._service.load(self._session, binding.agent_id, fresh=True)
+        if loaded is None or loaded[1] is None or loaded[1].spec_hash != binding.spec_hash:
+            return "agent_unavailable"
+        definition, spec = loaded
+        owner_ref = await self._factory.primary_model_ref(self._session, user_id=definition.owner_user_id,
+                                                          graph_id=definition.graph_id)
+        route = route_model_call(request, spec=spec, registries=self._factory.registries,
+                                 owner_primary_model_ref=owner_ref)
+        if isinstance(route, RouteRefused):
+            return route.reason
+        prompt = f"{request.system}\n\n{request.prompt}" if request.system else request.prompt
+        return RoutedModelCall(tool_id=route.model_tool_id, arguments={"prompt": prompt})
 
 
 class _PresentUserRun:

@@ -806,8 +806,8 @@ class DeprovisionReceipt(_Strict):
 
 
 class ModelCallRequest(_Strict):
-    """What an agent run will send the Model Gateway for a specialized model
-    call (docs/29 §12, Phase 3 — **declared, not wired**).
+    """The arguments of an agent run's `agent.model` call — a specialized
+    model call (docs/29 §12; wired for native runs in Phase 2).
 
     It says *what kind of model* the subtask wants (`role`, `preference`) and
     the prompt. It has no field for a provider, a model name, a profile id, a
