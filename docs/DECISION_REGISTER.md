@@ -340,7 +340,7 @@ row of §2F, §2H and §3 is unchanged.
 | **Validation method** | Test first: `tests/memory/test_prd32_service_measurement.py` (the #32 acceptance, S1/S2) failed on SQLite and refuses to run on anything but PostgreSQL; `tests/runtime/test_concurrent_store.py` (no open transaction during model/tool calls, same-key retry, budget race, ten users' rows, deadlock → `503`) failed for the intended reasons before the fix. Then every suite on a real PostgreSQL server (and still on SQLite), the migration round-trip on both, the import contracts, BR-T2 and the guard mutations (M42–M44 added for the new guards). CI's `postgres` job runs all of it on every push. Measurements: `docs/RELEASE_VALIDATION.md` §I. |
 | **Acceptance status** | **PRD #32: MET on PostgreSQL** (`docs/RELEASE_VALIDATION.md` §I). The Real-Data Gate is **not** opened by this: its other blockers stand (§P). |
 
-## 2J. Agent Factory — Phases 1 and 2 (`[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]`)
+## 2J. Agent Factory — Phases 1 to 4 (`[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]`)
 
 `docs/29_AGENT_FACTORY_ASSESSMENT.md` is a proposal. Its Phase 1 boundary
 (docs/29 §31) is built **behind `agents.enabled: false`** as implemented
@@ -418,6 +418,38 @@ prompt, model output, runtime or tool result grants anything.
 Phase 2 mutants M-AG15–M-AG69 are in `tests/tools/guard_mutations.py`.
 M-AG61 needs `HYPERMIND_REQUIRE_MEMORY_STACK=1`.
 
+### Phases 3 and 4 — Agent Gateway and reminder tap (implementation facts)
+
+Engineering phases 3 and 4 are implemented as one milestone ("Agent Gateway +
+Reminder-Tap Integration"), while retaining separate acceptance criteria;
+docs/29's phase labels are unchanged. Still behind `agents.enabled: false`,
+still a proposal, and still **present-user only**: on demand, or tapped from
+a reminder by the owner. Nothing runs unattended, on a schedule, or for anyone
+but the authenticated owner. The pipeline is unchanged — agent proposal →
+envelope gate → the one engine (activation, 04) → confirmation/step-up →
+execution — and nothing added here is an authority: the gateway, the Judge,
+the scheduler, the console and the Android client each only remove, observe,
+carry data or ask. No StandingDelegation, DelegatedPrincipal, external
+recipient, external runtime or framework, MCP transport, HTTP gateway, Darwin,
+child agent or agent-to-agent messaging is built.
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P3-1 | **Run tokens.** Two per run (model, tool): 32 random bytes, shown once in the run's context and stored only as SHA-256 (`agent_run_tokens`, migration `d4f6a8c0e2b5`). Each is bound to one run, agent, spec hash and gateway; it expires 30 s after the run's deadline and is revoked when the run finishes or is cancelled (before the runtime is told), and when the agent is paused (by owner or operator), changed or deleted. No session credential, provider key, SecretStore value or user credential is ever in one. | `server/agents/gateway/`, `server/agents/service.py` |
+| AF-P3-2 | **Every request of a run is a gateway request**, checked in order: token form, known, purpose, binding (run, agent, spec hash), run open, the Phase 2 definition check (fresh), expiry, revocation, `sent_at` within ±60 s, nonce form, then the nonce ledger (`agent_gateway_nonces`): the same nonce and request answer with the stored, secret-scrubbed response and run nothing again; the same nonce for another request is a replay. In-process for native runs — the same check a future external runtime would meet. | `server/agents/gateway/core.py`, `server/agent/runtime.py` |
+| AF-P3-3 | **Model Gateway.** A model call names an alias, never a model: `agent-model` (exactly the approved profile and version) or `model-tool:<id>` (needs `model.invoke` in the envelope, pinned if pinned). The profile must still be enabled, support the runtime, be permitted to the owner now (open to all or the owner's primary, read live) and be exactly the configured provider/model. Provider credentials stay on the entry and resolve server-side; none reaches a prompt, context, token, trace, log, notebook, inbox or client payload. | `server/agents/gateway/model_gateway.py`, `server/composition/agents.py` |
+| AF-P3-4 | **The month, live.** After the per-run and owner (13) prechecks, each paid call adds the agent's live runs' attributed usage to its finished runs' spend; a call that would pass `budget.per_month` is refused (`agent_budget_exhausted`). Free calls are never refused by it. | `server/agents/service.py`, `server/agent/runtime.py` |
+| AF-P3-5 | **The Judge, attributed and owner-scoped.** The Judge's record names the run's agent, run and version. `agent.purpose` is the one owner-scoped candidate target (registry: 19 §9's list plus it); it is accepted only from an agent run, stored with the agent from the trace (`improvement_candidates.agent_id`, migration `e6b8d0f2a4c7`), shown only to that agent's owner, and applied only by the owner's own confirmed update — a recompile that would change anything but the purpose is refused. A superuser approval of it is refused (`owner_scoped`). Every other `agent.*` target is forbidden (`agent_authority`). The Judge's stop request stops a run and changes nothing else. | `server/evaluation/`, `server/agents/revision.py`, `server/composition/` |
+| AF-P3-6 | **Console and operator pause.** `GET /api/v1/admin/agents` is read-only and redacted (names as lengths; no purpose, source, result, notebook, inbox or token). `POST /api/v1/admin/control/agents/{id}/pause\|release` is the existing operator stop aimed at one agent: live runs tripped in memory first, the agent paused on the operator's authority, its tokens revoked; its owner can neither resume nor re-approve past the hold, and release only lifts it. | `server/dashboard/console.py`, `server/composition/supervisor.py` |
+| AF-P4-1 | **The reminder is data.** `scheduled_jobs.agent_id` (migration `f8c0e2a4b6d9`; docs/29 §28 M5's `01` field) is stored by the scheduler and copied onto the frame; the scheduler interprets, authorizes and starts nothing, and still imports none of the runtime, tools, devices, secrets, memory, the Judge or the factory. No request can set it. | `server/scheduler/`, `server/storage/models.py` |
+| AF-P4-2 | **The job.** A `reminder` trigger is the owner's private job, "Run agent: {name}", on the compiled `CRON_TZ` schedule, created by the composition root through the scheduler's service and the one engine. Every check that could refuse it runs before the agent's change is written (a refusal still commits its audit trail), so no agent is half-made. Pause (owner or operator), delete and re-approval cancel it; the owner's confirmed resume and an update re-create it. | `server/composition/agents.py` |
+| AF-P4-3 | **`agent_reminders`.** Only a client that declared the channel feature receives `agent_id`; every other client gets the byte-identical plain frame. A firing delivers a message and nothing else. | `shared/schemas/device_channel.py`, `server/execution/device_hub.py` |
+| AF-P4-4 | **The tap.** `POST /agents/{id}/runs {reminder_delivery_id}` is the owner's ordinary run, labelled `reminder_tap` (migration `b2d4f6a8c0e1`). The delivery is accepted only if it was sent to this very device of this very owner for this very agent (else `404`); the run then passes every on-demand check. One tap is one run: a repeated or racing tap gets the run it started (unique index). Identity always comes from the session, never from a reminder payload. | `server/composition/agents.py` |
+| AF-P4-5 | **Android.** An endpoint, not an authority: it lists the owner's agents and sends the owner's own Run; a reminder's "Run agent" only opens the app on an offer built from the phone's own record; a run is shown, confirmed and tracked as the ordinary task it is; a server refusal is shown as one. No provider credential, token or policy is on the device. | `android/` |
+
+Phase 3/4 mutants M-AG6–M-AG8 and M-AG70–M-AG122 are in
+`tests/tools/guard_mutations.py` (four of them Kotlin).
+
 ---
 
 ## 3. Genuinely unresolved owner decisions
@@ -439,7 +471,7 @@ M-AG61 needs `HYPERMIND_REQUIRE_MEMORY_STACK=1`.
 | OD-DASH-1 | Dashboard/control split vs amending DASH-002 | Split built as recommended; DASH-002 unchanged; not ratified. |
 | OD-DASH-2 | Console UI | Not built; JSON API only (§2G). |
 | OD-JDG-5 | How approved Judge guidance may carry user content (§2H) | Global guidance with secret screening only reaches every user with one user's content (BR-T2 row 38); which control fits is a product and privacy call. |
-| OD-AF-1…10 | The Agent Factory's abstractions, tiers, entities and the unattended-run amendment (§2J) | docs/29 is a proposal; Phases 1 and 2 are built behind `agents.enabled: false` and none of its decisions is ratified. |
+| OD-AF-1…10 | The Agent Factory's abstractions, tiers, entities and the unattended-run amendment (§2J) | docs/29 is a proposal; Phases 1 to 4 are built behind `agents.enabled: false` and none of its decisions is ratified. Phase 5 (unattended) waits on OD-AF-2. |
 
 ---
 

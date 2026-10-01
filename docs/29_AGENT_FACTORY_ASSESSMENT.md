@@ -1378,6 +1378,14 @@ Each phase is test-first: tests from §27 → implement → run the full suite o
 | **6** | First external provider (recommended: `letta` for P1 or `browser_use` for P2, OD-AF-6); container/netns infra; MCP Tool Gateway transport; HTTP Model Gateway | T11, T12, T13, T19 (external); BR-T2 container rows |
 | **7+** | Further providers, one per concrete task class | per-provider suite |
 
+> **Implementation note (Track B; not a ratification).** Engineering phases 3
+> and 4 are implemented as one milestone, while retaining separate acceptance
+> criteria. The phase labels and exit criteria above are unchanged: Phase 3
+> (T6, T7, T8, T23, T26; M-AG6, 7, 8, with M-AG70…M-AG102 added) and Phase 4
+> (T10 reminder half, T35; M-AG103…M-AG122 added) are each tested on their
+> own. What was built, and where it departs from this document, is recorded
+> in `DECISION_REGISTER.md` §2J. No owner decision in §32 is ratified by it.
+
 **Exact Stage 1 implementation boundary** (for a coding agent), in scope:
 - `shared/schemas/agent_factory.py`: `AgentDraft`, `TriggerRequest`, `SourceRef`, `AgentTemplate`, `AgentModelProfile`, `AgentRuntimeProfile`, `AgentSelection`, `CompiledAgentSpec`, `CompileOutcome`, `AgentView`, and the enums `TaskTag`, `AbilityName`, `ModelFeature`, `ModelPreference`, `TriggerKind`, `OutputKind`, `IsolationMode`, `InfraRequirement`, `AgentStatus`;
 - `server/agents/registry/*`, `server/agents/abilities.py`, `server/agents/compiler.py`, `server/agents/selector.py`, `server/agents/service.py` (definitions, spec versions, previews, delete);

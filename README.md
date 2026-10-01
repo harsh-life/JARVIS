@@ -275,7 +275,7 @@ and the Judge's control layer. No browser UI ships (OD-DASH-2).
 The owner decisions these builds leave open — OD-JDG-1..4, OD-DASH-1/2 — are
 listed in `docs/DECISION_REGISTER.md` §2G/§3; none is ratified by being built.
 
-**Agent Factory, Phases 1 and 2** (`docs/29`, `[PROPOSAL — NOT CANONICAL UNTIL
+**Agent Factory, Phases 1 to 4** (`docs/29`, `[PROPOSAL — NOT CANONICAL UNTIL
 RATIFIED]`; off by default, `agents.enabled: false`). An ordinary user task can
 turn a repeated goal into an owner-private agent *definition*: the worker
 writes a strict `AgentDraft` (intent only — no owner, graph, capability, tier,
@@ -304,9 +304,33 @@ graph membership stops the run. Other Phase 2 pieces:
   counts against a monthly budget;
 - the owner can export the agent, with no secret in the export.
 
-Agent output never becomes memory. Unattended or scheduled execution, external
-runtimes, MCP, Letta, child agents and Darwin are not built. Decisions:
-`docs/DECISION_REGISTER.md` §2J (none ratified).
+**Phases 3 and 4** (built as one milestone, each with its own acceptance
+tests) put every run behind the in-process **Agent Gateway** and add the
+**reminder tap**:
+
+- each run holds two short-lived, hashed, run-bound tokens; every model and
+  tool request carries one with a fresh nonce, and the gateway re-checks the
+  run, the agent and its spec hash, rejects stale or replayed requests and
+  answers a repeated request with its stored result;
+- the **Model Gateway** admits only the approved model profile (or a model
+  tool the envelope names), re-checks the owner's model policy at every call,
+  and enforces the agent's monthly budget live across concurrent runs; keys
+  stay server-side;
+- the **Judge** sees which agent a run was and may suggest a clearer wording
+  of that agent's purpose — shown to its owner only, applied only by the
+  owner's confirmed update, never by a superuser — and nothing else about an
+  agent;
+- the operator console lists agents and runs (redacted), and the operator can
+  pause one agent through the existing stop; its owner cannot resume past it;
+- an agent with a reminder trigger gets an ordinary private scheduler job
+  ("Run agent: {name}") that carries the agent's id as data; firing delivers
+  a message and runs nothing. On the Android app, "Run agent" opens the app;
+  the owner presses Run, which is the same authenticated run as on demand
+  (`reminder_tap`, one run per tap). The app also lists the owner's agents.
+
+Agent output never becomes memory. Unattended execution (Phase 5), standing
+delegation, external runtimes, MCP, Letta, child agents and Darwin are not
+built. Decisions: `docs/DECISION_REGISTER.md` §2J (none ratified).
 
 **Still not built** (each is a later, separate subsystem; nothing in the
 runtime depends on it): **Darwin**, a real **IntelligenceProvider** (only

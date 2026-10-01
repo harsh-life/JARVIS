@@ -23,6 +23,7 @@ No browser UI ships in this build (OD-DASH-2).
 | `devices` | registered devices, connected, last seen, revoked, step-up/push registered (never the key or token) |
 | `audit[?action=&user_id=&result=&resource_prefix=&since=&limit=]` | audit events — ids and results; `action=evaluation.*` filters by prefix |
 | `configuration` | the effective configuration; every secret as `{"handle", "resolves"}` |
+| `agents[?limit=]` | (docs/29 Phase 3, when `agents.enabled`) agents by status, runs in the last 7 days, failures by code; per agent: owner, status, version, spec hash, template/runtime/model profile ids, budget and month spend, runs, the last run and its evaluation, live run-token count, operator hold. The agent's name is shown only as its length; its purpose, sources, results, notebook, inbox and tokens are never read |
 
 Every view answers `{"view", "banners", "data"}`. **Banners** persist on every
 view while break-glass is enabled (`break_glass_enabled`) or a global stop is
@@ -60,6 +61,7 @@ Actions are the control endpoints, owned by the subsystems that enforce them:
 | break-glass activate / revoke / list | `POST|GET /api/v1/admin/control/break-glass…` | break-glass (20 §2.2) |
 | Judge on/off, stop requests on/off | `POST /api/v1/admin/control/evaluation/switches` | evaluation control (19) |
 | approve / reject a candidate, roll back a version | `POST /api/v1/admin/control/evaluation/…` | review queue (19 §9) |
+| pause / release one agent `{reason}` | `POST /api/v1/admin/control/agents/{id}/pause`, `…/release` | supervisor (docs/29 §14.3): live runs stopped, run tokens revoked; its owner cannot resume past the hold; release restores nothing |
 
 ## 4. Verifying
 
