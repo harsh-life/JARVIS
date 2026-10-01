@@ -64,6 +64,8 @@ class ScheduledJobView(ScheduledJob):
     next_fire_at: datetime | None = None
     reason_source: ReasonSource = ReasonSource.USER
     origin_task_id: UUID | None = None
+    # docs/29 §17.1: the agent this reminder offers to run (data only).
+    agent_id: UUID | None = None
     last_firing: LastFiring | None = None
 
 

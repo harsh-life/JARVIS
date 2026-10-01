@@ -62,6 +62,9 @@ class NewReminder:
     origin_task_id: uuid.UUID | None = None
     device_id: uuid.UUID | None = None
     session_id: uuid.UUID | None = None
+    # docs/29 §17.1: an agent reminder's agent, as data (set only by the
+    # composition root for an agent's own trigger).
+    agent_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -154,6 +157,7 @@ class SchedulerService:
             reason_source=request.reason_source.value,
             origin_task_id=request.origin_task_id,
             created_by_device_id=request.device_id,
+            agent_id=request.agent_id,
         )
         await self._backend.add(session, job, first_fire=prepared.first_fire)
         await audit.record(
@@ -237,6 +241,7 @@ class SchedulerService:
             created_at=as_utc(job.created_at),
             next_fire_at=as_utc(job.next_fire_at) if job.next_fire_at is not None else None,
             reason_source=ReasonSource(job.reason_source),
+            agent_id=job.agent_id,
             origin_task_id=job.origin_task_id,
             last_firing=(
                 LastFiring(

@@ -216,6 +216,10 @@ class ChannelFeature(str, Enum):
     a frame it would reject as a protocol error."""
 
     REMINDERS = "reminders"
+    # docs/29 §17.1 (Phase 4): reminders may carry `agent_id`, for a client
+    # that offers "Run agent" on them. Without it a client gets the plain
+    # reminder (the SCH-B11 pattern: never a field it would reject).
+    AGENT_REMINDERS = "agent_reminders"
 
 
 class DeviceReminder(_Strict):
@@ -237,6 +241,18 @@ class DeviceReminder(_Strict):
     # waited for this device to reconnect ("missed at …", docs/22 §3).
     late: bool = False
     recurring: bool = False
+    # docs/29 §17.1: the agent this reminder offers to run — an identifier,
+    # never authority. Tapping "Run agent" is the authenticated owner asking
+    # `POST /api/v1/agents/{agent_id}/runs`, decided by the server like any
+    # run; nothing here can start one. Sent only to `agent_reminders` clients.
+    agent_id: UUID | None = None
+
+    def wire(self, *, agent_reminders: bool) -> str:
+        """The frame as this socket may receive it: `agent_id` only for a
+        client that declared `agent_reminders`, and never as a null."""
+
+        exclude = None if (self.agent_id is not None and agent_reminders) else {"agent_id"}
+        return self.model_dump_json(exclude=exclude)
 
 
 class DeviceWakePush(_Strict):

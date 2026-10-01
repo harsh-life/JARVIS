@@ -407,6 +407,8 @@ class ReminderFirer:
                 task_reason=job.task_reason, scheduled_for=as_utc(firing.scheduled_for),
                 late=firing.late or (now - as_utc(firing.scheduled_for) > ON_TIME_TOLERANCE),
                 recurring=_is_recurring(job.schedule),
+                # docs/29 §17.1: copied as data; the tap is the user's own run.
+                agent_id=job.agent_id,
             )
             first_attempt = delivery.status == "pending" and delivery.sent_at is None
             # The owner's id travels with it: the channel sends only to a

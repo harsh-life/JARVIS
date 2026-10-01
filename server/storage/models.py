@@ -407,6 +407,11 @@ class ScheduledJob(Base):
     created_by_device_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("devices.device_id"), nullable=True
     )
+    # docs/29 §17.1 (Phase 4): the agent this reminder offers to run — data
+    # only. The scheduler never reads it beyond copying it onto the reminder
+    # frame; it authorizes and starts nothing. Set by the Agent Factory through
+    # the composition root; no request can name it.
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
     __table_args__ = (
         CheckConstraint("length(trim(task_reason)) > 0", name="ck_scheduled_jobs_reason_nonempty"),
@@ -414,6 +419,7 @@ class ScheduledJob(Base):
         Index("ix_scheduled_jobs_owner_status", "owner_user_id", "status"),
         Index("ix_scheduled_jobs_due", "status", "next_fire_at"),
         Index("ix_scheduled_jobs_owner_created", "owner_user_id", "created_at"),
+        Index("ix_scheduled_jobs_agent", "agent_id"),
     )
 
 
