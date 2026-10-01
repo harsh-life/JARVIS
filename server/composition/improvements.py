@@ -42,7 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.agent.ports import WorkerTuning
 from server.config.schema import EvaluationConfig
-from server.evaluation.candidates import CandidateRejected, validate_value
+from server.evaluation.candidates import OWNER_SCOPED_TARGETS, CandidateRejected, validate_value
 from server.gateway.evaluation_control_port import (
     DecisionView,
     EvaluationControlRefusalKind,
@@ -253,6 +253,12 @@ class EvaluationControl:
         _require(principal)
         self._check_reason(reason)
         row = await self._pending(session, audit, candidate_id, "approve", reason)
+        if row.target in OWNER_SCOPED_TARGETS:
+            # docs/29 §18: one agent's purpose belongs to its owner. No
+            # server-wide configuration version is ever made of it.
+            await self._audit(audit, f"control:evaluation:approve:{candidate_id}:owner_scoped", AuditResult.BLOCKED)
+            raise _refused(EvaluationControlRefusalKind.VALIDATION, "owner_scoped",
+                           "this suggestion belongs to an agent's owner; only they can apply it")
         try:
             value = validate_value(row.target, row.subject, row.proposed_value)
         except CandidateRejected as exc:

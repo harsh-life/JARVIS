@@ -421,6 +421,10 @@ class TaskSnapshot:
     elapsed_seconds: float
     transcript: tuple[tuple[str, str], ...]
     events: tuple[TraceEvent, ...]
+    # docs/29 §18: an agent run's attribution, for the Judge — ids only.
+    agent_id: uuid.UUID | None = None
+    agent_run_id: uuid.UUID | None = None
+    agent_version: int | None = None
 
 
 class TaskObserver(Protocol):

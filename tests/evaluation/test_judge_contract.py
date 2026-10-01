@@ -13,6 +13,7 @@ import pytest
 
 from server.evaluation.candidates import (
     ALLOWED_TARGETS,
+    OWNER_SCOPED_TARGETS,
     CandidateRejected,
     validate_candidate,
     validate_value,
@@ -334,11 +335,19 @@ def test_a_candidate_may_cite_only_the_evaluated_task():
 
 
 def test_the_registry_is_exactly_19_s9s_list():
+    # 19 §9's list, plus docs/29 §18's one owner-scoped target (`agent.purpose`,
+    # `[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]`): a suggestion for one user's
+    # agent, applied only by that owner — never a server configuration version.
     assert set(ALLOWED_TARGETS) == {
         "worker.system_prompt", "worker.tool_description", "recovery.stall_window",
         "recovery.loop_repeat_limit", "recovery.max_worker_switches", "evaluation.rubric",
-        "suggestion.template",
+        "suggestion.template", "agent.purpose",
     }
+    assert OWNER_SCOPED_TARGETS == {"agent.purpose"}
     with pytest.raises(CandidateRejected):
         validate_value("breaker.denial_limit", None, "100")
+    for authority in ("agent.envelope", "agent.budget", "agent.trigger", "agent.model", "agent.runtime"):
+        with pytest.raises(CandidateRejected) as refused:
+            validate_value(authority, None, "x")
+        assert (refused.value.code, refused.value.category) == ("forbidden_target", "agent_authority")
 

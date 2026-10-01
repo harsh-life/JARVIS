@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import hmac
+import json
 import logging
 import time
 import uuid
@@ -46,7 +48,14 @@ from server.agent.events import AgentEvent
 from server.agent.recovery import RecoveryPolicy, SwitchReason, operation_key
 from server.agent import envelope as agent_envelope
 from server.agent import modes
-from server.agent.agent_run import MODEL_ROUTE_TOOL, NOTEBOOK_TOOL, AgentRunBinding
+from server.agent.agent_run import (
+    MODEL_ROUTE_TOOL,
+    NOTEBOOK_TOOL,
+    AgentRunBinding,
+    GatewayAdmission,
+    ModelCallFacts,
+    gateway_request,
+)
 from server.agent.ports import (
     ActionRequest,
     ActivationRequest,
@@ -90,6 +99,7 @@ from shared.schemas.agent import (
     ToolInvocation,
     ToolOutput,
 )
+from shared.schemas.agent_factory import RunTokenPurpose
 from shared.schemas.authorization import Operation, Principal, ResourceType
 from shared.schemas.enums import AuditResult, PermissionDecisionValue, RiskCategory, UsageKind
 
@@ -153,6 +163,37 @@ _TRIP_NOTES: dict[str, str] = {
     TripSource.GLOBAL_LATCH.value: "Stopped: the server operator has suspended all tasks.",
 }
 _GENERIC_TRIP_NOTE = "Stopped by the safety breaker."
+
+# docs/29 §11–§13: how an agent run meets an Agent Gateway refusal. A request
+# that was malformed, stale or a replay is refused and not performed — for a
+# tool call the model is told so; anything about the run itself (its token,
+# the run, the agent, its version, its budget) stops the run.
+_GATEWAY_REQUEST_REFUSALS = frozenset({"replay", "stale_request", "schema_invalid"})
+_GATEWAY_STOPS: dict[str, AgentFailureCode] = {
+    "spec_changed": AgentFailureCode.SPEC_CHANGED,
+    "budget_exceeded": AgentFailureCode.BUDGET_EXCEEDED,
+    "agent_budget_exhausted": AgentFailureCode.AGENT_BUDGET_EXHAUSTED,
+}
+
+
+# docs/29 §11.2: the only model name an agent run asks the Model Gateway for.
+AGENT_MODEL_ALIAS = "agent-model"
+
+
+def _gateway_stop(code: str) -> AgentFailureCode:
+    return _GATEWAY_STOPS.get(code, AgentFailureCode.AGENT_UNAVAILABLE)
+
+
+def _model_digest(provider: ModelProvider, messages) -> str:
+    """The identity of one model request: which model, and exactly what it is
+    asked (docs/29 §11.3 idempotency)."""
+
+    canonical = json.dumps(
+        {"provider": provider.spec.provider, "model": provider.spec.model,
+         "messages": [[m.role, m.content] for m in messages]},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class TaskNotFound(Exception):
@@ -850,6 +891,21 @@ class AgentRuntime:
 
         spec = provider.spec
         projected = spec.projected_cost(prompt_chars=prompt_chars)
+        admission = None
+        if state.agent is not None:
+            # docs/29 §12: an agent run's model call is a request to the Model
+            # Gateway — its model token, a fresh nonce — before anything else.
+            admission = await self._admit(env, state, RunTokenPurpose.MODEL, _model_digest(provider, messages),
+                                          model=ModelCallFacts(alias=AGENT_MODEL_ALIAS, provider=spec.provider,
+                                                               model=spec.model))
+            if admission.refused is not None:
+                raise _Stop(_gateway_stop(admission.refused))
+            if admission.replayed is not None:
+                # The same request was answered before: its answer, not a
+                # second call (and not a second charge).
+                content = str(admission.replayed.get("content", ""))
+                state.messages.append(ctx.ChatMessage("assistant", content[: self._bounds.max_observation_chars]))
+                return content
         await self._precheck(env, state, projected)
 
         state.model_calls += 1
@@ -875,6 +931,9 @@ class AgentRuntime:
         )
         await self._meter_model(env, state, provider, units=result.total_tokens, cost=cost)
         state.messages.append(ctx.ChatMessage("assistant", result.content[: self._bounds.max_observation_chars]))
+        if admission is not None:
+            await self._settle(env, state, admission,
+                               {"content": result.content[: self._bounds.max_observation_chars]})
         return result.content
 
     # ── supervisory recovery (18 §4) ────────────────────────────────────
@@ -1228,6 +1287,46 @@ class AgentRuntime:
         self, env: TaskEnvironment, state: TaskState, call: ToolCall, remaining,
         models: ResolvedModels | None = None,
     ) -> AgentResult | None:
+        if state.agent is None:
+            return await self._tool_request(env, state, call, remaining, models)
+        # docs/29 §13.3 steps 1–3: an agent run's tool call is a request to the
+        # Tool Gateway — its tool token, a fresh nonce, the call's digest —
+        # before anything about the call itself is looked at. The gateway
+        # re-validates the run, and the definition and run record (§10.3),
+        # after the model proposed the call and before anything is decided, so
+        # a stop, delete or change made while the model was thinking applies
+        # to the call it proposed. What the call asks is then decided exactly
+        # as before (steps 4–11, `_tool_request`).
+        resource = f"tool:{call.tool}.{call.operation}"
+        digest = operation_key(call.tool, call.operation, (call.platform or ExecutionPlatform.SERVER).value,
+                               call.arguments, call.resource_ref, call.scope)
+        admission = await self._admit(env, state, RunTokenPurpose.TOOL, digest)
+        if admission.refused is not None:
+            if admission.refused not in _GATEWAY_REQUEST_REFUSALS:
+                raise _Stop(_gateway_stop(admission.refused))
+            await self._reject(env, state, f"The Agent Gateway refused this request ({admission.refused}); "
+                                           "nothing was performed.", resource)
+            self._breaker.record_denial(state)
+            return None
+        if admission.replayed is not None:
+            # A retry of a request already answered: the stored answer, and
+            # nothing is performed again.
+            for role, content in admission.replayed.get("observations", []):
+                state.messages.append(ctx.ChatMessage(str(role), str(content)))
+            return None
+        before = len(state.messages)
+        result = await self._tool_request(env, state, call, remaining, models)
+        status = ("confirmation_pending" if state.pending is not None
+                  else "platform_wait" if state.platform_wait is not None else "done")
+        await self._settle(env, state, admission, {
+            "status": status, "observations": [[m.role, m.content] for m in state.messages[before:]],
+        })
+        return result
+
+    async def _tool_request(
+        self, env: TaskEnvironment, state: TaskState, call: ToolCall, remaining,
+        models: ResolvedModels | None = None,
+    ) -> AgentResult | None:
         resource = f"tool:{call.tool}.{call.operation}"
         if self._recovery is not None and models is not None:
             # 18 §4.1 loop: the same operation, byte-for-byte, over and over.
@@ -1239,11 +1338,6 @@ class AgentRuntime:
                                   resource=f"stall:{state.task_id}:loop")
                 await self._switch(env, state, models, SwitchReason.LOOP, stuck=AgentFailureCode.STALLED)
                 return None
-        # docs/29 §10.3: an agent run's definition and run record are
-        # re-validated at every tool call — after the model proposed it and
-        # before anything is decided — so a stop, delete or change made while
-        # the model was thinking applies to the call it proposed.
-        await self._check_agent(env, state)
         if state.agent is not None and call.tool == NOTEBOOK_TOOL:
             await self._notebook_call(env, state, call, resource)
             return None
@@ -1360,8 +1454,28 @@ class AgentRuntime:
             self._breaker.record_denial(state)
             return None
 
+        admission = None
+        if routed:
+            # docs/29 §12: a model reached as a tool is a Model Gateway request
+            # too — the run's model token, the alias of that model tool, the
+            # spec's `model.invoke`, the profile and the owner's policy, now —
+            # after the envelope gate and the engine decided the call itself.
+            admission = await self._admit(
+                env, state, RunTokenPurpose.MODEL,
+                operation_key(handle.tool_id, call.operation, platform.value, call.arguments, resource_ref, scope),
+                model=ModelCallFacts(alias=f"model-tool:{handle.tool_id}"))
+            if admission.refused is not None:
+                raise _Stop(_gateway_stop(admission.refused))
+            if admission.replayed is not None:
+                for role, content in admission.replayed.get("observations", []):
+                    state.messages.append(ctx.ChatMessage(str(role), str(content)))
+                return None
+        before = len(state.messages)
         output = await self._execute(env, state, handle, call.operation, platform, dict(call.arguments),
                                      resource_ref, scope, remaining)
+        if admission is not None:
+            await self._settle(env, state, admission,
+                               {"observations": [[m.role, m.content] for m in state.messages[before:]]})
         self._maybe_wait_for_platform(state, output, tool=handle.tool_id, operation=call.operation,
                                       arguments=dict(call.arguments), platform=platform,
                                       resource_ref=call.resource_ref, scope=call.scope)
@@ -1590,6 +1704,16 @@ class AgentRuntime:
                               resource=f"limit:{exc.limit}")
             raise _Stop(AgentFailureCode.BUDGET_EXCEEDED if exc.is_budget
                         else AgentFailureCode.RATE_LIMITED) from None
+        if state.agent is not None and projected > 0:
+            # docs/29 §10.5 / §12.2: then the agent's month, read live from
+            # attributed usage — concurrent runs of one agent share it.
+            if env.agent_runs is None:
+                raise _Stop(AgentFailureCode.AGENT_UNAVAILABLE)
+            refused = await env.agent_runs.agent_budget(state.agent, projected_cost=projected)
+            if refused is not None:
+                await self._event(env, state, AgentEvent.LIMIT_EXCEEDED, AuditResult.BLOCKED,
+                                  resource="limit:agent_monthly_budget")
+                raise _Stop(_gateway_stop(refused))
 
     async def _meter_model(self, env: TaskEnvironment, state: TaskState, provider: ModelProvider,
                            *, units: int, cost: float) -> None:
@@ -1894,6 +2018,9 @@ class AgentRuntime:
             elapsed_seconds=time.monotonic() - state.created_monotonic,
             transcript=tuple((m.role, m.content) for m in state.messages[2:]),
             events=tuple(state.trace_events),
+            agent_id=state.agent.agent_id if state.agent is not None else None,
+            agent_run_id=state.agent.run_id if state.agent is not None else None,
+            agent_version=state.agent.version if state.agent is not None else None,
         )
 
     def _notify_step(self, state: TaskState) -> None:
@@ -1976,6 +2103,27 @@ class AgentRuntime:
         await self._event(env, state, AgentEvent.ENVELOPE_DENIED, AuditResult.BLOCKED, resource=resource,
                           decision=PermissionDecisionValue.DENY)
         self._breaker.record_denial(state)
+
+    async def _admit(self, env: TaskEnvironment, state: TaskState, purpose: RunTokenPurpose,
+                     digest: str, *, model: ModelCallFacts | None = None) -> GatewayAdmission:
+        """One request of this agent run to the Agent Gateway (docs/29 §11)."""
+
+        assert state.agent is not None
+        if env.agent_runs is None:
+            raise _Stop(AgentFailureCode.AGENT_UNAVAILABLE)
+        admission = await env.agent_runs.admit(state.agent, gateway_request(state.agent, purpose, digest),
+                                               model=model)
+        outcome = ("refused" if admission.refused is not None
+                   else "replayed" if admission.replayed is not None else "admitted")
+        self._trace(state, f"agent.gateway.{outcome}", resource=f"gateway:{purpose.value}",
+                    result=admission.refused)
+        return admission
+
+    @staticmethod
+    async def _settle(env: TaskEnvironment, state: TaskState, admission: GatewayAdmission,
+                      response: Mapping[str, Any]) -> None:
+        if state.agent is not None and env.agent_runs is not None and admission.ticket is not None:
+            await env.agent_runs.settle(state.agent, admission, response)
 
     @staticmethod
     async def _check_agent(env: TaskEnvironment, state: TaskState) -> None:

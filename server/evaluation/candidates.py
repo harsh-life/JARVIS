@@ -56,7 +56,15 @@ ALLOWED_TARGETS: dict[str, TargetSpec] = {
     "recovery.max_worker_switches": TargetSpec(TargetKind.INTEGER, minimum=0, maximum=5),
     "evaluation.rubric": TargetSpec(TargetKind.TEXT, max_chars=1500),
     "suggestion.template": TargetSpec(TargetKind.TEXT, max_chars=1000),
+    # docs/29 §18: the wording of one agent's purpose (the AgentDraft bound).
+    "agent.purpose": TargetSpec(TargetKind.TEXT, max_chars=2000),
 }
+
+# docs/29 §18: targets that belong to one user, never to the server. Suggested
+# only from a run of that user's agent, shown only to that agent's owner, and
+# applied only through the owner's own confirmed `agent.define.update` — never
+# a superuser-approved configuration version.
+OWNER_SCOPED_TARGETS = frozenset({"agent.purpose"})
 
 # 19 §9 "what no candidate may ever target". A candidate naming any of these
 # (by prefix) is rejected as `forbidden_target`; anything else that is not in
@@ -98,6 +106,9 @@ FORBIDDEN_TARGETS: dict[str, str] = {
     "usage": "security_policy",
     "budget": "security_policy",
     "budgets": "security_policy",
+    # docs/29 §18: everything about an agent but `agent.purpose` (allowed
+    # above) — its envelope, budget, trigger, delegation, runtime or model.
+    "agent": "agent_authority",
 }
 
 _SUBJECT = re.compile(r"^[a-z][a-z0-9_.\-]{0,63}$")
@@ -168,15 +179,19 @@ def validate_value(target: str, subject: str | None, raw: str) -> str | int:
     return text
 
 
-def validate_candidate(candidate: ImprovementCandidate, *, task_id: str) -> AcceptedCandidate:
+def validate_candidate(candidate: ImprovementCandidate, *, task_id: str,
+                       agent_run: bool = False) -> AcceptedCandidate:
     """Accept a candidate for the review queue, or reject it (JDG-T9).
 
     Its evidence may name only the evaluated task: a Judge sees one user's one
     task (19 §4, JDG-T7), so a candidate citing any other task is not evidence
-    it could have — it is rejected, not trimmed."""
+    it could have — it is rejected, not trimmed. An owner-scoped target
+    (`agent.purpose`) needs the task to be a run of an agent (docs/29 §18)."""
 
     target, subject = split_target(candidate.target)
     value = validate_value(target, subject, candidate.proposed_change)
+    if target in OWNER_SCOPED_TARGETS and not agent_run:
+        raise CandidateRejected("not_an_agent_run")
     evidence = tuple(str(e) for e in candidate.evidence) or (task_id,)
     if any(e != task_id for e in evidence):
         raise CandidateRejected("foreign_evidence")
@@ -190,6 +205,7 @@ def validate_candidate(candidate: ImprovementCandidate, *, task_id: str) -> Acce
 __all__ = [
     "ALLOWED_TARGETS",
     "FORBIDDEN_TARGETS",
+    "OWNER_SCOPED_TARGETS",
     "AcceptedCandidate",
     "CandidateRejected",
     "TargetKind",

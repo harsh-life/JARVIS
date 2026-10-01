@@ -123,6 +123,9 @@ class AuditAction(str, Enum):
     CONTROL_STOP = "control.stop"
     CONTROL_GLOBAL_STOP = "control.global_stop"
     CONTROL_GLOBAL_CLEAR = "control.global_clear"
+    # docs/29 §14.3 / §23.2 (Phase 3): the operator's pause of one agent.
+    CONTROL_AGENT_PAUSED = "control.agent.paused"
+    CONTROL_AGENT_RELEASED = "control.agent.released"
     # A break-glass activation or revoke the control path refused (20 §2.2).
     CONTROL_BREAK_GLASS = "control.break_glass"
 
@@ -183,6 +186,16 @@ class AuditAction(str, Enum):
     AGENT_EXPORTED = "agent.exported"
     # `resource` is `capability:<name>` or `tool:<tool>.<operation>`.
     AGENT_ENVELOPE_DENIED = "agent.envelope.denied"
+    # Phase 3, the Agent Gateway (docs/29 §11.3, §26): `resource` is
+    # `agentrun:<run_id>` plus the gateways, a reason, or the refusal's code
+    # and detail identifier — never a token, a nonce or a request's content.
+    AGENT_TOKEN_ISSUED = "agent.token.issued"
+    AGENT_TOKEN_REVOKED = "agent.token.revoked"
+    AGENT_GATEWAY_DENIED = "agent.gateway.denied"
+    # docs/29 §18: the owner's decision on a Judge's `agent.purpose`
+    # suggestion — `candidate:<id>` and the preview id, never its text.
+    AGENT_CANDIDATE_COMPILED = "agent.candidate.compiled"
+    AGENT_CANDIDATE_DISMISSED = "agent.candidate.dismissed"
 
     # ── voice (docs/27). `resource` names a voice event id or a refusal
     # reason — never a transcript, never audio, never synthesized text.

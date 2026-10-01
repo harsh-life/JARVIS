@@ -892,6 +892,10 @@ class ImprovementCandidateRow(Base):
     decided_by: Mapped[str | None] = mapped_column(String, nullable=True)
     decision_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     config_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # docs/29 §18 (Phase 3): for an owner-scoped target (`agent.purpose`), the
+    # agent whose run was evaluated — set from the trace, never by the Judge.
+    # Such a candidate is reviewed by that agent's owner, never a superuser.
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
 
 
 class ConfigVersion(Base):
@@ -1120,4 +1124,57 @@ class AgentInboxItemRow(Base):
         CheckConstraint("status IN ('completed','failed','cancelled')", name="ck_agent_inbox_items_status"),
         Index("ix_agent_inbox_items_owner_created", "owner_user_id", "created_at"),
         Index("ix_agent_inbox_items_agent", "agent_id"),
+    )
+
+
+class AgentRunTokenRow(Base):
+    """docs/29 §11.3 (Phase 3) — one run token, per run and per gateway
+    (`model` or `tool`). Only the SHA-256 of the token is stored; the token
+    itself exists once, in the run's context. Bound to the run, the agent and
+    the spec hash it was issued for; expires with the run's deadline (+30 s)
+    and is revoked when the run stops, is cancelled, the agent is paused,
+    changed or deleted. Pruned 24 h after it expires."""
+
+    __tablename__ = "agent_run_tokens"
+
+    token_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_runs.run_id"), nullable=False)
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_definitions.agent_id"), nullable=False)
+    spec_hash: Mapped[str] = mapped_column(String, nullable=False)
+    purpose: Mapped[str] = mapped_column(String, nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("purpose IN ('model','tool')", name="ck_agent_run_tokens_purpose"),
+        Index("ix_agent_run_tokens_run", "run_id"),
+        Index("ix_agent_run_tokens_agent", "agent_id"),
+        Index("ix_agent_run_tokens_expires_at", "expires_at"),
+    )
+
+
+class AgentGatewayNonceRow(Base):
+    """docs/29 §11.3 — the gateway's replay and idempotency ledger: every
+    request nonce a token has used, with the digest of what it asked for.
+    The same nonce for a different request is a replay; for the same
+    request, the stored response is returned and nothing runs twice. The
+    response is the bounded, secret-scrubbed observation the caller got —
+    owner-private run data, pruned with its token."""
+
+    __tablename__ = "agent_gateway_nonces"
+
+    token_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("agent_run_tokens.token_id"), primary_key=True
+    )
+    nonce: Mapped[str] = mapped_column(String(64), primary_key=True)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    response: Mapped[dict | None] = mapped_column(SAJSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('in_progress','done')", name="ck_agent_gateway_nonces_status"),
     )

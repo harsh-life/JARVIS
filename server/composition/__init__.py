@@ -396,7 +396,7 @@ def build_application(
         # 18 §5.4: the operator control path. Reached only through
         # `/api/v1/admin/control/*`, behind `get_superuser`.
         supervisor_control=SupervisorControl(runtime=runtime, facade=facade, latch=latch,
-                                             break_glass=break_glass),
+                                             break_glass=break_glass, agents=agent_factory),
         memory_port=memory_facade,
         vault_port=vault_facade,
         device_hub=device_hub,

@@ -50,6 +50,16 @@ class LatchReport:
     tasks: StopReport = field(default_factory=StopReport)
 
 
+@dataclass
+class AgentControlReport:
+    """What an operator's agent pause (or release) did (docs/29 §14.3)."""
+
+    agent_id: uuid.UUID
+    status: str
+    tokens_revoked: int = 0
+    tasks: StopReport = field(default_factory=StopReport)
+
+
 @dataclass(frozen=True)
 class BreakGlassView:
     """A break-glass record as the operator sees it (20 §2.2)."""
@@ -106,3 +116,13 @@ class SupervisorControlPort(Protocol):
     async def list_break_glass(
         self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
     ) -> list[BreakGlassView]: ...
+
+    async def pause_agent(
+        self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
+        agent_id: uuid.UUID, reason: str,
+    ) -> AgentControlReport: ...
+
+    async def release_agent(
+        self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
+        agent_id: uuid.UUID, reason: str,
+    ) -> AgentControlReport: ...

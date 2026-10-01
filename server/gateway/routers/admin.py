@@ -141,6 +141,15 @@ async def configuration(request: Request, _: SuperuserPrincipal = Depends(get_su
     return await _page(request, session, "configuration", await _console(request).configuration(session))
 
 
+@router.get("/agents")
+async def agents(request: Request, limit: int = Query(100, ge=1, le=500),
+                 _: SuperuserPrincipal = Depends(get_superuser),
+                 session: AsyncSession = Depends(get_db_session)) -> dict:
+    """docs/29 §23.2 (Phase 3): agents and their runs, redacted (DSH-B1)."""
+
+    return await _page(request, session, "agents", await _console(request).agents(session, limit=limit))
+
+
 @router.get("/privileged/tasks/{task_id}")
 async def unredacted_task(
     task_id: uuid.UUID,

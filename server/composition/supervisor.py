@@ -26,6 +26,7 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +44,7 @@ from server.composition.break_glass import (
 from server.composition.facade import AgentTaskFacade
 from server.composition.security_port import record_break_glass_events
 from server.gateway.control_port import (
+    AgentControlReport,
     BreakGlassRefusalKind,
     BreakGlassRequestRefused,
     BreakGlassView,
@@ -55,8 +57,12 @@ from server.gateway.superuser_auth import SuperuserPrincipal
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
 from server.composition.latch import LATCH_ID, InProcessLatch
-from server.storage.models import AgentTask, SupervisorLatch
+from server.storage.models import AgentDefinitionRow, AgentTask, SupervisorLatch
 from shared.schemas.agent import AgentTaskStatus, TERMINAL_STATUSES
+from shared.schemas.agent_factory import AgentStatus
+
+if TYPE_CHECKING:
+    from server.composition.agents import AgentFactory
 from shared.schemas.enums import AuditActor, AuditResult
 
 # The same identifier rule the breaker enforces: a reason is recorded in the
@@ -75,12 +81,14 @@ class SupervisorControl:
 
     def __init__(
         self, *, runtime: AgentRuntime, facade: AgentTaskFacade, latch: InProcessLatch,
-        break_glass: BreakGlassRegistry | None = None,
+        break_glass: BreakGlassRegistry | None = None, agents: "AgentFactory | None" = None,
     ) -> None:
         self._runtime = runtime
         self._facade = facade
         self._latch = latch
         self._break_glass = break_glass
+        # docs/29 (Phase 3): the Agent Factory, when `agents.enabled`.
+        self._agents = agents
 
     # ── operator stop ───────────────────────────────────────────────────
 
@@ -113,6 +121,60 @@ class SupervisorControl:
             raise ControlTargetNotFound()
         await _control_audit(audit, AuditAction.CONTROL_STOP, resource, AuditResult.SUCCESS)
         return report
+
+    # ── one agent (docs/29 §14.3, §23.2) ───────────────────────────────
+
+    async def pause_agent(
+        self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
+        agent_id: uuid.UUID, reason: str,
+    ) -> AgentControlReport:
+        """The existing stop, aimed at one agent's runs, then the agent held.
+
+        1. In memory, before any await: every live run of the agent is tripped
+           (`TripSource.OPERATOR`) — a run being driven stops at its next
+           checkpoint, aborting any in-flight call; a paused one is enforced
+           below. Exactly the operator stop of 18 §5.4.
+        2. The definition is paused on the operator's authority (its owner
+           cannot resume past it) and every run token of the agent is revoked.
+        3. Runs nobody is driving are stopped through the runtime's own
+           enforcement. Nothing is resumed, granted or changed otherwise."""
+
+        _require(principal)
+        _require_reason(reason)
+        source = TripSource.OPERATOR.value
+        signalled, to_enforce = self._trip_live(
+            [s for s in self._runtime.states.live() if s.agent is not None and s.agent.agent_id == agent_id],
+            reason=reason, source=source,
+        )
+        resource = f"control:agent:pause:{agent_id}:{reason}"
+        definition = await session.get(AgentDefinitionRow, agent_id, populate_existing=True)
+        if self._agents is None or definition is None or definition.status == AgentStatus.DELETED.value:
+            await _control_audit(audit, AuditAction.CONTROL_AGENT_PAUSED, resource, AuditResult.FAILURE)
+            raise ControlTargetNotFound()
+        revoked = await self._agents.service.operator_pause(session, definition)
+        report = await self._enforce(session, audit, to_enforce, reason=reason, source=source)
+        report.signalled[:0] = signalled
+        await _control_audit(audit, AuditAction.CONTROL_AGENT_PAUSED, resource, AuditResult.SUCCESS)
+        return AgentControlReport(agent_id=agent_id, status=definition.status, tokens_revoked=revoked,
+                                  tasks=report)
+
+    async def release_agent(
+        self, session: AsyncSession, audit: AuditLogger, *, principal: SuperuserPrincipal,
+        agent_id: uuid.UUID, reason: str,
+    ) -> AgentControlReport:
+        """Lift the operator's hold: the agent stays paused, and its owner may
+        resume it — re-checked and confirmed — like any paused agent."""
+
+        _require(principal)
+        _require_reason(reason)
+        resource = f"control:agent:release:{agent_id}:{reason}"
+        definition = await session.get(AgentDefinitionRow, agent_id, populate_existing=True)
+        if self._agents is None or definition is None or definition.status == AgentStatus.DELETED.value:
+            await _control_audit(audit, AuditAction.CONTROL_AGENT_RELEASED, resource, AuditResult.FAILURE)
+            raise ControlTargetNotFound()
+        await self._agents.service.operator_release(session, definition)
+        await _control_audit(audit, AuditAction.CONTROL_AGENT_RELEASED, resource, AuditResult.SUCCESS)
+        return AgentControlReport(agent_id=agent_id, status=definition.status)
 
     # ── the global latch ────────────────────────────────────────────────
 
