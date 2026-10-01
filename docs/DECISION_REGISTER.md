@@ -340,7 +340,7 @@ row of §2F, §2H and §3 is unchanged.
 | **Validation method** | Test first: `tests/memory/test_prd32_service_measurement.py` (the #32 acceptance, S1/S2) failed on SQLite and refuses to run on anything but PostgreSQL; `tests/runtime/test_concurrent_store.py` (no open transaction during model/tool calls, same-key retry, budget race, ten users' rows, deadlock → `503`) failed for the intended reasons before the fix. Then every suite on a real PostgreSQL server (and still on SQLite), the migration round-trip on both, the import contracts, BR-T2 and the guard mutations (M42–M44 added for the new guards). CI's `postgres` job runs all of it on every push. Measurements: `docs/RELEASE_VALIDATION.md` §I. |
 | **Acceptance status** | **PRD #32: MET on PostgreSQL** (`docs/RELEASE_VALIDATION.md` §I). The Real-Data Gate is **not** opened by this: its other blockers stand (§P). |
 
-## 2J. Agent Factory — Phase 1 (`[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]`)
+## 2J. Agent Factory — Phases 1 and 2 (`[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]`)
 
 `docs/29_AGENT_FACTORY_ASSESSMENT.md` is a proposal. Its Phase 1 boundary
 (docs/29 §31) is built **behind `agents.enabled: false`** as implemented
@@ -348,20 +348,21 @@ recommendations: with the flag off no agent tool is registered, the worker's
 prompt is unchanged, the `/api/v1/agents` endpoints answer `503` with
 `dependency: agents`, and nothing writes to the three new tables. **No OD-AF
 decision is ratified by being built**; each row below says what the build does
-while the decision is open. Nothing runs an agent yet (Phase 2).
+while the decision is open. Phase 2 (native, present-user, on-demand runs) is
+recorded after the Phase 1 tables; nothing runs unattended.
 
 | ID | Decision | Value implemented (not ratified) | Where |
 |---|---|---|---|
 | OD-AF-1 | Ratify the factory abstractions | **`[OPEN — OWNER]`.** Built as docs/29 describes: templates, model/runtime profile registries, a pure selector and compiler (the only writer of `CompiledAgentSpec`), owner-private definitions with immutable hashed spec versions, and the `AgentRuntimeProvider` Protocol (declared, no provider wired). No separate AgentStateProvider. | `server/agents/`, `shared/schemas/agent_factory.py` |
 | OD-AF-2 | PRD §22 amendment for unattended runs | **`[OPEN — OWNER]`.** Not built. The compiler rejects `trigger.kind: unattended` (`unattended_unavailable`) and the config refuses `agents.unattended_enabled: true` even with `standing_delegation_ratified: true`. The scheduler is unchanged and cannot import the factory (AF-C4). | `server/agents/compiler.py`, `server/config/schema.py` |
-| OD-AF-3 | The `agent.*` tier table | **`[OPEN — OWNER]`.** Registered as proposed: `agent.define` {`compile`, `compile_update` → low_read; `create`, `update` → consequential}, `agent.inspect` {`list`, `get` → low_read}, `agent.delete` {`delete` → consequential}; `agentdefinition` create/write are consequential in the resource axis too, so the HTTP path confirms as well. `agent.run`/`agent.control`/`agent.delegate` are not registered (Phase 2/5). | `server/capabilities/registry.py`, `server/capabilities/risk.py` |
+| OD-AF-3 | The `agent.*` tier table | **`[OPEN — OWNER]`.** Registered as proposed: `agent.define` {`compile`, `compile_update` → low_read; `create`, `update` → consequential}, `agent.inspect` {`list`, `get` → low_read}, `agent.delete` {`delete` → consequential}; `agentdefinition` create/write are consequential in the resource axis too, so the HTTP path confirms as well. `agent.run`/`agent.control`/`agent.delegate` and `agent.inspect` {`runs`, `inbox`} are **still not registered** after Phase 2 (AF-P2-1). | `server/capabilities/registry.py`, `server/capabilities/risk.py` |
 | OD-AF-4 | Consequential actions in unattended runs | **`[OPEN — OWNER]`.** Moot until Phase 5; no unattended run exists. | — |
 | OD-AF-5 | Default delegation lifetime | **`[OPEN — OWNER]`.** Only the config field exists (`agents.delegation_max_days`, 30); nothing reads it. | `server/config/schema.py` |
 | OD-AF-6 | First external provider | **`[OPEN — OWNER]`.** None. Every docs/29 §30 runtime id is reserved; enabling one fails startup (no container/netns, MCP transport or egress proxy exists). | `server/agents/registry/runtimes.py` |
 | OD-AF-7 | Per-user quota and default budgets | **`[OPEN — OWNER]`.** `agents.max_agents_per_user: 5`; `default_budget_per_run`/`per_month: 0.0`, so only local models can be selected until an operator raises them (`no_model:budget` otherwise). | `server/config/schema.py`, `server/agents/selector.py` |
-| OD-AF-8 | Outputs beyond the owner's inbox | **`[OPEN — OWNER]`.** Inbox only (`OutputKind` has one value); the inbox itself is Phase 2. | `shared/schemas/agent_factory.py` |
-| OD-AF-9 | Attribution: join table vs extending `UsageEvent` | **`[OPEN — OWNER]`.** Nothing built yet (runs are Phase 2); `usage_events` is untouched. | — |
-| OD-AF-10 | `agentdefinition` in `ResourceType`; new `01` entities | **`[OPEN — OWNER]`.** Added as proposed: `ResourceType.AGENTDEFINITION` (owner-private, decided by the one engine; a deleted agent is `not_found`) and migration `e1f3a5c7b9d2` (`agent_definitions`, `agent_spec_versions`, `agent_compile_previews`), additive, round-tripped on SQLite and PostgreSQL. | `shared/schemas/authorization.py`, `server/storage/` |
+| OD-AF-8 | Outputs beyond the owner's inbox | **`[OPEN — OWNER]`.** Inbox only (`OutputKind` has one value). Phase 2 builds the inbox (AF-P2-6); there is no recipient field and no other output. | `shared/schemas/agent_factory.py`, `server/agents/service.py` |
+| OD-AF-9 | Attribution: join table vs extending `UsageEvent` | **`[OPEN — OWNER]`.** Phase 2 builds the join table, as docs/29 recommends: `agent_run_usage` (run_id, usage_id). `usage_events` is unchanged; the ledger's `record` now returns the row's `usage_id`. | `server/storage/models.py`, `server/security/usage.py` |
+| OD-AF-10 | `agentdefinition` in `ResourceType`; new `01` entities | **`[OPEN — OWNER]`.** Added as proposed: `ResourceType.AGENTDEFINITION` (owner-private, decided by the one engine; a deleted agent is `not_found`) and migration `e1f3a5c7b9d2` (`agent_definitions`, `agent_spec_versions`, `agent_compile_previews`). Phase 2 adds `agent_runs` (`f2a4c6e8b0d1`), `agent_notebook_entries` (`a3c5e7f9b1d4`), `agent_inbox_items` (`b5d7f9a1c3e6`) and `agent_run_usage` (`c7e9b1d3f5a8`), and the `01` failure codes `agent_unavailable`, `spec_changed`, `agent_budget_exhausted`. All additive, round-tripped on SQLite and PostgreSQL. | `shared/schemas/authorization.py`, `server/storage/` |
 
 Build choices where docs/29 leaves a gap (`[IMPL]`, each flagged for review):
 
@@ -374,11 +375,48 @@ Build choices where docs/29 leaves a gap (`[IMPL]`, each flagged for review):
 | AF-B5 | **Owner model policy.** A profile is usable when open to all or when its `model_ref` is the owner's resolved primary; an owner with their own (or their graph's) `AgentConfiguration` resolves to no profile reference, so only open profiles apply. | `server/composition/agents.py` |
 | AF-B6 | **Cost projection and class.** Per run: `max_model_calls × context_window/1000 × (input + output price per 1k)`; class thresholds `low ≤ 0.002`, `medium ≤ 0.02` per 1k combined. docs/29 derives both from pricing without fixing the formula. | `server/agents/registry/models.py` |
 | AF-B7 | **Never guessed.** File abilities need a named sandbox label (`sandbox_needed`); a reminder needs an exact cron and IANA zone; a URL source outside `execution.network.default_destinations` is `source_not_allowlisted`. Each is a clarification, never a default. | `server/agents/compiler.py` |
-| AF-B8 | **Interfaces declared, not wired.** The envelope gate (`server/agent/envelope.py`), the provider Protocol and model-as-tool routing exist with tests against the real engine; the runtime does not call the gate until Phase 2 runs agents. | `server/agent/envelope.py`, `server/agents/providers/`, `server/agents/gateway/` |
+| AF-B8 | **Interfaces declared in Phase 1, wired in Phase 2.** The envelope gate (`server/agent/envelope.py`), the provider Protocol and model-as-tool routing were declared and tested in Phase 1; Phase 2 wires all three for native runs (below). | `server/agent/envelope.py`, `server/agents/providers/`, `server/agents/gateway/` |
 
 Contracts AF-C1…AF-C6 and a purity contract for the envelope gate are in
 `pyproject.toml`; mutants M-AG1–M-AG5, M-AG13, M-AG14 are in
 `tests/tools/guard_mutations.py` (all killed).
+
+### Phase 2 — native, present-user agent runs (implementation facts)
+
+Still behind `agents.enabled: false`, and still a proposal. A run is an
+**ordinary task of the authenticated owner** in the spec's mode, through the
+existing runtime, engine and confirmation path. There is **no background,
+scheduled or unattended path**: nothing starts a run except the owner's own
+request, and the scheduler is unchanged. Nothing external is built: no Letta,
+OpenClaw, Browser Use, OpenHands, LangGraph/ADK/Pydantic AI, MCP transport or
+runtime container; no StandingDelegation or DelegatedPrincipal; no child agents,
+agent-to-agent messages, external recipients, Darwin or self-improvement.
+
+**What a run is.** `POST /api/v1/agents/{id}/runs` takes an empty body. The
+owner, graph, version, hash, runtime and input come from the session and the
+stored, hash-verified spec. The run's per-action order is: proposal → envelope
+gate → activation → the one engine (04) → confirmation → execution. Its
+effective authority is the intersection of the owner's live grants, the
+template maximum, the compiled envelope, the graph scope, the mode and risk
+ceilings and the global floor. The envelope only removes; nothing in a spec,
+prompt, model output, runtime or tool result grants anything.
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P2-1 | **Run control is HTTP only.** `run`, `pause`, `resume`, `cancel`, inbox and export are owner endpoints authorized by the engine on the `agentdefinition`. No `agent.run`/`agent.control` capability or worker tool was registered: a run started from inside a task would nest one synchronous run inside another's tool call (bounded by the tool timeout), and a detached start would be the background path this phase excludes. Deviation from docs/29 §23.1, flagged under OD-AF-3. | `server/composition/agents.py`, `server/gateway/routers/agents.py` |
+| AF-P2-2 | **Runs, pause, resume and stop are authorized as follows.** Run, pause, cancel, notebook, inbox and export are `read` on the owner's own definition. Resume is `write`, which is consequential, so the owner confirms it with a token bound to the current spec hash. Pause and cancel (the safe direction) are never confirmed. | `server/composition/agents.py` |
+| AF-P2-3 | **Re-validated, fresh, at every step.** The check runs at the top of each loop iteration, at every tool call and capability request (after the model proposed it, before anything is decided), before an approval and on a platform resume. It requires: the run record still open; the definition existing, active, the owner's, and exactly the run's version and hash; and the owner still a live member of the agent's graph. Failing it stops the run with `agent_unavailable` or `spec_changed`. Nothing is cached; the engine re-decides every call, so a revoked grant stops the next one. | `server/agent/runtime.py`, `server/agents/service.py` |
+| AF-P2-4 | **Start-time checks.** A run is refused (409, audited) when the agent is revoked or tampered, not active, in another graph than the session's, on an older template version (the agent is marked `needs_reapproval`), or on a model profile that is no longer configured, enabled, current or permitted to its owner. The task runs on the profile's configured entry, through the same key path as any worker. Its bounds and budget are the tighter of the server's and the spec's. | `server/composition/agents.py`, `server/composition/models.py` |
+| AF-P2-5 | **Model as a tool.** The runtime serves `agent.model` (role, preference, prompt) only when the envelope holds `model.invoke`. A strict request schema refuses any provider, model, profile, endpoint or key. `route_model_call` picks from the spec, the operator's model-tool profiles and the owner's current model policy, within the run budget. The route becomes an ordinary `model.invoke` call that passes the gate, activation, engine, budget precheck and metering. A model tool cannot be named directly in an agent run. **No shipped v1 template holds `invoke_model_tool`**, so this is reachable only through an operator template. | `server/agent/runtime.py`, `server/composition/agents.py`, `server/agents/gateway/model_routing.py` |
+| AF-P2-6 | **Inbox.** One item per finished run, to its owner only, with no recipient field. The status comes from the run record. The body is plain text: control characters and escapes are dropped, it is capped at 16 000 characters, and it is never parsed. A credential-shaped result is withheld, not stored. `GET /agents/inbox`, `POST …/{item}/read`, `DELETE …/{item}`; another user's item is 404. | `server/composition/agents.py`, `server/agents/service.py` |
+| AF-P2-7 | **Notebook.** `agent.notebook` (get/put/list), only when the spec's `notebook_enabled`. That single flag covers read and write; there is no spec schema change. Bound to the run's own agent. At most 200 notes; the key is a slug of at most 120 characters; the value is at most 8 000 printable characters. Writes pass the memory write gates (`find_secret`, the emotion lexicon). The owner reads and clears it. Nothing in it reaches Mem0. | `server/agent/runtime.py`, `server/agents/service.py`, `server/composition/agents.py` |
+| AF-P2-8 | **Memory.** An agent run's output is never extracted into the owner's memory, whatever `memory.auto_extract` says. This is proved on the real Mem0 stack with an execute-mode agent. Ordinary tasks are unchanged. | `server/agent/runtime.py`, `tests/memory/test_agent_memory_exclusion.py` |
+| AF-P2-9 | **Monthly budget.** The month is the UTC calendar month; spending is the sum of the agent's runs' `cost_total`. A spent month refuses the run (429, `agent_budget_exhausted`). A run's ceiling is `min(per_run, per_month − spent)`; a zero monthly budget leaves only free (local) calls. | `server/composition/agents.py`, `server/agents/service.py` |
+| AF-P2-10 | **Deletion and export.** Delete stops live runs (their paused actions can never be confirmed), deprovisions through the native provider (notebook, inbox) and closes every open run record; the service does the same on the factory worker's path. Run records stay as history. Export returns the agent view, every hash-verified spec version, runs, notebook and inbox, and nothing else: no `secret_ref` or key, no session, device or confirmation token, no grant, decision or audit row. | `server/composition/agents.py`, `server/agents/service.py` |
+| AF-P2-11 | **Pre-existing, not changed here.** On PostgreSQL, a worker answer containing a NUL character fails the task's own `agent_tasks.response` write. This affects every task, not only agent runs. | `server/agent/records.py` |
+
+Phase 2 mutants M-AG15–M-AG69 are in `tests/tools/guard_mutations.py`.
+M-AG61 needs `HYPERMIND_REQUIRE_MEMORY_STACK=1`.
 
 ---
 
@@ -401,7 +439,7 @@ Contracts AF-C1…AF-C6 and a purity contract for the envelope gate are in
 | OD-DASH-1 | Dashboard/control split vs amending DASH-002 | Split built as recommended; DASH-002 unchanged; not ratified. |
 | OD-DASH-2 | Console UI | Not built; JSON API only (§2G). |
 | OD-JDG-5 | How approved Judge guidance may carry user content (§2H) | Global guidance with secret screening only reaches every user with one user's content (BR-T2 row 38); which control fits is a product and privacy call. |
-| OD-AF-1…10 | The Agent Factory's abstractions, tiers, entities and the unattended-run amendment (§2J) | docs/29 is a proposal; Phase 1 is built behind `agents.enabled: false` and none of its decisions is ratified. |
+| OD-AF-1…10 | The Agent Factory's abstractions, tiers, entities and the unattended-run amendment (§2J) | docs/29 is a proposal; Phases 1 and 2 are built behind `agents.enabled: false` and none of its decisions is ratified. |
 
 ---
 

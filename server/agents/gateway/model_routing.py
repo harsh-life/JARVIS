@@ -1,5 +1,7 @@
 """Which configured model serves an agent's specialized model call
-(docs/29 §12) — pure, deterministic, **not yet wired** (Phase 3).
+(docs/29 §12) — pure, deterministic. Wired in Phase 2 for native runs: the
+runtime's `agent.model` pseudo-tool asks the composition root, which calls
+this with the stored spec and the owner's current model policy.
 
 An agent may use a model *as a tool* — a stronger writing model for a
 writing subtask, an image-capable one for an image, a speech one for voice —

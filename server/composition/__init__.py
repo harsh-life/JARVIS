@@ -30,6 +30,7 @@ from server.composition.agents import (
     AgentDefinitionLoader,
     AgentFactory,
     AgentFactoryFacade,
+    AgentRunCoordinator,
     agent_tool_definitions,
     registries_from_config,
 )
@@ -366,6 +367,10 @@ def build_application(
         memory=memory_facade,
         vault=vault_facade,
         tuning=tuning,
+        agent_runs=(
+            (lambda session, audit: AgentRunCoordinator(agent_factory, session, audit, core))
+            if agent_factory is not None else None
+        ),
     )
     # 19: the Judge — nothing at all unless `evaluation.enabled`.
     evaluation = build_evaluation(
@@ -386,7 +391,7 @@ def build_application(
         reconcile_tasks_on_startup=reconcile_tasks_on_startup,
         agent_tasks=facade,
         agent_factory=(
-            AgentFactoryFacade(factory=agent_factory, core=core) if agent_factory is not None else None
+            AgentFactoryFacade(factory=agent_factory, core=core, tasks=facade) if agent_factory is not None else None
         ),
         # 18 §5.4: the operator control path. Reached only through
         # `/api/v1/admin/control/*`, behind `get_superuser`.

@@ -42,7 +42,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from shared.schemas.agent import TaskMode
+from shared.schemas.agent import AgentResult, TaskMode
 from shared.schemas.enums import RiskCategory
 
 # ── closed vocabularies (docs/29 §5.4, §6.2, §7.2, §9.3, §14) ──────────────
@@ -704,6 +704,94 @@ class CreateAgentRequest(_Strict):
     compile_id: UUID
 
 
+class RunAgentRequest(_Strict):
+    """`POST /agents/{id}/runs` (docs/29 §23.2): an empty body. The owner, the
+    graph, the agent version, its hash, the runtime and the input all come from
+    the session and the stored spec — a request can name none of them."""
+
+
+class AgentRunView(_Strict):
+    """docs/29 §23.3. `task` is the ordinary task the run is: a paused run is
+    confirmed through `/agent/tasks/{task_id}/confirm` like any task."""
+
+    run_id: UUID
+    agent_id: UUID
+    version: int
+    kind: Literal["on_demand"] = "on_demand"
+    status: AgentRunStatus
+    failure_code: str | None = None
+    task_id: UUID | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+    cost_total: float = 0.0
+    inbox_item_id: UUID | None = None
+    task: AgentResult | None = None
+
+
+class AgentRunListResponse(_Strict):
+    items: tuple[AgentRunView, ...]
+
+
+class AgentInboxItemView(_Strict):
+    """docs/29 §19 / §23.3: one run's result for its owner. `body` is plain
+    text written by the agent — data to show, never instructions to follow.
+    `withheld` says the result looked like it carried a credential and was
+    not stored; `truncated` that it was cut to the inbox bound."""
+
+    item_id: UUID
+    agent_id: UUID
+    agent_name: str | None
+    run_id: UUID
+    status: Literal["completed", "failed", "cancelled"]
+    failure_code: str | None = None
+    body: str
+    withheld: bool = False
+    truncated: bool = False
+    created_at: datetime
+    read_at: datetime | None = None
+
+
+class AgentInboxResponse(_Strict):
+    items: tuple[AgentInboxItemView, ...]
+
+
+class NotebookEntryView(_Strict):
+    """docs/29 §16.3: one of the agent's own notes, shown to its owner. The
+    value is what the agent wrote — data, never instructions."""
+
+    key: str
+    value: str
+    updated_at: datetime
+
+
+class NotebookResponse(_Strict):
+    items: tuple[NotebookEntryView, ...]
+
+
+class AgentSpecVersionExport(_Strict):
+    version: int
+    spec_hash: str
+    created_at: datetime
+    spec: CompiledAgentSpec
+
+
+class AgentExport(_Strict):
+    """docs/29 §23.2 `GET /agents/{id}/export`: the owner's own agent — its
+    definition, every (hash-verified) spec version, its runs, its notebook and
+    its inbox. Structurally nothing else: no provider key or `secret_ref` (a
+    spec names a model *profile*, never a key), no session, device or
+    confirmation token, no grant, decision or audit row."""
+
+    format: Literal["jarvis.agent.export"] = "jarvis.agent.export"
+    format_version: Literal[1] = 1
+    exported_at: datetime
+    agent: AgentView
+    spec_versions: tuple[AgentSpecVersionExport, ...]
+    runs: tuple[AgentRunView, ...]
+    notebook: tuple[NotebookEntryView, ...]
+    inbox: tuple[AgentInboxItemView, ...]
+
+
 # ── the runtime-provider boundary (docs/29 §7.3, §11.2; interface only) ────
 
 
@@ -778,8 +866,8 @@ class DeprovisionReceipt(_Strict):
 
 
 class ModelCallRequest(_Strict):
-    """What an agent run will send the Model Gateway for a specialized model
-    call (docs/29 §12, Phase 3 — **declared, not wired**).
+    """The arguments of an agent run's `agent.model` call — a specialized
+    model call (docs/29 §12; wired for native runs in Phase 2).
 
     It says *what kind of model* the subtask wants (`role`, `preference`) and
     the prompt. It has no field for a provider, a model name, a profile id, a
@@ -807,12 +895,18 @@ __all__ = [
     "AgentConfirmationCard",
     "AgentDetail",
     "AgentDraft",
+    "AgentExport",
+    "AgentInboxItemView",
+    "AgentInboxResponse",
     "AgentListResponse",
     "AgentModelProfile",
     "AgentRunContext",
+    "AgentRunListResponse",
     "AgentRunStatus",
+    "AgentRunView",
     "AgentRuntimeProfile",
     "AgentSelection",
+    "AgentSpecVersionExport",
     "AgentStatus",
     "AgentTemplate",
     "AgentView",
@@ -841,11 +935,14 @@ __all__ = [
     "ModelRef",
     "NetworkRequirement",
     "NotebookAccess",
+    "NotebookEntryView",
+    "NotebookResponse",
     "Observability",
     "OutputKind",
     "PersistenceModel",
     "ProviderHealth",
     "RequiredApi",
+    "RunAgentRequest",
     "RunHandle",
     "RuntimeRef",
     "RuntimeType",

@@ -1030,3 +1030,94 @@ class AgentCompilePreviewRow(Base):
         Index("ix_agent_compile_previews_owner", "owner_user_id"),
         Index("ix_agent_compile_previews_expires_at", "expires_at"),
     )
+
+
+class AgentRunRow(Base):
+    """docs/29 §22.1 — one run of an agent: which version (and hash) it ran,
+    the ordinary task it ran as, and how it ended. A run is always the present
+    owner's on-demand task in Phase 2 (`kind = on_demand`)."""
+
+    __tablename__ = "agent_runs"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_definitions.agent_id"), nullable=False)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    spec_hash: Mapped[str] = mapped_column(String, nullable=False)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("agent_tasks.task_id"), nullable=True, unique=True
+    )
+    kind: Mapped[str] = mapped_column(String, nullable=False, default="on_demand")
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    cost_total: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('on_demand')", name="ck_agent_runs_kind"),
+        CheckConstraint(
+            "status IN ('queued','running','waiting','completed','failed','cancelled')", name="ck_agent_runs_status"
+        ),
+        Index("ix_agent_runs_agent_started", "agent_id", "started_at"),
+        Index("ix_agent_runs_owner", "owner_user_id"),
+    )
+
+
+class AgentNotebookEntryRow(Base):
+    """docs/29 §16.3 — one note in an agent's own notebook: its operational
+    state between runs. Owner-private and per agent (the key is the agent's
+    plus its own key), bounded in count and size by the service, deleted with
+    the agent. It is not memory: nothing here is ever extracted into Mem0."""
+
+    __tablename__ = "agent_notebook_entries"
+
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("agent_definitions.agent_id"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(String(120), primary_key=True)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    value: Mapped[str] = mapped_column(String, nullable=False)
+    updated_by_run_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_agent_notebook_entries_owner", "owner_user_id"),)
+
+
+class AgentRunUsageRow(Base):
+    """docs/29 §17 / §22.1 — which usage events an agent run caused. A join
+    table, so the locked `usage_events` entity (01) is unchanged: every model
+    and tool call of a run is a normal ledger row, and this attributes it."""
+
+    __tablename__ = "agent_run_usage"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_runs.run_id"), primary_key=True)
+    usage_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("usage_events.usage_id"), primary_key=True)
+
+    __table_args__ = (Index("ix_agent_run_usage_usage", "usage_id", unique=True),)
+
+
+class AgentInboxItemRow(Base):
+    """docs/29 §19 — one run's result, delivered to its owner and nobody else.
+    Data, never authority: plain text, bounded, not parsed. Deleted by the
+    owner or with the agent."""
+
+    __tablename__ = "agent_inbox_items"
+
+    item_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_definitions.agent_id"), nullable=False)
+    run_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_runs.run_id"), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    body: Mapped[str] = mapped_column(String, nullable=False)
+    withheld: Mapped[bool] = mapped_column(nullable=False, default=False)
+    truncated: Mapped[bool] = mapped_column(nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('completed','failed','cancelled')", name="ck_agent_inbox_items_status"),
+        Index("ix_agent_inbox_items_owner_created", "owner_user_id", "created_at"),
+        Index("ix_agent_inbox_items_agent", "agent_id"),
+    )

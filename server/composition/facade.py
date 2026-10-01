@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import contextmanager
-from typing import Iterator
+from typing import TYPE_CHECKING, Callable, Iterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +43,9 @@ from server.tools.registry import ToolRegistry
 from shared.schemas.agent import AgentResult, TaskMode, ToolSummary
 from shared.schemas.authorization import Principal
 from shared.schemas.errors import ErrorCode
+
+if TYPE_CHECKING:
+    from server.agent.agent_run import AgentRunBinding, AgentRunPort
 
 
 class _BoundHydrator:
@@ -84,7 +87,9 @@ class AgentTaskFacade:
         memory: MemoryFacade | None = None,
         vault: VaultFacade | None = None,
         tuning: TuningCache | None = None,
+        agent_runs: "Callable[[AsyncSession, AuditLogger], AgentRunPort] | None" = None,
     ) -> None:
+        self._agent_runs = agent_runs
         self._tuning = tuning
         self._memory = memory
         self._vault = vault
@@ -129,6 +134,8 @@ class AgentTaskFacade:
             memory=self._memory.bound_formation(session, audit) if self._memory is not None else None,
             # 19 §9: human-approved worker tuning, read with its own session.
             tuning=self._tuning,
+            # docs/29 Phase 2: only when `agents.enabled`.
+            agent_runs=self._agent_runs(session, audit) if self._agent_runs is not None else None,
         )
 
     def _observe(self, result: AgentResult) -> AgentResult:
@@ -179,13 +186,13 @@ class AgentTaskFacade:
 
     async def submit(
         self, session: AsyncSession, *, principal: Principal, user_input: str, audit: AuditLogger,
-        mode: TaskMode = TaskMode.EXECUTE,
+        mode: TaskMode = TaskMode.EXECUTE, agent: "AgentRunBinding | None" = None,
     ) -> AgentResult:
         with self._secret_scope(session, audit):
             try:
                 return self._observe(await self._runtime.submit(
                     self.environment(session, audit), principal=principal, user_input=user_input,
-                    mode=mode,
+                    mode=mode, agent=agent,
                 ))
             except UsageLimitReached as exc:
                 raise AppError(

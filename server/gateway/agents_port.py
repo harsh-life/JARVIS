@@ -21,11 +21,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.security.audit import AuditLogger
 from shared.schemas.agent_factory import (
     AgentDetail,
+    AgentExport,
+    AgentInboxItemView,
+    AgentInboxResponse,
     AgentListResponse,
+    AgentRunListResponse,
+    AgentRunView,
     AgentView,
     CompiledAgentSpecView,
     CompileOutcome,
     CreateAgentRequest,
+    NotebookResponse,
 )
 from shared.schemas.authorization import Principal
 
@@ -59,6 +65,61 @@ class AgentFactoryPort(Protocol):
     async def delete(
         self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
         confirmation_token: str | None, audit: AuditLogger,
+    ) -> None: ...
+
+    # Phase 2: on-demand runs by the present owner (docs/29 §7.4). The run's
+    # agent is the path's; its owner, graph, version, hash and input are not
+    # the request's to name.
+    async def run(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+    ) -> AgentRunView: ...
+
+    async def list_runs(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+    ) -> AgentRunListResponse: ...
+
+    async def get_run(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, run_id: uuid.UUID,
+        audit: AuditLogger,
+    ) -> AgentRunView: ...
+
+    async def cancel_run(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, run_id: uuid.UUID,
+        audit: AuditLogger,
+    ) -> AgentRunView: ...
+
+    async def pause(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+    ) -> AgentView: ...
+
+    async def resume(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+        confirmation_token: str | None, audit: AuditLogger,
+    ) -> AgentView: ...
+
+    async def inbox(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID | None, unread: bool,
+        audit: AuditLogger,
+    ) -> AgentInboxResponse: ...
+
+    async def mark_inbox_read(
+        self, session: AsyncSession, *, principal: Principal, item_id: uuid.UUID, audit: AuditLogger
+    ) -> AgentInboxItemView: ...
+
+    async def delete_inbox_item(
+        self, session: AsyncSession, *, principal: Principal, item_id: uuid.UUID, audit: AuditLogger
+    ) -> None: ...
+
+    async def export(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+    ) -> AgentExport: ...
+
+    async def notebook(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+    ) -> NotebookResponse: ...
+
+    async def clear_notebook(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
     ) -> None: ...
 
 

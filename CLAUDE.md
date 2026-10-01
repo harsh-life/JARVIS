@@ -171,7 +171,7 @@ Subsystem map (see `README.md` for the full narrative per branch):
 | `server/scheduler` | task-linked reminders (`scheduled_jobs` table; a firing reminder delivers a message, never executes) |
 | `server/voice` | STT/TTS; on-device by default; voice can never confirm or step up |
 | `server/evaluation` | the Judge (scoring/recommendation only, no authority) |
-| `server/agents` | the Agent Factory (docs/29, a proposal, off by default): templates, ability table, pure selector/compiler, owner-private definitions; never an authority (contracts AF-C1…C6) |
+| `server/agents` | the Agent Factory (docs/29, a proposal, off by default): templates, ability table, pure selector/compiler, owner-private definitions, the native runtime provider; Phase 2 runs are present-user, on-demand ordinary tasks (envelope gate in `server/agent/envelope.py`, run port in `server/agent/agent_run.py`, wiring in `server/composition/agents.py`); never an authority (contracts AF-C1…C6) |
 | `server/dashboard` | read-only operator views |
 | `server/composition` | the composition root — the only place upper-layer Protocols get their concrete implementations wired in; `server/composition/main.py` is the app entrypoint |
 | `server/gateway` | FastAPI routers, request context, the one HTTP entry to superuser auth |

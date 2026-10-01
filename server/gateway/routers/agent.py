@@ -64,6 +64,10 @@ _FAILURE_CODES: dict[AgentFailureCode, ErrorCode] = {
     # docs/23 §5.3: an on-device dependency (e.g. Shizuku) did not come back
     # within the task's bounded wait.
     AgentFailureCode.PLATFORM_UNAVAILABLE: ErrorCode.DEPENDENCY_UNAVAILABLE,
+    # docs/29: an agent run whose definition stopped being runnable under it.
+    AgentFailureCode.AGENT_UNAVAILABLE: ErrorCode.CONFLICT,
+    AgentFailureCode.SPEC_CHANGED: ErrorCode.CONFLICT,
+    AgentFailureCode.AGENT_BUDGET_EXHAUSTED: ErrorCode.RATE_LIMITED,
 }
 
 

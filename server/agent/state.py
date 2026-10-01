@@ -24,6 +24,7 @@ from shared.schemas.authorization import Operation, Principal, ResourceType
 from shared.schemas.enums import RiskCategory
 
 if TYPE_CHECKING:
+    from server.agent.agent_run import AgentRunBinding
     from server.agent.breaker import Trip
     from server.agent.ports import TraceEvent, WorkerTuning
 
@@ -142,6 +143,9 @@ class TaskState:
     trace_events: "deque[TraceEvent]" = field(default_factory=lambda: deque(maxlen=MAX_TRACE_EVENTS))
     # 19 §9 — the human-approved worker tuning read when this segment started.
     tuning: "WorkerTuning | None" = None
+    # docs/29 Phase 2: set, once, at submission for an agent run — the
+    # compiled ceiling this task runs under. `None` for every ordinary task.
+    agent: "AgentRunBinding | None" = None
 
     def active_capability_names(self) -> list[str]:
         return sorted({a.capability for a in self.activations})

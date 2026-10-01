@@ -1,10 +1,11 @@
-"""The agent envelope gate (docs/29 §10.3) — **declared, not yet wired**.
+"""The agent envelope gate (docs/29 §10.3).
 
-`[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]` (docs/29). Phase 1 runs no agent,
-so nothing calls this yet; Phase 2 calls it at exactly two places in
-`runtime.py`, beside the mode ceiling and **before** the engine is asked:
-`_request_capabilities` (next to `modes.capability_usable`) and `_tool_call`
-(next to `_within_mode`). An agent run then follows
+`[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]` (docs/29). Wired in Phase 2 into
+`runtime.py` for agent runs only (`state.agent` set): `_request_capabilities`
+(before anything else is checked), `_tool_call` (after the mode ceiling,
+with the call's effective scope and its registry tier), and both approval
+paths (`_approve_activation`, `_approve_tool_operation`); `_visible_tools`
+shows the worker only the tools the envelope reaches. An agent run follows
 
     agent proposal → envelope gate → existing activation → existing 04
     authorization (D1–D5, floor, tier) → confirmation where required → execution

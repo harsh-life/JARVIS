@@ -37,14 +37,16 @@ import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
 
 from server.agent import context as ctx
 from server.agent.bounds import ConcurrencyGate, RuntimeBounds
 from server.agent.breaker import BreakerLimits, BreakerScope, CircuitBreaker, Trip, TripSource
 from server.agent.events import AgentEvent
 from server.agent.recovery import RecoveryPolicy, SwitchReason, operation_key
+from server.agent import envelope as agent_envelope
 from server.agent import modes
+from server.agent.agent_run import MODEL_ROUTE_TOOL, NOTEBOOK_TOOL, AgentRunBinding
 from server.agent.ports import (
     ActionRequest,
     ActivationRequest,
@@ -108,6 +110,10 @@ _FAILURE_MESSAGES: dict[AgentFailureCode, str] = {
     AgentFailureCode.CONFIRMATION_STATE_LOST: "The paused action is no longer available; it was not performed.",
     AgentFailureCode.PRINCIPAL_REVOKED: "The task stopped: the session or device that started it is no longer valid.",
     AgentFailureCode.INTERNAL_ERROR: "The task stopped because of an internal error.",
+    AgentFailureCode.AGENT_UNAVAILABLE: "The agent run stopped: the agent was deleted, paused or is no longer "
+                                        "approved to run.",
+    AgentFailureCode.SPEC_CHANGED: "The agent run stopped: the agent was changed while it was running.",
+    AgentFailureCode.AGENT_BUDGET_EXHAUSTED: "The agent run did not start: this agent's monthly budget is spent.",
     AgentFailureCode.STALLED: (
         "The task stopped: it was making no progress (or repeating the same step), and no other "
         "worker was available. Nothing further was performed."
@@ -293,7 +299,7 @@ class AgentRuntime:
 
     async def submit(
         self, env: TaskEnvironment, *, principal: Principal, user_input: str,
-        mode: TaskMode = TaskMode.EXECUTE,
+        mode: TaskMode = TaskMode.EXECUTE, agent: AgentRunBinding | None = None,
     ) -> AgentResult:
         """Run a new task until it finishes, pauses for a human, or fails.
 
@@ -306,6 +312,13 @@ class AgentRuntime:
         if not user_input or len(user_input) > self._bounds.max_input_chars:
             raise ValueError("input is empty or too long")
         mode = TaskMode(mode)  # 18 §3: one of the four, chosen by the caller
+        if agent is not None:
+            # docs/29 §7.4: an agent run is an ordinary task of the present
+            # user, in its spec's mode. Without the factory's port there is no
+            # way to re-validate it, so it does not start at all.
+            if env.agent_runs is None:
+                raise RuntimeError("agent runs are not available")
+            mode = agent.run_mode
         # 18 §5.4: while the global latch is set — or cannot be read — no task
         # is created at all.
         if not await env.supervisor.submissions_open():
@@ -325,7 +338,7 @@ class AgentRuntime:
                 mode=mode.value,
             )
             state = TaskState(task_id=task_id, principal=principal, graph_id=graph_id, mode=mode,
-                              user_input=user_input)
+                              user_input=user_input, agent=agent)
             self._states.put(state)
             # Re-checked synchronously, with no `await` since `put`: a global
             # stop sets the in-process latch and then sweeps the registry
@@ -336,17 +349,28 @@ class AgentRuntime:
                                    source=TripSource.GLOBAL_LATCH.value)
             try:
                 await self._event(env, state, AgentEvent.TASK_SUBMITTED, AuditResult.SUCCESS)
+                if agent is not None:
+                    assert env.agent_runs is not None
+                    await env.agent_runs.started(agent, task_id=task_id)
                 if state.tripped is not None:
                     return await self._emergency_stop(env, state)
 
-                await _release_store(env)  # H-1: hydration searches the memory store
-                hydration = await env.hydrator.hydrate(
-                    principal=principal, graph_id=graph_id, query=user_input
-                )
-                state.notes.extend(hydration.notes)
+                items, notes, knowledge = [], [], []
+                # docs/29 §16.4: an agent run hydrates only what its spec
+                # enables (user memory and/or the vault), through the same
+                # authorized hydrator as any task.
+                if agent is None or agent.user_memory or agent.vault:
+                    await _release_store(env)  # H-1: hydration searches the memory store
+                    hydration = await env.hydrator.hydrate(
+                        principal=principal, graph_id=graph_id, query=user_input
+                    )
+                    notes = list(hydration.notes)
+                    items = list(hydration.items) if agent is None or agent.user_memory else []
+                    knowledge = list(hydration.knowledge) if agent is None or agent.vault else []
+                state.notes.extend(notes)
                 state.messages = [
                     ctx.ChatMessage("system", ""),  # regenerated every step
-                    ctx.context_message(hydration.items, hydration.notes, user_input, hydration.knowledge),
+                    ctx.context_message(items, notes, user_input, knowledge),
                 ]
                 return await self._drive(env, state)
             except Exception as exc:  # noqa: BLE001 — see _internal_failure
@@ -440,6 +464,9 @@ class AgentRuntime:
                     return await self._finish(env, state, AgentTaskStatus.CANCELLED)
                 if not await env.security.principal_active(state.principal):
                     raise _Stop(AgentFailureCode.PRINCIPAL_REVOKED)
+                # docs/29: an approval resumes an agent run only if its
+                # definition is still exactly the one the run started with.
+                await self._check_agent(env, state)
                 if pending.kind == "capability_activation":
                     await self._approve_activation(env, state, pending)
                 else:
@@ -498,6 +525,7 @@ class AgentRuntime:
                     return await self._finish(env, state, AgentTaskStatus.CANCELLED)
                 if not await env.security.principal_active(state.principal):
                     raise _Stop(AgentFailureCode.PRINCIPAL_REVOKED)
+                await self._check_agent(env, state)
                 await self._event(env, state, AgentEvent.TASK_RESUMED, AuditResult.SUCCESS,
                                   resource=f"platform_wait:{wait.dependency}")
                 state.messages.append(ctx.observation(
@@ -506,7 +534,7 @@ class AgentRuntime:
                     "operation.",
                     limit=self._bounds.max_observation_chars,
                 ))
-                remaining_seconds = self._bounds.wall_clock_timeout_seconds - state.run_seconds_used
+                remaining_seconds = self._wall_clock(state) - state.run_seconds_used
                 call = ToolCall(type="tool_call", tool=wait.tool, operation=wait.operation,
                                 arguments=wait.arguments, resource_ref=wait.resource_ref,
                                 platform=wait.platform, scope=wait.scope)
@@ -668,11 +696,11 @@ class AgentRuntime:
 
         def remaining() -> float:
             used = state.run_seconds_used + (time.monotonic() - segment_start)
-            return self._bounds.wall_clock_timeout_seconds - used
+            return self._wall_clock(state) - used
 
         try:
             try:
-                models = await env.models.resolve(principal=state.principal, graph_id=state.graph_id)
+                models = await self._resolve_models(env, state)
             except ModelUnavailable:
                 raise _Stop(AgentFailureCode.MODEL_UNAVAILABLE) from None
             state.allowed_tool_ids = models.allowed_tool_ids
@@ -695,6 +723,9 @@ class AgentRuntime:
                 # not only at submission.
                 if not await env.security.principal_active(state.principal):
                     raise _Stop(AgentFailureCode.PRINCIPAL_REVOKED)
+                # docs/29 §10.3 / §14.3: so is an agent run's definition —
+                # deleted, paused, revoked or changed stops the run here.
+                await self._check_agent(env, state)
 
                 try:
                     text = await self._model_step(env, state, models, remaining)
@@ -773,6 +804,7 @@ class AgentRuntime:
                 self._visible_tools(state), state.active_capability_names(), state.mode,
                 guidance=tuning.system_prompt if tuning else None,
                 descriptions=tuning.tool_descriptions if tuning else None,
+                runtime_tools=self._runtime_tools(state),
             )
         )
         messages = ctx.compact(messages, max_chars=self._bounds.max_context_chars)
@@ -811,7 +843,7 @@ class AgentRuntime:
             # A stop or cancel landed (e.g. while the previous worker failed and
             # the next was being chosen): no new call is started at all.
             raise _Interrupted()
-        if state.model_calls >= self._bounds.max_model_calls:
+        if state.model_calls >= self._max_model_calls(state):
             raise _Stop(AgentFailureCode.MAX_MODEL_CALLS)
         if remaining() <= 0:
             raise _Stop(AgentFailureCode.TIMEOUT)
@@ -935,6 +967,7 @@ class AgentRuntime:
     async def _request_capabilities(
         self, env: TaskEnvironment, state: TaskState, proposal: RequestCapabilities
     ) -> AgentResult | None:
+        await self._check_agent(env, state)  # as for a tool call (docs/29 §10.3)
         lines: list[str] = []
         for index, ask in enumerate(proposal.capabilities):
             if state.tripped is not None:
@@ -943,6 +976,12 @@ class AgentRuntime:
                 break
             capability = ask.capability.strip()
             scope = dict(ask.resource_scope) if ask.resource_scope else None
+            # docs/29 §10.3: an agent run's envelope comes first and can only
+            # remove — outside it, nothing is activated, checked or offered.
+            if not agent_envelope.activation_within_envelope(self._envelope(state), capability, scope):
+                await self._envelope_denied(env, state, f"capability:{capability}")
+                lines.append(agent_envelope.not_in_envelope(capability))
+                continue
             info = env.security.describe_capability(capability)
 
             if info.status is CapabilityStatus.PROHIBITED:
@@ -1016,6 +1055,14 @@ class AgentRuntime:
     async def _approve_activation(
         self, env: TaskEnvironment, state: TaskState, pending: PendingStep
     ) -> None:
+        if not agent_envelope.activation_within_envelope(self._envelope(state), pending.capability,
+                                                         pending.resource_scope):
+            # An approval never carries an activation past the ceiling that
+            # applies now (docs/29 §10.3).
+            await self._envelope_denied(env, state, f"capability:{pending.capability}")
+            state.messages.append(ctx.observation(agent_envelope.not_in_envelope(pending.capability),
+                                                  limit=self._bounds.max_observation_chars))
+            return
         verdict = await env.security.authorize_activation(ActivationRequest(
             principal=state.principal, graph_id=state.graph_id, task_id=state.task_id,
             capability=pending.capability, resource_scope=pending.resource_scope,
@@ -1070,7 +1117,106 @@ class AgentRuntime:
             handles = [h for h in handles if h.tool_id in state.allowed_tool_ids]
         if self._bounds.max_model_tool_nesting_depth < 1:
             handles = [h for h in handles if not h.is_model_tool]
+        envelope = self._envelope(state)
+        if envelope is not None:
+            # docs/29 §10.3: an agent's worker is shown only what its envelope
+            # could ever reach (the gate still refuses anything else).
+            reachable = {e.capability for e in envelope.entries}
+            # A model tool is reached only through `agent.model` routing
+            # (docs/29 §12), never by naming it.
+            handles = [h for h in handles if h.required_capability in reachable and not h.is_model_tool]
         return handles
+
+    @staticmethod
+    def _runtime_tools(state: TaskState) -> list[str]:
+        agent = state.agent
+        if agent is None:
+            return []
+        lines = []
+        if agent.notebook:
+            lines.append(
+                f"{NOTEBOOK_TOOL}: this agent's own notes between runs (not a capability; nothing to request). "
+                "operations: get {key}, put {key, value}, list {}. Keys are short slugs; notes are data."
+            )
+        if agent.model_tools:
+            lines.append(
+                f"{MODEL_ROUTE_TOOL}: ask JARVIS for a specialized model (capability model.invoke; "
+                "operations: invoke [low_read]; arguments: prompt, optional role "
+                "(writing, coding_suitable, long_context, vision, ...), optional preference "
+                "(faster, cheaper, thorough)). JARVIS chooses the model; request model.invoke first."
+            )
+        return lines
+
+    _NOTEBOOK_ARGS = {"get": {"key"}, "put": {"key", "value"}, "list": set()}
+
+    async def _notebook_call(self, env: TaskEnvironment, state: TaskState, call: ToolCall, resource: str) -> None:
+        """docs/29 §16.3: the agent's own notebook, served by the runtime for a
+        run whose spec enables it — bound to the run's own agent (no argument
+        can name another), bounded and gated by the composition root, counted
+        as a tool call. Reads come back as untrusted data."""
+
+        agent = state.agent
+        assert agent is not None
+        if not agent.notebook:
+            await self._envelope_denied(env, state, resource)
+            state.messages.append(ctx.observation(agent_envelope.not_in_envelope(NOTEBOOK_TOOL),
+                                                  limit=self._bounds.max_observation_chars))
+            return
+        expected = self._NOTEBOOK_ARGS.get(call.operation)
+        if expected is None:
+            await self._reject(env, state, f"'{call.operation}' is not an operation of '{NOTEBOOK_TOOL}'.", resource)
+            return
+        arguments = dict(call.arguments)
+        if set(arguments) != expected or not all(isinstance(v, str) for v in arguments.values()):
+            await self._reject(env, state, f"{NOTEBOOK_TOOL}.{call.operation}: invalid_arguments "
+                                           f"(expected exactly: {', '.join(sorted(expected)) or 'none'}).", resource)
+            return
+        if state.tool_calls >= self._max_tool_calls(state):
+            raise _Stop(AgentFailureCode.MAX_TOOL_CALLS)
+        if env.agent_runs is None:
+            raise _Stop(AgentFailureCode.AGENT_UNAVAILABLE)
+        state.tool_calls += 1
+        limit = self._bounds.max_observation_chars
+        if call.operation == "get":
+            value = await env.agent_runs.notebook_get(agent, arguments["key"])
+            state.messages.append(ctx.tool_observation(
+                NOTEBOOK_TOOL, "get", ok=value is not None, content=value or "", error="no_such_note", limit=limit))
+        elif call.operation == "list":
+            keys = await env.agent_runs.notebook_keys(agent)
+            state.messages.append(ctx.tool_observation(
+                NOTEBOOK_TOOL, "list", ok=True, content="\n".join(keys) or "(empty)", error=None, limit=limit))
+        else:
+            refused = await env.agent_runs.notebook_put(agent, arguments["key"], arguments["value"])
+            state.messages.append(ctx.tool_observation(
+                NOTEBOOK_TOOL, "put", ok=refused is None, content="stored", error=refused, limit=limit))
+        state.progressed = True
+
+    async def _route_model_call(self, env: TaskEnvironment, state: TaskState, call: ToolCall,
+                                resource: str) -> ToolCall | None:
+        """docs/29 §12: an agent's model-as-tool request, resolved by JARVIS to
+        one permitted, configured model tool. The result is an ordinary
+        `model.invoke` call that then passes the envelope gate, activation and
+        the engine like any other — routing chooses, it never authorizes."""
+
+        agent = state.agent
+        assert agent is not None
+        if not agent.model_tools:
+            await self._envelope_denied(env, state, resource)
+            state.messages.append(ctx.observation(agent_envelope.not_in_envelope("model.invoke"),
+                                                  limit=self._bounds.max_observation_chars))
+            return None
+        if call.operation != "invoke":
+            await self._reject(env, state, f"'{call.operation}' is not an operation of '{MODEL_ROUTE_TOOL}'.",
+                               resource)
+            return None
+        if env.agent_runs is None:
+            raise _Stop(AgentFailureCode.AGENT_UNAVAILABLE)
+        routed = await env.agent_runs.route_model(agent, dict(call.arguments))
+        if isinstance(routed, str):
+            await self._reject(env, state, f"No model was routed for this request ({routed}).", resource)
+            return None
+        self._trace(state, "agent.model.routed", resource=f"tool:{routed.tool_id}.invoke")
+        return ToolCall(type="tool_call", tool=routed.tool_id, operation="invoke", arguments=dict(routed.arguments))
 
     async def _reject(self, env: TaskEnvironment, state: TaskState, message: str, resource: str,
                       decision: PermissionDecisionValue | None = None) -> None:
@@ -1093,11 +1239,31 @@ class AgentRuntime:
                                   resource=f"stall:{state.task_id}:loop")
                 await self._switch(env, state, models, SwitchReason.LOOP, stuck=AgentFailureCode.STALLED)
                 return None
+        # docs/29 §10.3: an agent run's definition and run record are
+        # re-validated at every tool call — after the model proposed it and
+        # before anything is decided — so a stop, delete or change made while
+        # the model was thinking applies to the call it proposed.
+        await self._check_agent(env, state)
+        if state.agent is not None and call.tool == NOTEBOOK_TOOL:
+            await self._notebook_call(env, state, call, resource)
+            return None
+        routed = False
+        if state.agent is not None and call.tool == MODEL_ROUTE_TOOL:
+            rewritten = await self._route_model_call(env, state, call, resource)
+            if rewritten is None:
+                return None
+            call, routed = rewritten, True
+            resource = f"tool:{call.tool}.{call.operation}"
         handle = self._tools.resolve(call.tool)
         if handle is None or (
             state.allowed_tool_ids is not None and call.tool not in state.allowed_tool_ids
         ):
             await self._reject(env, state, f"Tool '{call.tool}' is not available.", resource)
+            return None
+        if state.agent is not None and handle.is_model_tool and not routed:
+            await self._reject(env, state, f"In an agent run a model is reached only through "
+                                           f"'{MODEL_ROUTE_TOOL}'; JARVIS chooses which.", resource)
+            self._breaker.record_denial(state)
             return None
 
         spec = handle.operations.get(call.operation)
@@ -1137,15 +1303,24 @@ class AgentRuntime:
             self._breaker.record_denial(state)
             return None
 
+        scope = _merge_scope(activation.resource_scope, handle.natural_scope)
+        # docs/29 §10.3: the envelope gate, before the engine is asked — the
+        # capability, the operation, the effective scope and the tier must all
+        # be inside the agent's compiled ceiling. Re-checked at every call.
+        if not self._within_envelope(env, state, handle.required_capability, call.operation,
+                                     resource_type, operation, scope):
+            await self._envelope_denied(env, state, resource)
+            state.messages.append(ctx.observation(agent_envelope.not_in_envelope(handle.required_capability),
+                                                  limit=self._bounds.max_observation_chars))
+            return None
+
         if handle.is_model_tool and self._bounds.max_model_tool_nesting_depth < 1:
             # RT-T7 / OD-RT-1: the nesting bound, enforced by the runtime.
             await self._reject(env, state, "Model-tool nesting limit reached.", resource)
             return None
 
-        if state.tool_calls >= self._bounds.max_tool_calls:
+        if state.tool_calls >= self._max_tool_calls(state):
             raise _Stop(AgentFailureCode.MAX_TOOL_CALLS)
-
-        scope = _merge_scope(activation.resource_scope, handle.natural_scope)
         request = ActionRequest(
             principal=state.principal, graph_id=state.graph_id, task_id=state.task_id,
             capability=handle.required_capability, capability_operation=call.operation,
@@ -1202,7 +1377,7 @@ class AgentRuntime:
                 limit=self._bounds.max_observation_chars,
             ))
             return
-        if state.tool_calls >= self._bounds.max_tool_calls:
+        if state.tool_calls >= self._max_tool_calls(state):
             raise _Stop(AgentFailureCode.MAX_TOOL_CALLS)
         if not self._within_mode(env, state, pending.capability, pending.operation or "",
                                  pending.resource_type or ResourceType.TOOL_ACTION,
@@ -1212,6 +1387,13 @@ class AgentRuntime:
                 limit=self._bounds.max_observation_chars,
             ))
             self._breaker.record_denial(state)
+            return
+        if not self._within_envelope(env, state, pending.capability, pending.operation or "",
+                                     pending.resource_type or ResourceType.TOOL_ACTION,
+                                     pending.resource_operation or Operation.CREATE, pending.resource_scope):
+            await self._envelope_denied(env, state, self._pending_resource(pending))
+            state.messages.append(ctx.observation(agent_envelope.not_in_envelope(pending.capability),
+                                                  limit=self._bounds.max_observation_chars))
             return
 
         verdict = await env.security.authorize_action(ActionRequest(
@@ -1243,7 +1425,7 @@ class AgentRuntime:
 
         await self._event(env, state, AgentEvent.CONFIRMATION_ACCEPTED, AuditResult.SUCCESS,
                           resource=self._pending_resource(pending), decision=verdict.decision)
-        remaining_seconds = self._bounds.wall_clock_timeout_seconds - state.run_seconds_used
+        remaining_seconds = self._wall_clock(state) - state.run_seconds_used
         platform = pending.platform or ExecutionPlatform.SERVER
         output = await self._execute(env, state, handle, pending.operation or "", platform,
                                      pending.arguments, pending.resource_ref, pending.resource_scope,
@@ -1282,11 +1464,12 @@ class AgentRuntime:
                                               task_id=state.task_id)
         state.cost += output.estimated_cost
         # USAGE-001: exactly one UsageEvent per execution, success or failure.
-        await env.usage.record(
+        usage_id = await env.usage.record(
             principal=state.principal, graph_id=state.graph_id, kind=output.usage_kind,
             units=output.units, estimated_cost=output.estimated_cost,
             provider=output.provider, model=output.model, tool_id=handle.tool_id,
         )
+        await self._attribute(env, state, usage_id, output.estimated_cost)
         self._trace(state, f"usage.{output.usage_kind.value}", resource=f"tool:{handle.tool_id}",
                     units=output.units, cost=output.estimated_cost)
         # Execution-layer failures (sandbox_violation, egress_denied,
@@ -1396,7 +1579,7 @@ class AgentRuntime:
     # ── usage (13) ──────────────────────────────────────────────────────
 
     async def _precheck(self, env: TaskEnvironment, state: TaskState, projected: float) -> None:
-        if projected > 0 and state.cost + projected > self._bounds.per_task_budget:
+        if projected > 0 and state.cost + projected > self._task_budget(state):
             await self._event(env, state, AgentEvent.LIMIT_EXCEEDED, AuditResult.BLOCKED,
                               resource="limit:per_task_budget")
             raise _Stop(AgentFailureCode.BUDGET_EXCEEDED)
@@ -1411,11 +1594,12 @@ class AgentRuntime:
     async def _meter_model(self, env: TaskEnvironment, state: TaskState, provider: ModelProvider,
                            *, units: int, cost: float) -> None:
         state.cost += cost
-        await env.usage.record(
+        usage_id = await env.usage.record(
             principal=state.principal, graph_id=state.graph_id, kind=UsageKind.MODEL_CALL,
             units=units, estimated_cost=cost, provider=provider.spec.provider,
             model=provider.spec.model,
         )
+        await self._attribute(env, state, usage_id, cost)
         self._trace(state, "usage.model_call", resource=f"worker:{_worker_id(provider)}", units=units, cost=cost)
 
     # ── lifecycle ───────────────────────────────────────────────────────
@@ -1472,6 +1656,10 @@ class AgentRuntime:
             model_calls=state.model_calls, tool_calls=state.tool_calls, response=response,
             failure_code=failure.value if failure else None, worker_switches=state.worker_switches,
         )
+        if state.agent is not None and env.agent_runs is not None:
+            # docs/29 §19: the run's outcome goes to its owner's inbox, as data.
+            await env.agent_runs.finished(state.agent, task_id=state.task_id, status=status,
+                                          response=response, failure=failure, cost=state.cost)
         event = {
             AgentTaskStatus.COMPLETED: AgentEvent.TASK_COMPLETED,
             AgentTaskStatus.CANCELLED: AgentEvent.TASK_CANCELLED,
@@ -1500,19 +1688,23 @@ class AgentRuntime:
         formation = env.memory
         if formation is None or state.mode is not TaskMode.EXECUTE:
             return
+        if state.agent is not None:
+            # docs/29 §16.2 (AGENT-T17): agent output never becomes user
+            # memory, whatever `memory.auto_extract` says.
+            return
         try:
             messages = formation.plan(principal=state.principal, graph_id=state.graph_id,
                                       user_request=state.user_input, final_answer=answer)
             if not messages:
                 return
-            if state.model_calls >= self._bounds.max_model_calls:
+            if state.model_calls >= self._max_model_calls(state):
                 state.notes.append(_MEMORY_SKIPPED_NOTE)
                 return
             models = await env.models.resolve(principal=state.principal, graph_id=state.graph_id)
             provider = models.chain[min(state.worker_index, len(models.chain) - 1)]
             spec = provider.spec
             projected = spec.projected_cost(prompt_chars=sum(len(m.content) for m in messages))
-            if projected > 0 and state.cost + projected > self._bounds.per_task_budget:
+            if projected > 0 and state.cost + projected > self._task_budget(state):
                 state.notes.append(_MEMORY_SKIPPED_NOTE)
                 return
             try:
@@ -1724,6 +1916,80 @@ class AgentRuntime:
                                                      unresolved=unresolved))
         except Exception:  # noqa: BLE001 — an observer can never affect a task
             logger.warning("task observer failed at the end of %s", state.task_id, exc_info=False)
+
+    # ── agent runs (docs/29 Phase 2) ────────────────────────────────────
+    #
+    # An agent run is an ordinary task with a tighter ceiling: each bound is
+    # the lower of the server's and the compiled spec's, never higher.
+
+    def _max_model_calls(self, state: TaskState) -> int:
+        if state.agent is None:
+            return self._bounds.max_model_calls
+        return min(self._bounds.max_model_calls, state.agent.max_model_calls)
+
+    def _max_tool_calls(self, state: TaskState) -> int:
+        if state.agent is None:
+            return self._bounds.max_tool_calls
+        return min(self._bounds.max_tool_calls, state.agent.max_tool_calls)
+
+    def _wall_clock(self, state: TaskState) -> float:
+        if state.agent is None:
+            return self._bounds.wall_clock_timeout_seconds
+        return min(self._bounds.wall_clock_timeout_seconds, state.agent.max_run_seconds)
+
+    def _task_budget(self, state: TaskState) -> float:
+        if state.agent is None:
+            return self._bounds.per_task_budget
+        return min(self._bounds.per_task_budget, state.agent.budget_per_run)
+
+    @staticmethod
+    async def _resolve_models(env: TaskEnvironment, state: TaskState) -> ResolvedModels:
+        if state.agent is None:
+            return await env.models.resolve(principal=state.principal, graph_id=state.graph_id)
+        # The selected profile's configured entry, through the same key path.
+        return await env.models.resolve(principal=state.principal, graph_id=state.graph_id,
+                                        agent_model_ref=state.agent.model_ref)
+
+    @staticmethod
+    async def _attribute(env: TaskEnvironment, state: TaskState, usage_id: uuid.UUID | None, cost: float) -> None:
+        """docs/29 §17: every usage event of an agent run is joined to the run
+        — no agent call is free or invisible."""
+
+        if state.agent is not None and env.agent_runs is not None and usage_id is not None:
+            await env.agent_runs.usage_recorded(state.agent, usage_id=usage_id, cost=cost)
+
+    @staticmethod
+    def _envelope(state: TaskState) -> agent_envelope.Envelope | None:
+        return state.agent.envelope if state.agent is not None else None
+
+    def _within_envelope(self, env: TaskEnvironment, state: TaskState, capability: str, capability_operation: str,
+                         resource_type: ResourceType, operation: Operation,
+                         scope: Mapping[str, str] | None) -> bool:
+        envelope = self._envelope(state)
+        if envelope is None:
+            return True
+        tier = env.security.operation_tier(capability=capability, capability_operation=capability_operation,
+                                           resource_type=resource_type, operation=operation)
+        return agent_envelope.within_envelope(envelope, capability, capability_operation, scope, tier)
+
+    async def _envelope_denied(self, env: TaskEnvironment, state: TaskState, resource: str) -> None:
+        await self._event(env, state, AgentEvent.ENVELOPE_DENIED, AuditResult.BLOCKED, resource=resource,
+                          decision=PermissionDecisionValue.DENY)
+        self._breaker.record_denial(state)
+
+    @staticmethod
+    async def _check_agent(env: TaskEnvironment, state: TaskState) -> None:
+        """Re-validate an agent run's definition (docs/29 §10.3, §14.3): it
+        must still exist, be active, and be exactly the version and hash the
+        run started with. Read fresh every time — nothing is cached."""
+
+        if state.agent is None:
+            return
+        if env.agent_runs is None:
+            raise _Stop(AgentFailureCode.AGENT_UNAVAILABLE)
+        code = await env.agent_runs.check(state.agent)
+        if code is not None:
+            raise _Stop(code)
 
     # ── tuning (19 §9) ──────────────────────────────────────────────────
 
