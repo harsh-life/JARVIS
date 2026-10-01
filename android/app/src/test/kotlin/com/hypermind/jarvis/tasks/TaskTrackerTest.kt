@@ -59,6 +59,10 @@ class TaskTrackerTest {
 
     private val id = "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001"
 
+    private companion object {
+        const val AGENT = "6f1c2d3e-4a5b-4c6d-8e7f-00000000a777"
+    }
+
     /** The server, scripted: each call takes the next answer; records what was asked. */
     private class FakeServer : TaskOperations {
         val answers = ArrayDeque<CompletableDeferred<TaskController.Outcome>>()
@@ -94,6 +98,11 @@ class TaskTrackerTest {
             taskId: String,
             pending: PendingAction,
         ) = next().also { calls += "decline:$taskId" }
+
+        override suspend fun runAgent(
+            agentId: String,
+            reminderDeliveryId: String?,
+        ) = next().also { calls += "run:$agentId:$reminderDeliveryId" }
     }
 
     private val server = FakeServer()
@@ -154,6 +163,45 @@ class TaskTrackerTest {
             assertEquals(2, server.submissions.size)
             assertEquals(server.submissions[0], server.submissions[1]) // same input, same idempotency key
             assertFalse(tracker.retry()) // answered: nothing to retry
+        }
+
+    @Test
+    fun `an agent run goes out once and the task it ran as is shown`() =
+        runTest {
+            val tracker = tracker()
+            val gate = CompletableDeferred<TaskController.Outcome>()
+            server.answers.addLast(gate)
+            assertTrue(tracker.runAgent(AGENT, reminderDeliveryId = "d-1"))
+            runCurrent()
+            // Nothing else goes out while it is in flight: not the run again, not a task.
+            assertFalse(tracker.runAgent(AGENT, reminderDeliveryId = "d-1"))
+            assertFalse(tracker.submit("something"))
+            gate.complete(shown(sample("awaiting_confirmation")))
+            runCurrent()
+            assertEquals(listOf("run:$AGENT:d-1"), server.calls)
+            assertEquals(id, memory.taskId) // the run is an ordinary task: re-attached like one
+            assertFalse(tracker.runAgent(AGENT, null)) // live: one at a time
+        }
+
+    @Test
+    fun `a tapped run with no answer is asked for again unchanged, an on-demand one never`() =
+        runTest {
+            val tracker = tracker()
+            server.answer(TaskController.Outcome.Unreachable)
+            tracker.runAgent(AGENT, reminderDeliveryId = "d-1")
+            runCurrent()
+            assertEquals(TaskSnapshot.Unreachable, tracker.snapshot.value)
+            server.answer(shown(sample("completed")))
+            assertTrue(tracker.retry()) // the server makes the same tap the same run
+            runCurrent()
+            assertEquals(listOf("run:$AGENT:d-1", "run:$AGENT:d-1"), server.calls)
+            assertTrue(tracker.dismiss())
+            // On demand: a lost answer may already have started a run — never sent twice.
+            server.answer(TaskController.Outcome.Unreachable)
+            tracker.runAgent(AGENT, reminderDeliveryId = null)
+            runCurrent()
+            assertFalse(tracker.retry())
+            assertEquals(3, server.calls.size)
         }
 
     @Test

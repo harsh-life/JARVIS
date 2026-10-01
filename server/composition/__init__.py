@@ -30,6 +30,7 @@ from server.composition.agents import (
     AgentDefinitionLoader,
     AgentFactory,
     AgentFactoryFacade,
+    AgentReminders,
     AgentRunCoordinator,
     agent_tool_definitions,
     registries_from_config,
@@ -289,6 +290,9 @@ def build_application(
             ),
         )
         core.resource_loader.register(ResourceType.AGENTDEFINITION, AgentDefinitionLoader())
+        if scheduler_service is not None:
+            # docs/29 §17.1 (Phase 4): reminder triggers become ordinary jobs.
+            agent_factory.reminders = AgentReminders(scheduler=scheduler_service, core=core)
         include_agent_tools = (extra_tools is None) if agent_tools is None else agent_tools
         if include_agent_tools:
             tool_definitions = [*tool_definitions, *agent_tool_definitions(agent_factory)]

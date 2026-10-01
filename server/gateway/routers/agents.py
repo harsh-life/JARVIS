@@ -218,7 +218,8 @@ async def run_agent(
     principal: Principal = Depends(get_principal),
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> AgentRunView:
-    return await _factory(request).run(session, principal=principal, agent_id=agent_id, audit=audit)
+    return await _factory(request).run(session, principal=principal, agent_id=agent_id, audit=audit,
+                                       reminder_delivery_id=body.reminder_delivery_id)
 
 
 @router.get("/agents/{agent_id}/runs", response_model=AgentRunListResponse)

@@ -21,4 +21,6 @@
     <string name="reminder_title_missed_at">Reminder (missed at %1$s)</string>
     <string name="reminder_start_task">Start task</string>
     <string name="reminder_draft_notice">From your reminder. Review it, then tap Send to start the task.</string>
+    <string name="reminder_run_agent">Run agent</string>
+    <string name="reminder_run_notice">From your reminder. Tap Run to run this agent now, as you.</string>
 </resources>

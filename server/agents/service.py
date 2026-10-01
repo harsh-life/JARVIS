@@ -568,10 +568,12 @@ class AgentDefinitionService:
             return AgentFailureCode.SPEC_CHANGED
         return None
 
-    async def create_run(self, session: AsyncSession, *, spec: CompiledAgentSpec,
-                         run_id: uuid.UUID) -> AgentRunRow:
+    async def create_run(self, session: AsyncSession, *, spec: CompiledAgentSpec, run_id: uuid.UUID,
+                         reminder_delivery_id: uuid.UUID | None = None) -> AgentRunRow:
         run = AgentRunRow(run_id=run_id, agent_id=spec.agent_id, owner_user_id=spec.owner_user_id,
-                          version=spec.version, spec_hash=spec.spec_hash, kind="on_demand",
+                          version=spec.version, spec_hash=spec.spec_hash,
+                          kind="reminder_tap" if reminder_delivery_id is not None else "on_demand",
+                          reminder_delivery_id=reminder_delivery_id,
                           status=AgentRunStatus.QUEUED.value, cost_total=0.0, started_at=self._clock())
         session.add(run)
         await session.flush()
@@ -779,6 +781,13 @@ class AgentDefinitionService:
                                     failure=task.failure_code, cost=run.cost_total)
         return run
 
+    async def run_for_delivery(self, session: AsyncSession, delivery_id: uuid.UUID) -> AgentRunRow | None:
+        """docs/29 §17.1: the run a reminder tap already started, if any."""
+
+        return (await session.execute(
+            select(AgentRunRow).where(AgentRunRow.reminder_delivery_id == delivery_id)
+        )).scalars().first()
+
     async def get_run(self, session: AsyncSession, run_id: uuid.UUID) -> AgentRunRow | None:
         run = await session.get(AgentRunRow, run_id, populate_existing=True)
         return await self._synced(session, run) if run is not None else None
@@ -801,7 +810,8 @@ class AgentDefinitionService:
     def run_view(run: AgentRunRow, *, task: AgentResult | None = None,
                  inbox_item_id: uuid.UUID | None = None) -> AgentRunView:
         return AgentRunView(
-            run_id=run.run_id, agent_id=run.agent_id, version=run.version, status=AgentRunStatus(run.status),
+            run_id=run.run_id, agent_id=run.agent_id, version=run.version, kind=run.kind,
+            status=AgentRunStatus(run.status),
             failure_code=run.failure_code, task_id=run.task_id, started_at=_as_utc(run.started_at),
             finished_at=_as_utc(run.finished_at) if run.finished_at else None, cost_total=run.cost_total,
             inbox_item_id=inbox_item_id, task=task,

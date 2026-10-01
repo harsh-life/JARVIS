@@ -162,7 +162,7 @@ class DeviceChannel(
                             deviceProof = credentials.freshProof(),
                             mappingVersion = mappingVersion,
                             clientVersion = clientVersion,
-                            features = listOf(ChannelFeature.REMINDERS),
+                            features = listOf(ChannelFeature.REMINDERS, ChannelFeature.AGENT_REMINDERS),
                         )
                     } catch (ignored: EnrollmentLost) {
                         webSocket.close(NORMAL_CLOSURE, "enrollment lost")

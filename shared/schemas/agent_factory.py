@@ -705,9 +705,16 @@ class CreateAgentRequest(_Strict):
 
 
 class RunAgentRequest(_Strict):
-    """`POST /agents/{id}/runs` (docs/29 §23.2): an empty body. The owner, the
-    graph, the agent version, its hash, the runtime and the input all come from
-    the session and the stored spec — a request can name none of them."""
+    """`POST /agents/{id}/runs` (docs/29 §23.2). The owner, the graph, the
+    agent version, its hash, the runtime and the input all come from the
+    session and the stored spec — a request can name none of them.
+
+    `reminder_delivery_id` (Phase 4, §17.1): the reminder this run was tapped
+    from. It is a label, never authority — accepted only if that very device
+    of that very owner received that reminder, for that very agent — and it
+    makes a double tap one run (`kind = reminder_tap`)."""
+
+    reminder_delivery_id: UUID | None = None
 
 
 class AgentRunView(_Strict):
@@ -717,7 +724,7 @@ class AgentRunView(_Strict):
     run_id: UUID
     agent_id: UUID
     version: int
-    kind: Literal["on_demand"] = "on_demand"
+    kind: Literal["on_demand", "reminder_tap"] = "on_demand"
     status: AgentRunStatus
     failure_code: str | None = None
     task_id: UUID | None = None

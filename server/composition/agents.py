@@ -42,6 +42,7 @@ from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.agent.agent_run import AgentRunBinding, GatewayAdmission, ModelCallFacts, RoutedModelCall, RunTokens
@@ -73,12 +74,16 @@ from server.net.destinations import hostname_allowed
 from server.scheduler.schedule import parse_schedule
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
+from server.scheduler.service import NewReminder, PreparedReminder, ReminderRefused
+from server.security.usage import LimitExceeded
 from server.storage.models import (
     AgentCompilePreviewRow,
     AgentConfiguration,
     AgentDefinitionRow,
     AgentRunRow,
     AgentTask,
+    ReminderDelivery,
+    ScheduledJob,
 )
 from server.tools.registry import ToolDefinition
 from shared.schemas.agent import (
@@ -120,13 +125,23 @@ from shared.schemas.agent_factory import (
     CreateAgentRequest,
     ModelCallRequest,
     RunTokenPurpose,
+    TriggerKind,
 )
 from shared.schemas.authorization import DenialSurface, Operation, Principal, ResourceType
-from shared.schemas.enums import AgentConfigScopeType, AuditActor, AuditResult, RiskCategory, Visibility
+from shared.schemas.enums import (
+    AgentConfigScopeType,
+    AuditActor,
+    AuditResult,
+    JobStatus,
+    RiskCategory,
+    Visibility,
+)
+from shared.schemas.scheduler import ReasonSource
 from shared.schemas.errors import ErrorCode
 
 if TYPE_CHECKING:
     from server.composition.facade import AgentTaskFacade
+    from server.scheduler.service import SchedulerService
 
 # ── registries (validated at every startup) ────────────────────────────────
 
@@ -204,6 +219,91 @@ class AgentDefinitionLoader:
 # ── the owner's server-side context ────────────────────────────────────────
 
 
+# docs/29 §17.1: a delivery its device was sent — a tap can come only from one.
+_RECEIVED = ("sent", "acked")
+
+# docs/29 §17.1: an update leaves these agents active — so reminded.
+_REMINDED_AFTER_UPDATE = (AgentStatus.ACTIVE.value, AgentStatus.NEEDS_REAPPROVAL.value)
+
+
+class AgentReminders:
+    """docs/29 §17.1: an agent's `reminder` trigger as an ordinary scheduler
+    job — created through the scheduler's own service and the one engine, by
+    the composition root (the scheduler never imports the factory, AF-C4).
+
+    The job is the owner's own, private, worded "Run agent: {name}" (the name
+    the owner approved on the card) on exactly the compiled schedule, and
+    carries the agent's id as data. A firing delivers that message to the
+    owner's devices and nothing else: the tap is the owner asking to run it.
+    Pausing, re-approval and deletion cancel it (the safe direction, as part
+    of that change's own authorization); resuming and updating re-create it.
+
+    Two steps, because a refusal still commits the request's transaction (its
+    audit trail must survive, `deps.SECURITY_REFUSALS`): `plan` runs every
+    check that could refuse the reminder before the agent's own change is
+    written, and `commit` writes the job after it — never a half-made agent."""
+
+    def __init__(self, *, scheduler: "SchedulerService", core: SecurityCore) -> None:
+        self._scheduler = scheduler
+        self._core = core
+
+    async def _has_active(self, session: AsyncSession, agent_id: uuid.UUID, owner_user_id: uuid.UUID) -> bool:
+        return (await session.execute(select(ScheduledJob.job_id).where(
+            ScheduledJob.agent_id == agent_id, ScheduledJob.owner_user_id == owner_user_id,
+            ScheduledJob.status == JobStatus.ACTIVE,
+        ).limit(1))).first() is not None
+
+    async def plan(self, session: AsyncSession, audit: AuditLogger, *, principal: Principal,
+                   spec: CompiledAgentSpec) -> PreparedReminder | None:
+        """The quota (unless this replaces the agent's own active reminder),
+        the schedule and the one engine — `None` if the spec has no reminder.
+        Writes nothing."""
+
+        trigger = spec.trigger
+        if trigger.kind is not TriggerKind.REMINDER or not trigger.cron:
+            return None
+        if not await self._has_active(session, spec.agent_id, spec.owner_user_id):
+            try:
+                await self._scheduler.precheck_quota(session, user_id=principal.user_id)
+            except LimitExceeded as exc:
+                raise AppError(ErrorCode.RATE_LIMITED, "reminder limit reached",
+                               details={"limit": exc.limit, "reason": "reminder_quota"}) from None
+        try:
+            prepared = self._scheduler.prepare(NewReminder(
+                owner_user_id=spec.owner_user_id, task_reason=f"Run agent: {spec.name}",
+                schedule=f"CRON_TZ={trigger.timezone} {trigger.cron}", reason_source=ReasonSource.USER,
+                graph_id=spec.graph_id, device_id=principal.device_id, session_id=principal.session_id,
+                agent_id=spec.agent_id,
+            ))
+        except ReminderRefused as exc:
+            raise AppError(ErrorCode.CONFLICT, "this agent's reminder cannot be scheduled",
+                           details={"reason": exc.reason}) from None
+        # The one engine, as for any reminder: D1 on the agent's graph.
+        outcome = await self._core.engine.authorize(session, AccessRequest(
+            principal=principal, operation=Operation.CREATE, resource_type=ResourceType.SCHEDULEDJOB,
+            graph_id=spec.graph_id), audit=audit)
+        if not outcome.allowed:
+            raise _refusal(outcome)
+        return prepared
+
+    async def commit(self, session: AsyncSession, audit: AuditLogger, prepared: PreparedReminder | None,
+                     *, actor: AuditActor = AuditActor.USER) -> None:
+        if prepared is not None:
+            await self._scheduler.commit(session, prepared, audit=audit, actor=actor)
+
+    async def cancel(self, session: AsyncSession, audit: AuditLogger, *, agent_id: uuid.UUID,
+                     owner_user_id: uuid.UUID, actor: AuditActor = AuditActor.USER,
+                     device_id: uuid.UUID | None = None, session_id: uuid.UUID | None = None) -> int:
+        jobs = (await session.execute(select(ScheduledJob).where(
+            ScheduledJob.agent_id == agent_id, ScheduledJob.owner_user_id == owner_user_id,
+            ScheduledJob.status == JobStatus.ACTIVE,
+        ))).scalars().all()
+        for job in jobs:
+            await self._scheduler.cancel(session, job, audit=audit, actor=actor, device_id=device_id,
+                                         session_id=session_id)
+        return len(jobs)
+
+
 class AgentFactory:
     """What both paths share: the service, and the owner context the
     compiler needs — built from live server state, never from a draft."""
@@ -215,6 +315,8 @@ class AgentFactory:
         # docs/29 §11: the one choke point every request of every agent run
         # passes (in-process for native runs).
         self._gateway = AgentGateway(service)
+        # docs/29 §17 (Phase 4): set when the scheduler is enabled too.
+        self.reminders: AgentReminders | None = None
 
     @property
     def service(self) -> AgentDefinitionService:
@@ -408,6 +510,13 @@ class AgentToolAdapter:
         await scope.audit.record(actor=AuditActor.AGENT, action=action, resource=resource, result=result,
                                  user_id=invocation.user_id, device_id=invocation.device_id)
 
+    @staticmethod
+    def _task_principal(task: AgentTask) -> Principal:
+        """The principal of the task the worker runs in — from its own row."""
+
+        return Principal(user_id=task.user_id, device_id=task.device_id, session_id=task.session_id,
+                         active_graph_id=task.graph_id)
+
     async def _owned(self, scope: _Scope, invocation: ToolInvocation):
         agent_id = _agent_ref(invocation.resource_ref)
         loaded = await self._factory.service.load(scope.session, agent_id) if agent_id else None
@@ -458,13 +567,19 @@ class AgentToolAdapter:
             return ToolOutput(ok=False, error="preview_not_found",
                               content="No such preview in this task (it may have expired). Compile again.")
         try:
+            # docs/29 §17.1: every check on the reminder before anything is written.
+            planned = await self._plan_reminder(scope, task, service.preview_spec(preview))
             definition, spec = await service.create_from_preview(
                 scope.session, preview, created_by_device_id=invocation.device_id,
                 created_from_task_id=invocation.task_id)
+        except AppError as exc:
+            return ToolOutput(ok=False, error=str((exc.details or {}).get("reason") or exc.code.value))
         except PreviewRefused as exc:
             await self._audit(scope, invocation, AuditAction.AGENT_REFUSED, f"agentpreview:{compile_id}:{exc.reason}",
                               AuditResult.BLOCKED)
             return ToolOutput(ok=False, error=exc.reason)
+        if self._factory.reminders is not None:
+            await self._factory.reminders.commit(scope.session, scope.audit, planned, actor=AuditActor.AGENT)
         await self._audit(scope, invocation, AuditAction.AGENT_CREATED, f"agentdefinition:{definition.agent_id}")
         return ToolOutput(ok=True, content=_dumps({
             "agent_id": str(definition.agent_id), "version": spec.version, "status": definition.status,
@@ -487,14 +602,45 @@ class AgentToolAdapter:
             return ToolOutput(ok=False, error="preview_not_found",
                               content="No such update preview for that agent in this task. Compile again.")
         try:
+            new_spec = service.preview_spec(preview)
+            # Planned only if the update leaves the agent active (a paused
+            # agent's reminder stays suppressed until it is resumed).
+            planned = (await self._plan_reminder(scope, task, new_spec) if definition.status in _REMINDED_AFTER_UPDATE
+                       else self._reminders_or_refuse(new_spec))
             definition, new = await service.update_from_preview(scope.session, definition, preview)
+        except AppError as exc:
+            return ToolOutput(ok=False, error=str((exc.details or {}).get("reason") or exc.code.value))
         except PreviewRefused as exc:
             return ToolOutput(ok=False, error=exc.reason)
+        await self._replace_reminder(scope, task, definition, planned)
         await self._audit(scope, invocation, AuditAction.AGENT_UPDATED,
                           f"agentdefinition:{definition.agent_id}:v{new.version}")
         return ToolOutput(ok=True, content=_dumps({
             "agent_id": str(definition.agent_id), "version": new.version, **_card_json(new, self._factory.registries),
         }))
+
+    def _reminders_or_refuse(self, spec: CompiledAgentSpec) -> None:
+        if spec.trigger.kind is TriggerKind.REMINDER and self._factory.reminders is None:
+            raise AppError(ErrorCode.CONFLICT, "this server has no scheduler for the agent's reminder",
+                           details={"reason": "reminders_unavailable"})
+
+    async def _plan_reminder(self, scope: _Scope, task: AgentTask, spec: CompiledAgentSpec) -> PreparedReminder | None:
+        self._reminders_or_refuse(spec)
+        if self._factory.reminders is None:
+            return None
+        return await self._factory.reminders.plan(scope.session, scope.audit, principal=self._task_principal(task),
+                                                  spec=spec)
+
+    async def _replace_reminder(self, scope: _Scope, task: AgentTask, definition: AgentDefinitionRow,
+                                planned: PreparedReminder | None) -> None:
+        reminders = self._factory.reminders
+        if reminders is None:
+            return
+        await reminders.cancel(scope.session, scope.audit, agent_id=definition.agent_id,
+                               owner_user_id=definition.owner_user_id, actor=AuditActor.AGENT,
+                               device_id=task.device_id)
+        if definition.status == AgentStatus.ACTIVE.value:
+            await reminders.commit(scope.session, scope.audit, planned, actor=AuditActor.AGENT)
 
     async def _list(self, scope, invocation, task) -> ToolOutput:
         if invocation.arguments:
@@ -521,6 +667,10 @@ class AgentToolAdapter:
         if loaded is None:
             return ToolOutput(ok=False, error="not_found", content="Not found or not permitted.")
         definition, _ = loaded
+        if self._factory.reminders is not None:
+            await self._factory.reminders.cancel(scope.session, scope.audit, agent_id=definition.agent_id,
+                                                 owner_user_id=definition.owner_user_id, actor=AuditActor.AGENT,
+                                                 device_id=invocation.device_id)
         await self._factory.service.delete(scope.session, definition)
         await self._audit(scope, invocation, AuditAction.AGENT_DELETED, f"agentdefinition:{definition.agent_id}")
         return ToolOutput(ok=True, content=_dumps({"agent_id": str(definition.agent_id), "status": "deleted"}))
@@ -993,6 +1143,31 @@ class AgentFactoryFacade:
             raise _NOT_FOUND from None
         return spec_view(spec, self._factory.registries)
 
+    def _reminders_unavailable(self, spec: CompiledAgentSpec) -> None:
+        if spec.trigger.kind is TriggerKind.REMINDER and self._factory.reminders is None:
+            # docs/29 §17.1: a reminder agent needs the scheduler; without one
+            # it is refused before anything is confirmed or written.
+            raise AppError(ErrorCode.CONFLICT, "this server has no scheduler for the agent's reminder",
+                           details={"reason": "reminders_unavailable"})
+
+    async def _plan(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
+                    spec: CompiledAgentSpec) -> PreparedReminder | None:
+        """docs/29 §17.1: every check on the reminder, before the change is written."""
+
+        if self._factory.reminders is None:
+            return None
+        return await self._factory.reminders.plan(session, audit, principal=principal, spec=spec)
+
+    async def _commit(self, session: AsyncSession, audit: AuditLogger, planned: PreparedReminder | None) -> None:
+        if self._factory.reminders is not None:
+            await self._factory.reminders.commit(session, audit, planned)
+
+    async def _unschedule(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
+                          agent_id: uuid.UUID) -> None:
+        if self._factory.reminders is not None:
+            await self._factory.reminders.cancel(session, audit, agent_id=agent_id, owner_user_id=principal.user_id,
+                                                 device_id=principal.device_id, session_id=principal.session_id)
+
     async def create(self, session: AsyncSession, *, principal: Principal, body: CreateAgentRequest,
                      confirmation_token: str | None, audit: AuditLogger) -> AgentView:
         service = self._factory.service
@@ -1004,6 +1179,7 @@ class AgentFactoryFacade:
             spec = service.preview_spec(preview)
         except PreviewRefused as exc:
             raise AppError(ErrorCode.CONFLICT, "this preview cannot be applied", details={"reason": exc.reason}) from None
+        self._reminders_unavailable(spec)
         # D1 on the agent's graph, live; `consequential` → a token bound to
         # exactly this preview and its hash.
         outcome = await self._authorize(session, audit, AccessRequest(
@@ -1013,11 +1189,13 @@ class AgentFactoryFacade:
         ))
         await self._confirm_or_refuse(session, outcome, action="create_agent",
                                       card=_card_json(spec, self._factory.registries))
+        planned = await self._plan(session, audit, principal, spec)
         try:
             definition, spec = await service.create_from_preview(
                 session, preview, created_by_device_id=principal.device_id, created_from_task_id=None)
         except PreviewRefused as exc:
             raise AppError(ErrorCode.CONFLICT, "this preview cannot be applied", details={"reason": exc.reason}) from None
+        await self._commit(session, audit, planned)
         await self._audit(audit, principal, AuditAction.AGENT_CREATED, f"agentdefinition:{definition.agent_id}")
         return service.view(definition, spec)
 
@@ -1049,6 +1227,7 @@ class AgentFactoryFacade:
             spec = service.preview_spec(preview)
         except PreviewRefused as exc:
             raise AppError(ErrorCode.CONFLICT, "this preview cannot be applied", details={"reason": exc.reason}) from None
+        self._reminders_unavailable(spec)
         outcome = await self._authorize(session, audit, AccessRequest(
             principal=principal, operation=Operation.WRITE, resource_type=ResourceType.AGENTDEFINITION,
             resource_ref=str(agent_id), confirmation_token=confirmation_token,
@@ -1059,10 +1238,16 @@ class AgentFactoryFacade:
         loaded = await service.load(session, agent_id)
         if loaded is None or loaded[0].owner_user_id != principal.user_id:
             raise _NOT_FOUND
+        planned = (await self._plan(session, audit, principal, spec)
+                   if loaded[0].status in _REMINDED_AFTER_UPDATE else None)
         try:
             definition, new = await service.update_from_preview(session, loaded[0], preview)
         except PreviewRefused as exc:
             raise AppError(ErrorCode.CONFLICT, "this preview cannot be applied", details={"reason": exc.reason}) from None
+        # docs/29 §17.1: the reminder follows the new version (or goes).
+        await self._unschedule(session, audit, principal, agent_id)
+        if definition.status == AgentStatus.ACTIVE.value:
+            await self._commit(session, audit, planned)
         await self._audit(audit, principal, AuditAction.AGENT_UPDATED,
                           f"agentdefinition:{definition.agent_id}:v{new.version}")
         return service.view(definition, new)
@@ -1086,6 +1271,7 @@ class AgentFactoryFacade:
                                    principal=principal, audit=audit)
             await NativeRuntimeProvider(port).deprovision(
                 RuntimeRef(runtime_id=NATIVE_RUNTIME_ID, agent_id=agent_id, version=loaded[0].current_version))
+        await self._unschedule(session, audit, principal, agent_id)
         await self._factory.service.delete(session, loaded[0])
         await self._audit(audit, principal, AuditAction.AGENT_DELETED, f"agentdefinition:{agent_id}")
 
@@ -1098,9 +1284,27 @@ class AgentFactoryFacade:
                           AuditResult.BLOCKED)
         return AppError(code, message, details={"reason": reason})
 
+    async def _tapped(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
+                      agent_id: uuid.UUID, delivery_id: uuid.UUID) -> None:
+        """docs/29 §17.1: a reminder tap names the delivery it came from. It is
+        accepted only if this very device of this very owner was sent that
+        reminder, and the reminder is this agent's — otherwise it does not
+        exist for the caller (`404`, as anyone else's would). Read only; it
+        authorizes nothing (the run is decided like any on-demand run)."""
+
+        delivery = await session.get(ReminderDelivery, delivery_id)
+        job = await session.get(ScheduledJob, delivery.job_id) if delivery is not None else None
+        if (delivery is None or job is None or delivery.status not in _RECEIVED
+                or delivery.user_id != principal.user_id or delivery.device_id != principal.device_id
+                or job.owner_user_id != principal.user_id or job.agent_id != agent_id):
+            await self._audit(audit, principal, AuditAction.AGENT_RUN_REFUSED,
+                              f"agentdefinition:{agent_id}:reminder_tap_unknown", AuditResult.BLOCKED)
+            raise _NOT_FOUND
+
     async def run(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
-                  audit: AuditLogger) -> AgentRunView:
-        """docs/29 §7.4 run_now: an on-demand run by the present owner.
+                  audit: AuditLogger, reminder_delivery_id: uuid.UUID | None = None) -> AgentRunView:
+        """docs/29 §7.4 run_now: an on-demand run by the present owner — or,
+        Phase 4, the same run tapped from one of the agent's reminders.
 
         Nothing about the run comes from the request. The engine authorizes
         the owner on the definition; the stored spec is hash-verified; the
@@ -1112,6 +1316,14 @@ class AgentFactoryFacade:
 
         tasks = self._run_tasks()
         definition, spec = await self._owned(session, audit, principal, agent_id, Operation.READ)
+        service = self._factory.service
+        if reminder_delivery_id is not None:
+            await self._tapped(session, audit, principal, agent_id, reminder_delivery_id)
+            tapped = await service.run_for_delivery(session, reminder_delivery_id)
+            if tapped is not None:
+                # The same tap again (a double tap, a retry after no answer):
+                # the run it already started, never a second one.
+                return await self._tap_replayed(session, audit, principal, tapped)
         if spec is None:
             raise await self._refuse_run(audit, principal, agent_id, "agent_revoked",
                                          "this agent is revoked and cannot run")
@@ -1127,7 +1339,6 @@ class AgentFactoryFacade:
             raise await self._refuse_run(audit, principal, agent_id, "graph_mismatch",
                                          "this agent belongs to another graph than this session's")
         profile = await self._still_runnable(session, audit, principal, definition, spec)
-        service = self._factory.service
         # docs/29 §17: the month's budget. A spent month refuses the run; the
         # run's own ceiling is never more than what is left of the month (a
         # zero monthly budget leaves only free — local — model calls).
@@ -1137,7 +1348,18 @@ class AgentFactoryFacade:
                                          "this agent's monthly budget is spent", code=ErrorCode.RATE_LIMITED)
         run_budget = min(spec.budget.per_run, max(0.0, spec.budget.per_month - spent))
         run_id = uuid.uuid4()
-        run = await service.create_run(session, spec=spec, run_id=run_id)
+        try:
+            async with session.begin_nested():
+                run = await service.create_run(session, spec=spec, run_id=run_id,
+                                               reminder_delivery_id=reminder_delivery_id)
+        except IntegrityError:
+            # Two taps raced past the lookup: the store's uniqueness decides,
+            # and this one gets the run the other started.
+            tapped = (await service.run_for_delivery(session, reminder_delivery_id)
+                      if reminder_delivery_id is not None else None)
+            if tapped is None:
+                raise
+            return await self._tap_replayed(session, audit, principal, tapped)
         deadline = self._factory.run_deadline(spec)
         # docs/29 §11.3: the run's two gateway tokens — the only credential
         # its runtime holds, and only for this run.
@@ -1169,6 +1391,13 @@ class AgentFactoryFacade:
         run = await service.get_run(session, run_id) or run
         return service.run_view(run, task=result, inbox_item_id=await service.inbox_item_for_run(session, run_id))
 
+    async def _tap_replayed(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
+                            run: AgentRunRow) -> AgentRunView:
+        service = self._factory.service
+        task = (await self._run_tasks().get(session, principal=principal, task_id=run.task_id, audit=audit)
+                if run.task_id is not None else None)
+        return service.run_view(run, task=task, inbox_item_id=await service.inbox_item_for_run(session, run.run_id))
+
     def _run_tasks(self) -> "AgentTaskFacade":
         if self._tasks is None:
             raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "agent runs are not available",
@@ -1186,6 +1415,8 @@ class AgentFactoryFacade:
         agent_id = definition.agent_id
         if revalidation_required(spec, registries.enabled_templates):
             await self._factory.service.mark_needs_reapproval(session, definition, "template_changed")
+            # docs/29 §14.1: an agent awaiting re-approval is not reminded.
+            await self._unschedule(session, audit, principal, agent_id)
             raise await self._refuse_run(audit, principal, agent_id, "needs_reapproval",
                                          "this agent must be recompiled and re-approved")
         selection = spec.selection
@@ -1244,6 +1475,8 @@ class AgentFactoryFacade:
         service = self._factory.service
         if await service.pause(session, definition):
             await self._audit(audit, principal, AuditAction.AGENT_PAUSED, f"agentdefinition:{agent_id}")
+        # docs/29 §14.1 / §17.1: a paused agent's reminder is suppressed.
+        await self._unschedule(session, audit, principal, agent_id)
         await self._stop_runs(session, audit, principal, agent_id, CancelReason.OWNER_STOP)
         return service.view(definition, spec)
 
@@ -1289,7 +1522,9 @@ class AgentFactoryFacade:
         if current is None or current.spec_hash != spec.spec_hash or definition.status != AgentStatus.PAUSED.value:
             raise await self._refuse_run(audit, principal, agent_id, "spec_changed",
                                          "the agent changed while the resume was being confirmed")
+        planned = await self._plan(session, audit, principal, current)
         await service.resume(session, definition)
+        await self._commit(session, audit, planned)
         await self._audit(audit, principal, AuditAction.AGENT_RESUMED, f"agentdefinition:{agent_id}")
         return service.view(definition, current)
 
@@ -1477,6 +1712,7 @@ __all__ = [
     "AgentDefinitionLoader",
     "AgentFactory",
     "AgentFactoryFacade",
+    "AgentReminders",
     "AgentRunCoordinator",
     "AgentToolAdapter",
     "agent_factory_scope",

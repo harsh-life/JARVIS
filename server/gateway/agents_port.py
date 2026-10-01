@@ -73,7 +73,8 @@ class AgentFactoryPort(Protocol):
     # agent is the path's; its owner, graph, version, hash and input are not
     # the request's to name.
     async def run(
-        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger,
+        reminder_delivery_id: uuid.UUID | None = None,
     ) -> AgentRunView: ...
 
     async def list_runs(

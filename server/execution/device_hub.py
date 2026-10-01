@@ -277,7 +277,8 @@ class DeviceHub:
         ):
             return False
         try:
-            await session.connection.send_text(reminder.model_dump_json())
+            await session.connection.send_text(
+                reminder.wire(agent_reminders=ChannelFeature.AGENT_REMINDERS in session.features))
         except Exception:  # noqa: BLE001 — a dead socket just means "not delivered yet"
             logger.debug("reminder not written to device socket", exc_info=True)
             return False

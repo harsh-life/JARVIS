@@ -152,6 +152,9 @@ class SupervisorControl:
             await _control_audit(audit, AuditAction.CONTROL_AGENT_PAUSED, resource, AuditResult.FAILURE)
             raise ControlTargetNotFound()
         revoked = await self._agents.service.operator_pause(session, definition)
+        if self._agents.reminders is not None:
+            await self._agents.reminders.cancel(session, audit, agent_id=agent_id,
+                                                owner_user_id=definition.owner_user_id, actor=AuditActor.SUPERUSER)
         report = await self._enforce(session, audit, to_enforce, reason=reason, source=source)
         report.signalled[:0] = signalled
         await _control_audit(audit, AuditAction.CONTROL_AGENT_PAUSED, resource, AuditResult.SUCCESS)

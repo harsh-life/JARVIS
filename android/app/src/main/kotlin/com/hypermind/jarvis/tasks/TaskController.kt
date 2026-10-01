@@ -50,6 +50,12 @@ class TaskController(
     /** Ask the server to cancel a live task. */
     override suspend fun cancel(taskId: String): Outcome = call { api().cancelTask(accessToken(), taskId) }
 
+    /** Ask the server to run one of the owner's agents now (docs/29 §7.4); shown as the task it runs as. */
+    override suspend fun runAgent(
+        agentId: String,
+        reminderDeliveryId: String?,
+    ): Outcome = call { api().agents.runAgent(accessToken(), agentId, reminderDeliveryId) }
+
     override suspend fun decline(
         taskId: String,
         pending: PendingAction,
@@ -116,5 +122,11 @@ interface TaskOperations {
     suspend fun decline(
         taskId: String,
         pending: PendingAction,
+    ): TaskController.Outcome
+
+    /** docs/29 §7.4 / §17.1: the owner's own "Run" — on demand, or tapped from a reminder. */
+    suspend fun runAgent(
+        agentId: String,
+        reminderDeliveryId: String?,
     ): TaskController.Outcome
 }

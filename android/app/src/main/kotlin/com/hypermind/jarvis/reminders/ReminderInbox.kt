@@ -35,6 +35,7 @@ class ReminderInbox(
             if (seen.size > capacity) seen.remove(seen.first())
             // Recorded before it is shown: "Start task" reads the words from here.
             drafts?.remember(reminder.deliveryId, reminder.taskReason)
+            reminder.agentId?.let { drafts?.rememberAgent(reminder.deliveryId, it) }
             notifier.show(reminder)
         }
         return ReminderAck(deliveryId = reminder.deliveryId)

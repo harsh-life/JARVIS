@@ -65,3 +65,17 @@ def test_reminder_text_is_bounded_and_non_empty():
             DeviceReminder.model_validate({**base, "task_reason": bad})
     assert DeviceReminder(delivery_id=uuid.uuid4(), job_id=uuid.uuid4(), device_id=uuid.uuid4(),
                           task_reason="x" * 8000, scheduled_for=datetime.now(timezone.utc))
+
+
+def test_an_agent_reminder_carries_only_an_identifier_and_only_for_clients_that_asked():
+    """docs/29 §17.1: `agent_id` is data for an `agent_reminders` client's
+    "Run agent" button — no other sample carries it, and it grants nothing."""
+
+    agent = DeviceReminder.model_validate(SAMPLE["server_to_device"]["agent_reminder"])
+    assert agent.agent_id is not None
+    for name in ("on_time", "late_recurring"):
+        assert "agent_id" not in SAMPLE["server_to_device"][name]
+    hello = DeviceHello.model_validate(SAMPLE["device_to_server"]["hello_with_agent_reminders"])
+    assert [f.value for f in hello.features] == ["reminders", "agent_reminders"]
+    with pytest.raises(ValidationError):
+        DeviceReminder.model_validate({**SAMPLE["server_to_device"]["agent_reminder"], "agent_id": "not-an-id"})

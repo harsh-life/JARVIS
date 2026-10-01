@@ -4,6 +4,17 @@
       "delivery_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000e001",
       "type": "reminder_ack"
     },
+    "hello_with_agent_reminders": {
+      "access_token": "sample-token-not-real",
+      "client_version": "0.1",
+      "device_proof": "v1.sample.proof.not.real",
+      "features": [
+        "reminders",
+        "agent_reminders"
+      ],
+      "mapping_version": "1-0123456789abcdef",
+      "type": "hello"
+    },
     "hello_with_reminders": {
       "access_token": "sample-token-not-real",
       "client_version": "0.1",
@@ -16,6 +27,17 @@
     }
   },
   "server_to_device": {
+    "agent_reminder": {
+      "agent_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+      "delivery_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000e001",
+      "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
+      "job_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000b001",
+      "late": false,
+      "recurring": true,
+      "scheduled_for": "2026-10-01T03:30:00Z",
+      "task_reason": "Run agent: Security advisory digest",
+      "type": "reminder"
+    },
     "late_recurring": {
       "delivery_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000e001",
       "device_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000d001",
