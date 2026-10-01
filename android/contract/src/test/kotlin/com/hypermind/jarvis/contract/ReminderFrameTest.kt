@@ -59,6 +59,30 @@ class ReminderFrameTest {
     }
 
     @Test
+    fun `an agent reminder carries its agent as an identifier, and a plain one none`() {
+        val agent = ServerFrame.parse(frame("agent_reminder")) as ServerFrame.ReminderNotice
+        assertEquals("6f1c2d3e-4a5b-4c6d-8e7f-00000000a001", agent.reminder.agentId)
+        val plain = ServerFrame.parse(frame("on_time")) as ServerFrame.ReminderNotice
+        assertEquals(null, plain.reminder.agentId)
+        val malformed =
+            JsonObject(serverSide.getValue("agent_reminder").jsonObject + ("agent_id" to JsonPrimitive("x")))
+        assertTrue(ServerFrame.parse(malformed.toString()) is ServerFrame.Invalid)
+    }
+
+    @Test
+    fun `this client declares agent reminders exactly as the server parses them`() {
+        val hello =
+            Hello(
+                accessToken = "sample-token-not-real",
+                deviceProof = "v1.sample.proof.not.real",
+                mappingVersion = "1-0123456789abcdef",
+                clientVersion = "0.1",
+                features = listOf(ChannelFeature.REMINDERS, ChannelFeature.AGENT_REMINDERS),
+            ).encode()
+        assertEquals(deviceSide.getValue("hello_with_agent_reminders"), ContractJson.parseToJsonElement(hello))
+    }
+
+    @Test
     fun `the user's words never reach a log line through toString`() {
         val reminder = (ServerFrame.parse(frame("on_time")) as ServerFrame.ReminderNotice).reminder
         assertFalse("dentist" in reminder.toString())

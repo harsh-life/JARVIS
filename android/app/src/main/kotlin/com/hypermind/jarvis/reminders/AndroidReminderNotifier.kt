@@ -38,6 +38,20 @@ class AndroidReminderNotifier(
                 draftIntent(context, reminder.deliveryId),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
+        // docs/29 §17.1: an agent's reminder offers "Run agent" instead — it
+        // opens JARVIS on the offer; the user presses Run there.
+        val (actionLabel, actionIntent) =
+            if (reminder.agentId != null) {
+                context.getString(R.string.reminder_run_agent) to
+                    PendingIntent.getActivity(
+                        context,
+                        request,
+                        runIntent(context, reminder.deliveryId),
+                        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                    )
+            } else {
+                context.getString(R.string.reminder_start_task) to open
+            }
         val title = title(reminder)
         val public =
             builder()
@@ -50,13 +64,13 @@ class AndroidReminderNotifier(
                 .setContentText(reminder.taskReason)
                 .setStyle(Notification.BigTextStyle().bigText(reminder.taskReason))
                 .setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setContentIntent(open)
+                .setContentIntent(actionIntent)
                 .setAutoCancel(true)
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setPublicVersion(public)
                 .addAction(
                     Notification.Action
-                        .Builder(null, context.getString(R.string.reminder_start_task), open)
+                        .Builder(null, actionLabel, actionIntent)
                         .build(),
                 ).build()
         // Tagged by delivery: a re-sent reminder replaces its own notification.
@@ -120,5 +134,18 @@ class AndroidReminderNotifier(
             Intent(context, MainActivity::class.java)
                 .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra(MainActivity.EXTRA_REMINDER_DELIVERY, deliveryId)
+
+        /**
+         * docs/29 §17.1: opens the app on this agent reminder's run offer —
+         * never runs anything. Only the delivery id travels; the agent and the
+         * words are read from [ReminderDrafts].
+         */
+        fun runIntent(
+            context: Context,
+            deliveryId: String,
+        ): Intent =
+            Intent(context, MainActivity::class.java)
+                .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(MainActivity.EXTRA_REMINDER_RUN, deliveryId)
     }
 }

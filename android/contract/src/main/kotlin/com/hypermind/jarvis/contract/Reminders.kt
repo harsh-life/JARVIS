@@ -15,11 +15,17 @@ import kotlinx.serialization.UseSerializers
  * it has no capability, operation, primitive or arguments, so there is nothing
  * in it this client could execute. Showing it is all the device does; "start
  * task" only puts [Reminder.taskReason] in the task box for the user to send.
+ * An agent's reminder (docs/29 §17.1) also names [Reminder.agentId]: the
+ * agent the user may then choose to run, from the app — the run is the user's
+ * own request to the server, decided there like any run.
  */
 @Serializable
 enum class ChannelFeature {
     @SerialName("reminders")
     REMINDERS,
+
+    @SerialName("agent_reminders")
+    AGENT_REMINDERS,
 }
 
 @Serializable
@@ -32,10 +38,13 @@ data class Reminder(
     @SerialName("scheduled_for") val scheduledFor: String,
     val late: Boolean = false,
     val recurring: Boolean = false,
+    // An identifier, never authority: sent back by the user's own tap.
+    @SerialName("agent_id") val agentId: String? = null,
 ) {
     init {
         require(type == "reminder") { "not a reminder" }
         require(taskReason.isNotBlank() && taskReason.length <= MAX_REMINDER_TEXT) { "reminder text out of bounds" }
+        require(agentId == null || UUID_FORM.matches(agentId)) { "agent id malformed" }
     }
 
     // The user's own words must never reach a log line through toString.
@@ -43,6 +52,7 @@ data class Reminder(
 
     companion object {
         const val MAX_REMINDER_TEXT = 8000
+        private val UUID_FORM = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
     }
 }
 

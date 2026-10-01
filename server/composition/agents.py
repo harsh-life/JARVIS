@@ -42,6 +42,7 @@ from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.agent.agent_run import AgentRunBinding, GatewayAdmission, ModelCallFacts, RoutedModelCall, RunTokens
@@ -81,6 +82,7 @@ from server.storage.models import (
     AgentDefinitionRow,
     AgentRunRow,
     AgentTask,
+    ReminderDelivery,
     ScheduledJob,
 )
 from server.tools.registry import ToolDefinition
@@ -216,6 +218,9 @@ class AgentDefinitionLoader:
 
 # ── the owner's server-side context ────────────────────────────────────────
 
+
+# docs/29 §17.1: a delivery its device was sent — a tap can come only from one.
+_RECEIVED = ("sent", "acked")
 
 # docs/29 §17.1: an update leaves these agents active — so reminded.
 _REMINDED_AFTER_UPDATE = (AgentStatus.ACTIVE.value, AgentStatus.NEEDS_REAPPROVAL.value)
@@ -1279,9 +1284,27 @@ class AgentFactoryFacade:
                           AuditResult.BLOCKED)
         return AppError(code, message, details={"reason": reason})
 
+    async def _tapped(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
+                      agent_id: uuid.UUID, delivery_id: uuid.UUID) -> None:
+        """docs/29 §17.1: a reminder tap names the delivery it came from. It is
+        accepted only if this very device of this very owner was sent that
+        reminder, and the reminder is this agent's — otherwise it does not
+        exist for the caller (`404`, as anyone else's would). Read only; it
+        authorizes nothing (the run is decided like any on-demand run)."""
+
+        delivery = await session.get(ReminderDelivery, delivery_id)
+        job = await session.get(ScheduledJob, delivery.job_id) if delivery is not None else None
+        if (delivery is None or job is None or delivery.status not in _RECEIVED
+                or delivery.user_id != principal.user_id or delivery.device_id != principal.device_id
+                or job.owner_user_id != principal.user_id or job.agent_id != agent_id):
+            await self._audit(audit, principal, AuditAction.AGENT_RUN_REFUSED,
+                              f"agentdefinition:{agent_id}:reminder_tap_unknown", AuditResult.BLOCKED)
+            raise _NOT_FOUND
+
     async def run(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
-                  audit: AuditLogger) -> AgentRunView:
-        """docs/29 §7.4 run_now: an on-demand run by the present owner.
+                  audit: AuditLogger, reminder_delivery_id: uuid.UUID | None = None) -> AgentRunView:
+        """docs/29 §7.4 run_now: an on-demand run by the present owner — or,
+        Phase 4, the same run tapped from one of the agent's reminders.
 
         Nothing about the run comes from the request. The engine authorizes
         the owner on the definition; the stored spec is hash-verified; the
@@ -1293,6 +1316,14 @@ class AgentFactoryFacade:
 
         tasks = self._run_tasks()
         definition, spec = await self._owned(session, audit, principal, agent_id, Operation.READ)
+        service = self._factory.service
+        if reminder_delivery_id is not None:
+            await self._tapped(session, audit, principal, agent_id, reminder_delivery_id)
+            tapped = await service.run_for_delivery(session, reminder_delivery_id)
+            if tapped is not None:
+                # The same tap again (a double tap, a retry after no answer):
+                # the run it already started, never a second one.
+                return await self._tap_replayed(session, audit, principal, tapped)
         if spec is None:
             raise await self._refuse_run(audit, principal, agent_id, "agent_revoked",
                                          "this agent is revoked and cannot run")
@@ -1308,7 +1339,6 @@ class AgentFactoryFacade:
             raise await self._refuse_run(audit, principal, agent_id, "graph_mismatch",
                                          "this agent belongs to another graph than this session's")
         profile = await self._still_runnable(session, audit, principal, definition, spec)
-        service = self._factory.service
         # docs/29 §17: the month's budget. A spent month refuses the run; the
         # run's own ceiling is never more than what is left of the month (a
         # zero monthly budget leaves only free — local — model calls).
@@ -1318,7 +1348,18 @@ class AgentFactoryFacade:
                                          "this agent's monthly budget is spent", code=ErrorCode.RATE_LIMITED)
         run_budget = min(spec.budget.per_run, max(0.0, spec.budget.per_month - spent))
         run_id = uuid.uuid4()
-        run = await service.create_run(session, spec=spec, run_id=run_id)
+        try:
+            async with session.begin_nested():
+                run = await service.create_run(session, spec=spec, run_id=run_id,
+                                               reminder_delivery_id=reminder_delivery_id)
+        except IntegrityError:
+            # Two taps raced past the lookup: the store's uniqueness decides,
+            # and this one gets the run the other started.
+            tapped = (await service.run_for_delivery(session, reminder_delivery_id)
+                      if reminder_delivery_id is not None else None)
+            if tapped is None:
+                raise
+            return await self._tap_replayed(session, audit, principal, tapped)
         deadline = self._factory.run_deadline(spec)
         # docs/29 §11.3: the run's two gateway tokens — the only credential
         # its runtime holds, and only for this run.
@@ -1349,6 +1390,13 @@ class AgentFactoryFacade:
             await service.run_waiting(session, run_id)
         run = await service.get_run(session, run_id) or run
         return service.run_view(run, task=result, inbox_item_id=await service.inbox_item_for_run(session, run_id))
+
+    async def _tap_replayed(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
+                            run: AgentRunRow) -> AgentRunView:
+        service = self._factory.service
+        task = (await self._run_tasks().get(session, principal=principal, task_id=run.task_id, audit=audit)
+                if run.task_id is not None else None)
+        return service.run_view(run, task=task, inbox_item_id=await service.inbox_item_for_run(session, run.run_id))
 
     def _run_tasks(self) -> "AgentTaskFacade":
         if self._tasks is None:

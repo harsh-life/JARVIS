@@ -1,0 +1,150 @@
+{
+  "agent_list": {
+    "items": [
+      {
+        "agent_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+        "budget": {
+          "per_month": 0.0,
+          "per_run": 0.0
+        },
+        "can": [
+          "read the web from approved sites"
+        ],
+        "cannot": [
+          "write files",
+          "send messages",
+          "control devices"
+        ],
+        "created_at": "2026-10-02T01:30:00Z",
+        "current_version": 2,
+        "last_run": "2026-10-02T01:30:00Z",
+        "model_profile_display_name": "General agent",
+        "name": "Security advisory digest",
+        "runtime_display_name": "JARVIS built-in runtime",
+        "status": "active",
+        "template_description": "Reads web sources the server operator already allows and writes a concise digest for the owner's inbox.",
+        "template_id": "research_digest",
+        "trigger_display": "when you ask, or when you tap its reminder (0 7 * * *, Asia/Kolkata)",
+        "updated_at": "2026-10-02T01:30:00Z"
+      },
+      {
+        "agent_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a002",
+        "budget": {
+          "per_month": 0.0,
+          "per_run": 0.0
+        },
+        "can": [
+          "read the web from approved sites"
+        ],
+        "cannot": [
+          "write files",
+          "send messages",
+          "control devices"
+        ],
+        "created_at": "2026-10-02T01:30:00Z",
+        "current_version": 2,
+        "last_run": null,
+        "model_profile_display_name": "General agent",
+        "name": "Weekly reading list",
+        "runtime_display_name": "JARVIS built-in runtime",
+        "status": "paused",
+        "template_description": "Reads web sources the server operator already allows and writes a concise digest for the owner's inbox.",
+        "template_id": "research_digest",
+        "trigger_display": "when you ask",
+        "updated_at": "2026-10-02T01:30:00Z"
+      }
+    ]
+  },
+  "run_completed": {
+    "agent_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+    "cost_total": 0.0,
+    "failure_code": null,
+    "finished_at": "2026-10-02T01:30:00Z",
+    "inbox_item_id": null,
+    "kind": "reminder_tap",
+    "run_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000c001",
+    "started_at": "2026-10-02T01:30:00Z",
+    "status": "completed",
+    "task": {
+      "active_capabilities": [],
+      "break_glass_active": false,
+      "counters": {
+        "iterations": 2,
+        "model_calls": 2,
+        "tool_calls": 1,
+        "worker_switches": 0
+      },
+      "failure": null,
+      "mode": "execute",
+      "notes": [],
+      "pending": null,
+      "response": "Two critical advisories this morning.",
+      "status": "completed",
+      "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000f101",
+      "unresolved": false,
+      "waiting_for": null
+    },
+    "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000f101",
+    "version": 2
+  },
+  "run_refused": {
+    "error": {
+      "code": "conflict",
+      "details": {
+        "reason": "paused"
+      },
+      "message": "this agent is not active",
+      "request_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000f001",
+      "retryable": false
+    }
+  },
+  "run_tap_request": {
+    "reminder_delivery_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000e001"
+  },
+  "run_waiting": {
+    "agent_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001",
+    "cost_total": 0.0,
+    "failure_code": null,
+    "finished_at": null,
+    "inbox_item_id": null,
+    "kind": "reminder_tap",
+    "run_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000c001",
+    "started_at": "2026-10-02T01:30:00Z",
+    "status": "waiting",
+    "task": {
+      "active_capabilities": [],
+      "break_glass_active": false,
+      "counters": {
+        "iterations": 1,
+        "model_calls": 1,
+        "tool_calls": 0,
+        "worker_switches": 0
+      },
+      "failure": null,
+      "mode": "execute",
+      "notes": [],
+      "pending": {
+        "arguments": {},
+        "capability": "file.read",
+        "confirmation_token": "ct_sample_token_not_real",
+        "expires_at": "2026-10-02T01:30:00Z",
+        "kind": "tool_operation",
+        "operation": "list_directory",
+        "requires_step_up": false,
+        "resource_ref": null,
+        "resource_scope": {
+          "path_prefix": "reports"
+        },
+        "risk_category": "low_read",
+        "tool_id": "files.read"
+      },
+      "response": null,
+      "status": "awaiting_confirmation",
+      "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000f101",
+      "unresolved": false,
+      "waiting_for": null
+    },
+    "task_id": "6f1c2d3e-4a5b-4c6d-8e7f-00000000f101",
+    "version": 2
+  }
+}

@@ -167,8 +167,9 @@ class DeviceChannelTest {
             setOf("type", "access_token", "device_proof", "mapping_version", "client_version", "features"),
             hello.keys,
         )
-        // docs/22 §2: the client declares that it understands reminder frames.
-        assertEquals("[\"reminders\"]", hello.getValue("features").toString())
+        // docs/22 §2 / docs/29 §17.1: the client declares that it understands
+        // reminder frames, and the agent id an agent's reminder may carry.
+        assertEquals("[\"reminders\",\"agent_reminders\"]", hello.getValue("features").toString())
         assertEquals("1-0123456789abcdef", hello.getValue("mapping_version").jsonPrimitive.content)
         // Nothing about the user, graph, or capabilities is ever asserted by the device.
         assertTrue(hello.keys.none { it in setOf("user_id", "graph_id", "capabilities") })

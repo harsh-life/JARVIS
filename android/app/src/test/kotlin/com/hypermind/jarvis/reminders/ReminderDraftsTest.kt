@@ -67,4 +67,40 @@ class ReminderDraftsTest {
     fun `an unknown delivery id yields no draft`() {
         assertNull(drafts.lookup("forged-by-another-app"))
     }
+
+    @Test
+    fun `an agent reminder's agent is recorded under its delivery id, and wiped with it`() {
+        val inbox = ReminderInbox(deviceId = { "device-a" }, notifier = {}, drafts = drafts)
+        inbox.receive(reminder("r-1").copy(agentId = AGENT))
+        assertEquals(AGENT, drafts.agentFor("r-1"))
+        inbox.receive(reminder("r-2"))
+        assertNull(drafts.agentFor("r-2"))
+        drafts.wipe()
+        assertNull(drafts.agentFor("r-1"))
+        assertNull(drafts.lookup("r-1"))
+    }
+
+    @Test
+    fun `a run offer exists only for an agent reminder this phone received`() {
+        val inbox = ReminderInbox(deviceId = { "device-a" }, notifier = {}, drafts = drafts)
+        inbox.receive(reminder("r-1").copy(agentId = AGENT, taskReason = "Run agent: Digest"))
+        val offer = requireNotNull(RunOffer.of("r-1", drafts))
+        assertEquals(Triple("r-1", AGENT, "Run agent: Digest"), Triple(offer.deliveryId, offer.agentId, offer.text))
+        inbox.receive(reminder("r-2"))
+        assertNull(RunOffer.of("r-2", drafts)) // a plain reminder offers no run
+        assertNull(RunOffer.of("forged-by-another-app", drafts))
+        assertFalse("Digest" in offer.toString())
+    }
+
+    @Test
+    fun `the run offer's intent carries only the delivery id`() {
+        val intent = AndroidReminderNotifier.runIntent(context, "r-9")
+        assertEquals("r-9", intent.getStringExtra(MainActivity.EXTRA_REMINDER_RUN))
+        assertEquals(setOf(MainActivity.EXTRA_REMINDER_RUN), intent.extras?.keySet().orEmpty())
+        assertEquals(MainActivity::class.java.name, intent.component?.className)
+    }
+
+    private companion object {
+        const val AGENT = "6f1c2d3e-4a5b-4c6d-8e7f-00000000a001"
+    }
 }

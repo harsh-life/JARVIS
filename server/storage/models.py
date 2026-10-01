@@ -1045,7 +1045,8 @@ class AgentCompilePreviewRow(Base):
 class AgentRunRow(Base):
     """docs/29 §22.1 — one run of an agent: which version (and hash) it ran,
     the ordinary task it ran as, and how it ended. A run is always the present
-    owner's on-demand task in Phase 2 (`kind = on_demand`)."""
+    owner's task: on demand (Phase 2), or tapped from one of the agent's
+    reminders on the device that received it (Phase 4, `reminder_tap`)."""
 
     __tablename__ = "agent_runs"
 
@@ -1063,9 +1064,13 @@ class AgentRunRow(Base):
     cost_total: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # docs/29 §17.1 (Phase 4): the reminder delivery a `reminder_tap` run was
+    # tapped from — unique, so one tap is one run. A reference, not a key.
+    reminder_delivery_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
     __table_args__ = (
-        CheckConstraint("kind IN ('on_demand')", name="ck_agent_runs_kind"),
+        CheckConstraint("kind IN ('on_demand','reminder_tap')", name="ck_agent_runs_kind"),
+        Index("uq_agent_runs_reminder_delivery", "reminder_delivery_id", unique=True),
         CheckConstraint(
             "status IN ('queued','running','waiting','completed','failed','cancelled')", name="ck_agent_runs_status"
         ),

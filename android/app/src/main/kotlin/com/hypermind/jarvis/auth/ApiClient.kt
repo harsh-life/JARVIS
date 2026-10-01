@@ -388,6 +388,9 @@ class ApiClient(
                 ).build(),
         )
 
+    /** The owner's agents (docs/29 §23.2): list, and the owner's own "Run". */
+    val agents: AgentsApi get() = AgentsApi(http, ::api)
+
     private fun raw(
         request: Request,
         client: OkHttpClient = http,

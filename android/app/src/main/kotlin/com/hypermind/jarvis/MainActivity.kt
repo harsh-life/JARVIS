@@ -45,6 +45,7 @@ import com.hypermind.jarvis.auth.ApiClient
 import com.hypermind.jarvis.auth.BiometricPresence
 import com.hypermind.jarvis.channel.ChannelService
 import com.hypermind.jarvis.channel.ChannelState
+import com.hypermind.jarvis.contract.AgentList
 import com.hypermind.jarvis.contract.MappingState
 import com.hypermind.jarvis.contract.VoiceConfigView
 import com.hypermind.jarvis.contract.VoicePlacement
@@ -54,12 +55,15 @@ import com.hypermind.jarvis.permissions.GridSync
 import com.hypermind.jarvis.presentation.PresentationText
 import com.hypermind.jarvis.presentation.VoiceActivity
 import com.hypermind.jarvis.push.PushRegistrar
+import com.hypermind.jarvis.reminders.RunOffer
 import com.hypermind.jarvis.tasks.TaskTracker
+import com.hypermind.jarvis.ui.AgentsPanel
 import com.hypermind.jarvis.ui.AppGrid
 import com.hypermind.jarvis.ui.DeviceStatusPanel
 import com.hypermind.jarvis.ui.GridRows
 import com.hypermind.jarvis.ui.InstalledApps
 import com.hypermind.jarvis.ui.PanelContent
+import com.hypermind.jarvis.ui.RunOfferCard
 import com.hypermind.jarvis.ui.SecureTouch
 import com.hypermind.jarvis.ui.StatusHeader
 import com.hypermind.jarvis.ui.TaskPanel
@@ -84,6 +88,7 @@ import java.io.IOException
 class MainActivity : FragmentActivity() {
     private val notice = mutableStateOf<String?>(null)
     private val draft = mutableStateOf<String?>(null)
+    private val runOffer = mutableStateOf<RunOffer?>(null)
     private val requestNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
     // docs/27: push-to-talk on this phone's own recognizer; system TTS for results.
@@ -120,6 +125,7 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         notice.value = intent?.getStringExtra(EXTRA_NOTICE)
         takeDraft(intent)
+        takeRunOffer(intent)
         val app = application as JarvisApplication
         speech = SpeechInput(AndroidOnDeviceRecognizer(this), VoiceConfigView.DEFAULT.maxTranscriptChars) {}
         speaker =
@@ -184,6 +190,7 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         notice.value = intent.getStringExtra(EXTRA_NOTICE)
         takeDraft(intent)
+        takeRunOffer(intent)
     }
 
     /**
@@ -203,6 +210,21 @@ class MainActivity : FragmentActivity() {
         if (text.isBlank()) return
         draft.value = text
         notice.value = getString(R.string.reminder_draft_notice)
+    }
+
+    /**
+     * docs/29 §17.1: "Run agent" on an agent's reminder opens the app on an
+     * offer — nothing runs until the user presses Run. As for drafts, the
+     * intent names only a delivery id; the agent and the words come from this
+     * app's own record of reminders it received.
+     */
+    private fun takeRunOffer(intent: Intent?) {
+        val deliveryId = intent?.getStringExtra(EXTRA_REMINDER_RUN) ?: return
+        val app = application as JarvisApplication
+        if (app.mapping !is MappingState.Valid) return
+        val offer = RunOffer.of(deliveryId, app.graph.reminderDrafts) ?: return
+        runOffer.value = offer
+        notice.value = getString(R.string.reminder_run_notice)
     }
 
     @Composable
@@ -258,6 +280,7 @@ class MainActivity : FragmentActivity() {
         }
         when (tab) {
             TAB_TASKS -> TaskSurface(app)
+            TAB_AGENTS -> AgentsSurface(app) { tab = TAB_TASKS }
             TAB_PHONE -> {
                 Text("Server: ${graph.store.serverUrl}", style = MaterialTheme.typography.bodySmall)
                 when (state) {
@@ -284,6 +307,41 @@ class MainActivity : FragmentActivity() {
                 RemovePhone(app) { enrolled = false }
             }
         }
+    }
+
+    /** docs/29 (Phase 4): the owner's agents; Run sends the owner's own request, then shows it on Tasks. */
+    @Composable
+    private fun AgentsSurface(
+        app: JarvisApplication,
+        onStarted: () -> Unit,
+    ) {
+        val graph = app.graph
+        val scope = rememberCoroutineScope()
+        val snapshot by graph.taskTracker.snapshot.collectAsState()
+        val busy by graph.taskTracker.busy.collectAsState()
+        var list by remember { mutableStateOf<AgentList?>(null) }
+        var version by remember { mutableStateOf(0) }
+        LaunchedEffect(version) {
+            list =
+                withContext(Dispatchers.IO) {
+                    try {
+                        graph.api().agents.listAgents(graph.sessions.accessToken().first)
+                    } catch (ignored: IOException) {
+                        AgentList.Failed("unreachable")
+                    } catch (ignored: com.hypermind.jarvis.auth.EnrollmentLost) {
+                        AgentList.Failed("signed_out")
+                    }
+                }
+        }
+        AgentsPanel(
+            list = list,
+            canRun = !busy && TaskTracker.terminal(snapshot),
+            onRun = { agentId -> if (graph.taskTracker.runAgent(agentId, reminderDeliveryId = null)) onStarted() },
+            onRefresh = {
+                list = null
+                scope.launch { version++ }
+            },
+        )
     }
 
     /** "Remove this phone": revoke server-side (best effort) and wipe everything here. */
@@ -357,6 +415,14 @@ class MainActivity : FragmentActivity() {
                 subtitle = getString(R.string.step_up_subtitle),
                 cancel = getString(R.string.step_up_cancel),
             )
+        runOffer.value?.let { offer ->
+            RunOfferCard(
+                offer = offer,
+                canRun = !busy && TaskTracker.terminal(snapshot),
+                onRun = { if (graph.taskTracker.runAgent(offer.agentId, offer.deliveryId)) runOffer.value = null },
+                onDismiss = { runOffer.value = null },
+            )
+        }
         TaskPanel(
             state = presentation,
             snapshot = snapshot,
@@ -515,12 +581,14 @@ class MainActivity : FragmentActivity() {
     }
 
     companion object {
-        private val TABS = listOf("Tasks", "This phone", "App permissions", "Settings")
+        private val TABS = listOf("Tasks", "Agents", "This phone", "App permissions", "Settings")
         private const val TAB_TASKS = 0
-        private const val TAB_PHONE = 1
-        private const val TAB_PERMISSIONS = 2
+        private const val TAB_AGENTS = 1
+        private const val TAB_PHONE = 2
+        private const val TAB_PERMISSIONS = 3
         const val EXTRA_NOTICE = "notice"
         const val EXTRA_REMINDER_DELIVERY = "reminder_delivery"
+        const val EXTRA_REMINDER_RUN = "reminder_run"
         private const val MAX_DRAFT_CHARS = 8000
     }
 }

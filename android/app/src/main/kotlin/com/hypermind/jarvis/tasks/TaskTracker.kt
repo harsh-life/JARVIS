@@ -37,6 +37,10 @@ import java.util.UUID
  *   confirmation with the server-issued token, step-up first when required.
  * * Only the current task's id is kept across process death ([TaskMemory]),
  *   so the phone can ask the server about it again — never its content.
+ * * An agent run (docs/29 §7.4, §17.1) is the owner's "Run", shown as the
+ *   ordinary task it runs as. A run tapped from a reminder that got no answer
+ *   may be asked for again unchanged (the server makes the same tap one run);
+ *   a run on demand never is — a lost answer may already have started one.
  */
 class TaskTracker(
     private val tasks: TaskOperations,
@@ -53,6 +57,7 @@ class TaskTracker(
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
     private var unanswered: Pair<String, String>? = null // (input, idempotency key)
+    private var unansweredTap: Pair<String, String>? = null // (agent id, reminder delivery id)
     private var poller: Job? = null
 
     @Synchronized
@@ -63,18 +68,47 @@ class TaskTracker(
     fun submit(input: String): Boolean {
         if (input.isBlank() || !canSubmit()) return false
         val key = UUID.randomUUID().toString()
+        unansweredTap = null
         unanswered = input to key
         send(input, key)
         return true
     }
 
-    /** Send the unanswered submission again, unchanged (same key: never run twice). */
+    /** Run one of the owner's agents. False (nothing sent) when a task is already in flight or live. */
+    @Synchronized
+    fun runAgent(
+        agentId: String,
+        reminderDeliveryId: String?,
+    ): Boolean {
+        if (!canSubmit()) return false
+        unanswered = null
+        unansweredTap = reminderDeliveryId?.let { agentId to it }
+        sendRun(agentId, reminderDeliveryId)
+        return true
+    }
+
+    /** Send the unanswered submission (or reminder tap) again, unchanged: never run twice. */
     @Synchronized
     fun retry(): Boolean {
-        val (input, key) = unanswered ?: return false
         if (_busy.value || _snapshot.value != TaskSnapshot.Unreachable) return false
+        unansweredTap?.let { (agentId, deliveryId) ->
+            sendRun(agentId, deliveryId)
+            return true
+        }
+        val (input, key) = unanswered ?: return false
         send(input, key)
         return true
+    }
+
+    private fun sendRun(
+        agentId: String,
+        reminderDeliveryId: String?,
+    ) {
+        _busy.value = true
+        _snapshot.value = TaskSnapshot.InFlight
+        scope.launch {
+            settle(tasks.runAgent(agentId, reminderDeliveryId), fromSubmit = true, previous = TaskSnapshot.Idle)
+        }
     }
 
     private fun send(
@@ -122,6 +156,7 @@ class TaskTracker(
     fun dismiss(): Boolean {
         if (_busy.value || !(terminal(_snapshot.value) || _snapshot.value == TaskSnapshot.Unreachable)) return false
         unanswered = null
+        unansweredTap = null
         memory.taskId = null
         _snapshot.value = TaskSnapshot.Idle
         return true
@@ -139,6 +174,7 @@ class TaskTracker(
     fun wipe() {
         poller?.cancel()
         unanswered = null
+        unansweredTap = null
         memory.taskId = null
         _busy.value = false
         _snapshot.value = TaskSnapshot.Idle
@@ -188,6 +224,7 @@ class TaskTracker(
 
     private fun show(view: TaskView) {
         unanswered = null
+        unansweredTap = null
         if (view is TaskView.Failed && view.code == "not_found") {
             memory.taskId = null
             _snapshot.value = TaskSnapshot.Idle
