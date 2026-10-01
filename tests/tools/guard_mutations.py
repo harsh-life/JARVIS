@@ -562,6 +562,24 @@ MUTANTS: tuple[Mutant, ...] = (
            "        definition, spec = await self._factory.service.load(session, agent_id)\n"
            "        service = self._factory.service\n        port = _PresentUserRun(",
            (*PY, "tests/agents/test_attribution_export.py")),
+    Mutant("M-AG67", "Agent run: inside the envelope an activation needs no owner grant (envelope treated as a grant)",
+           "server/agent/runtime.py",
+           "            if await env.security.holds_standing_grant(\n",
+           "            if state.agent is not None or await env.security.holds_standing_grant(\n",
+           (*PY, "tests/agents/test_envelope_gate.py", "tests/agents/test_model_routing_runs.py")),
+    Mutant("M-AG68", "Agent run: an authorization decision is cached and reused (revocation no longer applies)",
+           "server/agent/runtime.py",
+           "        verdict = await env.security.authorize_action(request)\n",
+           "        _cache = state.__dict__.setdefault(\"_authz_cache\", {})\n"
+           "        _key = (handle.required_capability, call.operation)\n"
+           "        verdict = _cache.get(_key) or await env.security.authorize_action(request)\n"
+           "        _cache[_key] = verdict\n",
+           (*PY, "tests/agents/test_envelope_gate.py", "tests/agents/test_model_routing_runs.py")),
+    Mutant("M-AG69", "Envelope gate: an operation above the template's risk ceiling passes",
+           "server/agent/envelope.py",
+           "    if risk_severity(tier) > risk_severity(envelope.risk_ceiling):\n",
+           "    if False:\n",
+           (*PY, "tests/agents/test_future_interfaces.py", "tests/agents/test_envelope_gate.py")),
     Mutant("M-AG3", "Agent selector: a runtime the operator did not enable can be selected",
            "server/agents/selector.py",
            "        if not runtime.enabled:\n",

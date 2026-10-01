@@ -275,7 +275,7 @@ and the Judge's control layer. No browser UI ships (OD-DASH-2).
 The owner decisions these builds leave open — OD-JDG-1..4, OD-DASH-1/2 — are
 listed in `docs/DECISION_REGISTER.md` §2G/§3; none is ratified by being built.
 
-**Agent Factory, Phase 1** (`docs/29`, `[PROPOSAL — NOT CANONICAL UNTIL
+**Agent Factory, Phases 1 and 2** (`docs/29`, `[PROPOSAL — NOT CANONICAL UNTIL
 RATIFIED]`; off by default, `agents.enabled: false`). An ordinary user task can
 turn a repeated goal into an owner-private agent *definition*: the worker
 writes a strict `AgentDraft` (intent only — no owner, graph, capability, tier,
@@ -285,10 +285,28 @@ immutable, hashed spec whose envelope is only a *ceiling*, and the owner
 approves the deterministically rendered card (`agent.define.create` is
 `consequential`). Definitions are listed, read, updated as new versions and
 deleted through `agent.*` tools or `/api/v1/agents`, all decided by the
-authorization engine. **No agent runs yet** (Phase 2): the envelope gate,
-runtime-provider Protocol and model-as-tool routing are declared and tested
-but not wired. Unattended execution, external runtimes, MCP, Letta and Darwin
-are not built. Decisions: `docs/DECISION_REGISTER.md` §2J (none ratified).
+authorization engine. **Phase 2 runs an agent on demand, for its present
+owner only** (`POST /api/v1/agents/{id}/runs`, empty body). The run is an
+ordinary task of that owner, run by the native runtime provider in the spec's
+mode, under the spec's bounds and budget. Every action goes through the
+envelope gate (a ceiling, never a grant), then activation, the one engine and
+confirmation. The definition and run are re-validated, fresh, at every step and
+every tool call, so a delete, pause, stop, new version, revoked grant or lost
+graph membership stops the run. Other Phase 2 pieces:
+
+- the owner can stop a run and pause an agent (never confirmed), and resume it
+  (re-checked and confirmed);
+- an agent may ask for a model by role (`agent.model`: JARVIS picks a
+  permitted, budgeted model tool, and the agent never sees a key);
+- an agent has its own bounded, gated notebook, which is never Mem0;
+- each result goes to the owner's inbox as plain bounded text;
+- every model and tool call is attributed to its run (`agent_run_usage`) and
+  counts against a monthly budget;
+- the owner can export the agent, with no secret in the export.
+
+Agent output never becomes memory. Unattended or scheduled execution, external
+runtimes, MCP, Letta, child agents and Darwin are not built. Decisions:
+`docs/DECISION_REGISTER.md` §2J (none ratified).
 
 **Still not built** (each is a later, separate subsystem; nothing in the
 runtime depends on it): **Darwin**, a real **IntelligenceProvider** (only
