@@ -27,7 +27,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Protocol, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +43,9 @@ from shared.schemas.agent import (
 )
 from shared.schemas.authorization import ActionBinding, Operation, Principal, ResourceType
 from shared.schemas.enums import AuditResult, PermissionDecisionValue, RiskCategory, UsageKind
+
+if TYPE_CHECKING:
+    from server.agent.agent_run import AgentRunPort
 
 
 # ── authorization (04 via the composition root) ────────────────────────────
@@ -289,8 +292,13 @@ class ResolvedModels:
 
 class ModelResolverPort(Protocol):
     async def resolve(
-        self, *, principal: Principal, graph_id: uuid.UUID | None
-    ) -> ResolvedModels: ...
+        self, *, principal: Principal, graph_id: uuid.UUID | None, agent_model_ref: str | None = None
+    ) -> ResolvedModels:
+        """`agent_model_ref` (docs/29 §7.4, only for an agent run): the
+        configured model entry its selected profile references. The resolver
+        builds that entry's adapter through the same key path as any worker;
+        the run never names a provider, an endpoint or a key itself."""
+        ...
 
 
 # ── memory (11) ────────────────────────────────────────────────────────────
@@ -471,6 +479,10 @@ class TaskEnvironment:
     # so far becomes durable; the next write opens a new transaction. `None`
     # (a test environment) keeps the one-transaction behaviour.
     release_store: Callable[[], Awaitable[None]] | None = None
+    # docs/29 Phase 2: what an agent run needs from the Agent Factory (per-step
+    # re-validation, attribution, inbox, notebook, model routing). `None`
+    # unless `agents.enabled`; an agent run without it fails closed.
+    agent_runs: "AgentRunPort | None" = None
 
 
 __all__: Sequence[str] = [

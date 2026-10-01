@@ -151,7 +151,33 @@ class ConfiguredModelResolver:
                 return row, SecretRequester.server(graph_id=graph_id)
         return None
 
-    async def resolve(self, *, principal: Principal, graph_id: uuid.UUID | None) -> ResolvedModels:
+    def _agent_entry(self, model_ref: str):
+        """docs/29 §6.2: a model profile references a configured entry by
+        name. Only the server configuration's own entries can be named."""
+
+        if model_ref == "agent.primary":
+            return self._config.agent
+        if model_ref == "agent.fallback":
+            return self._config.agent.fallback
+        prefix = "models_as_tools."
+        if model_ref.startswith(prefix):
+            wanted = model_ref[len(prefix):]
+            return next((e for e in self._config.models_as_tools if e.id == wanted), None)
+        return None
+
+    async def resolve(self, *, principal: Principal, graph_id: uuid.UUID | None,
+                      agent_model_ref: str | None = None) -> ResolvedModels:
+        if agent_model_ref is not None:
+            # docs/29 §7.4: an agent run's worker is its selected profile's
+            # configured entry — built, and its key resolved, exactly as any
+            # server-configured worker (06 §1). No other chain is added: if that
+            # model is unavailable the run fails `model_unavailable`.
+            entry = self._agent_entry(agent_model_ref)
+            if entry is None:
+                raise ModelUnavailable("the agent's model is not configured")
+            return ResolvedModels(chain=(
+                self._build(spec_from_entry(entry), entry.secret_ref, SecretRequester.server()),
+            ))
         fallbacks = tuple(
             self._build(spec_from_entry(entry), entry.secret_ref, SecretRequester.server())
             for entry in self._operator_fallbacks(self._config)

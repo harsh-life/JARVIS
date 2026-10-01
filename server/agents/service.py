@@ -42,9 +42,18 @@ from server.agents.compiler import (
 )
 from server.agents.registry import AgentRegistries
 from server.agents.rendering import budget_line, can_lines, cannot_lines, spec_view, trigger_line
-from server.storage.models import AgentCompilePreviewRow, AgentDefinitionRow, AgentSpecVersionRow
+from server.storage.models import (
+    AgentCompilePreviewRow,
+    AgentDefinitionRow,
+    AgentRunRow,
+    AgentSpecVersionRow,
+    AgentTask,
+)
+from shared.schemas.agent import AgentFailureCode, AgentResult, AgentTaskStatus
 from shared.schemas.agent_factory import (
     AgentDraft,
+    AgentRunStatus,
+    AgentRunView,
     AgentStatus,
     AgentView,
     CompiledAgentSpec,
@@ -52,6 +61,13 @@ from shared.schemas.agent_factory import (
     SpecBudget,
 )
 from shared.schemas.enums import Visibility
+
+_RUN_STATUS = {
+    AgentTaskStatus.COMPLETED: AgentRunStatus.COMPLETED,
+    AgentTaskStatus.FAILED: AgentRunStatus.FAILED,
+    AgentTaskStatus.CANCELLED: AgentRunStatus.CANCELLED,
+}
+_TERMINAL_TASK = frozenset(_RUN_STATUS)
 
 # Statuses that still count against the per-owner quota and can be updated.
 _LIVE = (AgentStatus.ACTIVE.value, AgentStatus.PAUSED.value, AgentStatus.NEEDS_REAPPROVAL.value)
@@ -227,8 +243,10 @@ class AgentDefinitionService:
 
     # ── loading ─────────────────────────────────────────────────────────
 
-    async def _current_spec(self, session: AsyncSession, definition: AgentDefinitionRow) -> CompiledAgentSpec | None:
-        row = await session.get(AgentSpecVersionRow, (definition.agent_id, definition.current_version))
+    async def _current_spec(self, session: AsyncSession, definition: AgentDefinitionRow,
+                            fresh: bool = False) -> CompiledAgentSpec | None:
+        row = await session.get(AgentSpecVersionRow, (definition.agent_id, definition.current_version),
+                                populate_existing=fresh)
         if row is None:
             return None
         try:
@@ -246,18 +264,23 @@ class AgentDefinitionService:
         return spec if intact else None
 
     async def load(
-        self, session: AsyncSession, agent_id: uuid.UUID
+        self, session: AsyncSession, agent_id: uuid.UUID, *, fresh: bool = False
     ) -> tuple[AgentDefinitionRow, CompiledAgentSpec | None] | None:
         """The head row and its verified current spec; `None` for an absent or
         deleted agent. A revoked agent, or one whose spec fails verification
-        (which revokes it now), comes back with no spec."""
+        (which revokes it now), comes back with no spec.
 
-        definition = await session.get(AgentDefinitionRow, agent_id)
+        `fresh` re-reads both rows from the store even if this session holds
+        them (sessions do not expire on commit): what a running agent's
+        per-step re-validation needs, so a change made by any other request —
+        a delete, a pause, a new version — is seen at the next step."""
+
+        definition = await session.get(AgentDefinitionRow, agent_id, populate_existing=fresh)
         if definition is None or definition.status == AgentStatus.DELETED.value:
             return None
         if definition.status == AgentStatus.REVOKED.value:
             return definition, None
-        spec = await self._current_spec(session, definition)
+        spec = await self._current_spec(session, definition, fresh)
         if spec is None:
             definition.status = AgentStatus.REVOKED.value
             definition.status_reason = "spec_tampered"
@@ -294,6 +317,112 @@ class AgentDefinitionService:
         definition.deleted_at = now
         definition.updated_at = now
         await session.flush()
+
+    # ── runs (docs/29 §14.2, §22.1) ─────────────────────────────────────
+
+    async def mark_needs_reapproval(self, session: AsyncSession, definition: AgentDefinitionRow,
+                                    reason: str) -> None:
+        """docs/29 §5.3: the agent's template (or its model profile) moved on;
+        it runs again only after the owner re-approves a recompile."""
+
+        definition.status = AgentStatus.NEEDS_REAPPROVAL.value
+        definition.status_reason = reason
+        definition.updated_at = self._clock()
+        await session.flush()
+
+    async def check_run(self, session: AsyncSession, *, run_id: uuid.UUID, agent_id: uuid.UUID, version: int,
+                        spec_hash: str) -> AgentFailureCode | None:
+        """May a run bound to (run, agent, version, hash) take its next step?
+        Everything is read fresh from the store: `None`, or why not."""
+
+        run = await session.get(AgentRunRow, run_id, populate_existing=True)
+        if run is None or run.agent_id != agent_id or run.finished_at is not None:
+            return AgentFailureCode.AGENT_UNAVAILABLE
+        loaded = await self.load(session, agent_id, fresh=True)
+        if loaded is None:
+            return AgentFailureCode.AGENT_UNAVAILABLE
+        definition, spec = loaded
+        if spec is None or definition.status != AgentStatus.ACTIVE.value:
+            return AgentFailureCode.AGENT_UNAVAILABLE
+        if definition.owner_user_id != run.owner_user_id:
+            return AgentFailureCode.AGENT_UNAVAILABLE
+        if definition.current_version != version or spec.spec_hash != spec_hash:
+            return AgentFailureCode.SPEC_CHANGED
+        return None
+
+    async def create_run(self, session: AsyncSession, *, spec: CompiledAgentSpec,
+                         run_id: uuid.UUID) -> AgentRunRow:
+        run = AgentRunRow(run_id=run_id, agent_id=spec.agent_id, owner_user_id=spec.owner_user_id,
+                          version=spec.version, spec_hash=spec.spec_hash, kind="on_demand",
+                          status=AgentRunStatus.QUEUED.value, cost_total=0.0, started_at=self._clock())
+        session.add(run)
+        await session.flush()
+        return run
+
+    async def run_started(self, session: AsyncSession, run_id: uuid.UUID, *, task_id: uuid.UUID) -> AgentRunRow | None:
+        run = await session.get(AgentRunRow, run_id)
+        if run is not None:
+            run.task_id = task_id
+            run.status = AgentRunStatus.RUNNING.value
+            await session.flush()
+        return run
+
+    async def run_waiting(self, session: AsyncSession, run_id: uuid.UUID) -> None:
+        run = await session.get(AgentRunRow, run_id)
+        if run is not None and run.finished_at is None:
+            run.status = AgentRunStatus.WAITING.value
+            await session.flush()
+
+    async def run_finished(self, session: AsyncSession, run_id: uuid.UUID, *, status: AgentTaskStatus,
+                           failure: str | None, cost: float) -> AgentRunRow | None:
+        run = await session.get(AgentRunRow, run_id)
+        if run is None or run.finished_at is not None:
+            return run
+        run.status = _RUN_STATUS.get(status, AgentRunStatus.FAILED).value
+        run.failure_code = failure
+        run.cost_total = max(0.0, float(cost))
+        run.finished_at = self._clock()
+        await session.flush()
+        return run
+
+    async def _synced(self, session: AsyncSession, run: AgentRunRow) -> AgentRunRow:
+        """A run whose task ended without its live state (a restart, a cancel
+        from the row) is closed from that task's outcome when read."""
+
+        if run.finished_at is not None or run.task_id is None:
+            return run
+        task = await session.get(AgentTask, run.task_id, populate_existing=True)
+        if task is not None and AgentTaskStatus(task.status) in _TERMINAL_TASK:
+            await self.run_finished(session, run.run_id, status=AgentTaskStatus(task.status),
+                                    failure=task.failure_code, cost=run.cost_total)
+        return run
+
+    async def get_run(self, session: AsyncSession, run_id: uuid.UUID) -> AgentRunRow | None:
+        run = await session.get(AgentRunRow, run_id, populate_existing=True)
+        return await self._synced(session, run) if run is not None else None
+
+    async def list_runs(self, session: AsyncSession, *, agent_id: uuid.UUID, owner_user_id: uuid.UUID,
+                        limit: int = 50) -> list[AgentRunRow]:
+        rows = (await session.execute(
+            select(AgentRunRow).where(AgentRunRow.agent_id == agent_id, AgentRunRow.owner_user_id == owner_user_id)
+            .order_by(AgentRunRow.started_at.desc(), AgentRunRow.run_id).limit(limit)
+        )).scalars().all()
+        return [await self._synced(session, r) for r in rows]
+
+    async def live_runs(self, session: AsyncSession, agent_id: uuid.UUID) -> list[AgentRunRow]:
+        rows = (await session.execute(
+            select(AgentRunRow).where(AgentRunRow.agent_id == agent_id, AgentRunRow.finished_at.is_(None))
+        )).scalars().all()
+        return list(rows)
+
+    @staticmethod
+    def run_view(run: AgentRunRow, *, task: AgentResult | None = None) -> AgentRunView:
+        return AgentRunView(
+            run_id=run.run_id, agent_id=run.agent_id, version=run.version, status=AgentRunStatus(run.status),
+            failure_code=run.failure_code, task_id=run.task_id, started_at=_as_utc(run.started_at),
+            finished_at=_as_utc(run.finished_at) if run.finished_at else None, cost_total=run.cost_total,
+            task=task,
+        )
 
     # ── views ───────────────────────────────────────────────────────────
 

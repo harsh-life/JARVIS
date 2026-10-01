@@ -22,6 +22,8 @@ from server.security.audit import AuditLogger
 from shared.schemas.agent_factory import (
     AgentDetail,
     AgentListResponse,
+    AgentRunListResponse,
+    AgentRunView,
     AgentView,
     CompiledAgentSpecView,
     CompileOutcome,
@@ -60,6 +62,22 @@ class AgentFactoryPort(Protocol):
         self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
         confirmation_token: str | None, audit: AuditLogger,
     ) -> None: ...
+
+    # Phase 2: on-demand runs by the present owner (docs/29 §7.4). The run's
+    # agent is the path's; its owner, graph, version, hash and input are not
+    # the request's to name.
+    async def run(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+    ) -> AgentRunView: ...
+
+    async def list_runs(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+    ) -> AgentRunListResponse: ...
+
+    async def get_run(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, run_id: uuid.UUID,
+        audit: AuditLogger,
+    ) -> AgentRunView: ...
 
 
 __all__ = ["AgentFactoryPort"]

@@ -13,6 +13,10 @@ conventions:
   confirmation_required` with a token bound to exactly that preview, and the
   retry with `X-Confirmation-Token` applies it.
 * `DELETE /agents/{id}` likewise needs confirmation.
+* `POST /agents/{id}/runs` (Phase 2) runs the agent now, as an ordinary task
+  of the present owner, in the spec's mode, and answers with the run and its
+  task (`202`: a run paused for confirmation is confirmed like any task). The
+  body is empty: nothing about the run is the request's to name.
 * Another user's agent or preview is `404`, indistinguishable from an absent
   one (04 §7, AGENT-T9).
 
@@ -35,10 +39,13 @@ from server.security.audit import AuditLogger
 from shared.schemas.agent_factory import (
     AgentDetail,
     AgentListResponse,
+    AgentRunListResponse,
+    AgentRunView,
     AgentView,
     CompiledAgentSpecView,
     CompileOutcome,
     CreateAgentRequest,
+    RunAgentRequest,
 )
 from shared.schemas.authorization import Principal
 from shared.schemas.errors import ErrorCode
@@ -145,3 +152,39 @@ async def delete_agent(
     await _factory(request).delete(session, principal=principal, agent_id=agent_id,
                                    confirmation_token=confirmation_token, audit=audit)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/agents/{agent_id}/runs", response_model=AgentRunView, status_code=status.HTTP_202_ACCEPTED)
+async def run_agent(
+    request: Request,
+    agent_id: uuid.UUID,
+    body: RunAgentRequest,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentRunView:
+    return await _factory(request).run(session, principal=principal, agent_id=agent_id, audit=audit)
+
+
+@router.get("/agents/{agent_id}/runs", response_model=AgentRunListResponse)
+async def list_runs(
+    request: Request,
+    agent_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentRunListResponse:
+    return await _factory(request).list_runs(session, principal=principal, agent_id=agent_id, audit=audit)
+
+
+@router.get("/agents/{agent_id}/runs/{run_id}", response_model=AgentRunView)
+async def get_run(
+    request: Request,
+    agent_id: uuid.UUID,
+    run_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentRunView:
+    return await _factory(request).get_run(session, principal=principal, agent_id=agent_id, run_id=run_id,
+                                           audit=audit)

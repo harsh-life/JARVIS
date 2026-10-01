@@ -604,6 +604,7 @@ source_modules = [
     "server.agents.compiler",
     "server.agents.hashing",
     "server.agents.rendering",
+    "server.agents.instructions",
     "server.agents.gateway.model_routing",
 ]
 forbidden_modules = [

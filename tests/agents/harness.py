@@ -60,3 +60,25 @@ def call_json(tool: str, operation: str, args: dict, ref: str | None = None) -> 
     if ref is not None:
         payload["resource_ref"] = ref
     return json.dumps(payload)
+
+
+API = "/api/v1/agents"
+HEADER = "X-Confirmation-Token"
+
+
+async def create_agent(h, actor, *, draft: dict | None = None) -> dict:
+    """Compile and create an agent over HTTP, approving the confirmation."""
+
+    compiled = await h.client.post(f"{API}/compile", json=draft or DRAFT, headers=actor.auth)
+    assert compiled.status_code == 200 and compiled.json()["kind"] == "compiled", compiled.text
+    compile_id = compiled.json()["compile_id"]
+    first = await h.client.post(API, json={"compile_id": compile_id}, headers=actor.auth)
+    assert first.status_code == 403, first.text
+    token = first.json()["error"]["details"]["confirmation_token"]
+    created = await h.client.post(API, json={"compile_id": compile_id}, headers={**actor.auth, HEADER: token})
+    assert created.status_code == 201, created.text
+    return created.json()
+
+
+async def run_agent(h, actor, agent_id: str):
+    return await h.client.post(f"{API}/{agent_id}/runs", json={}, headers=actor.auth)

@@ -1030,3 +1030,35 @@ class AgentCompilePreviewRow(Base):
         Index("ix_agent_compile_previews_owner", "owner_user_id"),
         Index("ix_agent_compile_previews_expires_at", "expires_at"),
     )
+
+
+class AgentRunRow(Base):
+    """docs/29 §22.1 — one run of an agent: which version (and hash) it ran,
+    the ordinary task it ran as, and how it ended. A run is always the present
+    owner's on-demand task in Phase 2 (`kind = on_demand`)."""
+
+    __tablename__ = "agent_runs"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_definitions.agent_id"), nullable=False)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    spec_hash: Mapped[str] = mapped_column(String, nullable=False)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("agent_tasks.task_id"), nullable=True, unique=True
+    )
+    kind: Mapped[str] = mapped_column(String, nullable=False, default="on_demand")
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    cost_total: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("kind IN ('on_demand')", name="ck_agent_runs_kind"),
+        CheckConstraint(
+            "status IN ('queued','running','waiting','completed','failed','cancelled')", name="ck_agent_runs_status"
+        ),
+        Index("ix_agent_runs_agent_started", "agent_id", "started_at"),
+        Index("ix_agent_runs_owner", "owner_user_id"),
+    )

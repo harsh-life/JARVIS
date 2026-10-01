@@ -166,6 +166,11 @@ class AuditAction(str, Enum):
     AGENT_UPDATED = "agent.updated"
     AGENT_DELETED = "agent.deleted"
     AGENT_REFUSED = "agent.refused"
+    # Phase 2 runs: `resource` is `agentrun:<run_id>` plus the task id, a
+    # status or a reason code — never the run's input or its result.
+    AGENT_RUN_STARTED = "agent.run.started"
+    AGENT_RUN_FINISHED = "agent.run.finished"
+    AGENT_RUN_REFUSED = "agent.run.refused"
 
     # ── voice (docs/27). `resource` names a voice event id or a refusal
     # reason — never a transcript, never audio, never synthesized text.

@@ -34,14 +34,17 @@ import json
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Iterator
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any, Iterator, Mapping
 from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.agents.compiler import OwnerContext, parse_draft
+from server.agent.agent_run import AgentRunBinding, RoutedModelCall
+from server.agents.compiler import OwnerContext, parse_draft, revalidation_required
+from server.agents.instructions import assemble_input
+from server.agents.providers.native import NativeRuntimeProvider
 from server.agents.registry import AgentRegistries, ModelEntryFacts, build_registries
 from server.agents.rendering import render_card, spec_view
 from server.agents.service import AgentDefinitionService, PreviewRefused
@@ -60,16 +63,35 @@ from server.net.destinations import hostname_allowed
 from server.scheduler.schedule import parse_schedule
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
-from server.storage.models import AgentCompilePreviewRow, AgentConfiguration, AgentDefinitionRow, AgentTask
+from server.storage.models import (
+    AgentCompilePreviewRow,
+    AgentConfiguration,
+    AgentDefinitionRow,
+    AgentRunRow,
+    AgentTask,
+)
 from server.tools.registry import ToolDefinition
-from shared.schemas.agent import ExecutionPlatform, OperationSpec, ToolInvocation, ToolOutput
+from shared.schemas.agent import (
+    AgentFailureCode,
+    AgentResult,
+    AgentTaskStatus,
+    ExecutionPlatform,
+    OperationSpec,
+    ToolInvocation,
+    ToolOutput,
+)
 from shared.schemas.agent_config import ToolContract
 from shared.schemas.agent_factory import (
     AgentDetail,
     AgentDraft,
     AgentListResponse,
+    AgentRunContext,
+    AgentRunListResponse,
+    AgentRunStatus,
+    AgentRunView,
     AgentStatus,
     AgentView,
+    CancelReason,
     CompiledAgentSpec,
     CompiledAgentSpecView,
     CompileOutcome,
@@ -78,6 +100,9 @@ from shared.schemas.agent_factory import (
 from shared.schemas.authorization import DenialSurface, Operation, Principal, ResourceType
 from shared.schemas.enums import AgentConfigScopeType, AuditActor, AuditResult, RiskCategory, Visibility
 from shared.schemas.errors import ErrorCode
+
+if TYPE_CHECKING:
+    from server.composition.facade import AgentTaskFacade
 
 # ── registries (validated at every startup) ────────────────────────────────
 
@@ -235,6 +260,16 @@ class AgentFactory:
             runtime_max_tool_calls=bounds.max_tool_calls,
             url_allowed=self.url_allowed,
         )
+
+    def run_input(self, spec: CompiledAgentSpec, run_id: uuid.UUID) -> str:
+        """docs/29 §9.7: the run's input, assembled by code from the spec,
+        within the runtime's input limit."""
+
+        return assemble_input(spec, run_id, max_chars=self._config.agent.bounds.max_input_chars)
+
+    def run_deadline(self, spec: CompiledAgentSpec) -> datetime:
+        seconds = min(float(spec.bounds.max_run_seconds), self._config.agent.bounds.wall_clock_timeout_seconds)
+        return datetime.now(timezone.utc) + timedelta(seconds=seconds)
 
     async def compile(self, session: AsyncSession, *, user_id: uuid.UUID, graph_id: uuid.UUID | None,
                       draft: AgentDraft, task_id: uuid.UUID | None,
@@ -528,6 +563,95 @@ def agent_tool_definitions(factory: AgentFactory) -> list[ToolDefinition]:
     ]
 
 
+# ── present-user runs (docs/29 §7.4, Phase 2) ─────────────────────────────
+
+
+class AgentRunCoordinator:
+    """`AgentRunPort` (server/agent/agent_run.py) for one request's store
+    transaction. It decides nothing about authority: `check` only answers
+    whether the definition the run is bound to still exists, is active and is
+    exactly that version and hash — read fresh from the store at every step,
+    never cached — and the rest records what happened."""
+
+    def __init__(self, service: AgentDefinitionService, session: AsyncSession, audit: AuditLogger) -> None:
+        self._service = service
+        self._session = session
+        self._audit_logger = audit
+
+    async def _audit(self, action: AuditAction, run: AgentRunRow | None, resource: str,
+                     result: AuditResult = AuditResult.SUCCESS) -> None:
+        await self._audit_logger.record(actor=AuditActor.AGENT, action=action, resource=resource, result=result,
+                                        user_id=run.owner_user_id if run is not None else None)
+
+    async def started(self, binding: AgentRunBinding, *, task_id: uuid.UUID) -> None:
+        run = await self._service.run_started(self._session, binding.run_id, task_id=task_id)
+        await self._audit(AuditAction.AGENT_RUN_STARTED, run, f"agentrun:{binding.run_id}:task:{task_id}")
+
+    async def check(self, binding: AgentRunBinding) -> AgentFailureCode | None:
+        return await self._service.check_run(self._session, run_id=binding.run_id, agent_id=binding.agent_id,
+                                             version=binding.version, spec_hash=binding.spec_hash)
+
+    async def usage_recorded(self, binding: AgentRunBinding, *, usage_id: uuid.UUID, cost: float) -> None:
+        return None
+
+    async def finished(self, binding: AgentRunBinding, *, task_id: uuid.UUID, status: AgentTaskStatus,
+                       response: str | None, failure: AgentFailureCode | None, cost: float) -> None:
+        run = await self._service.run_finished(self._session, binding.run_id, status=status,
+                                               failure=failure.value if failure else None, cost=cost)
+        suffix = f":{failure.value}" if failure else ""
+        await self._audit(AuditAction.AGENT_RUN_FINISHED, run,
+                          f"agentrun:{binding.run_id}:{status.value}{suffix}",
+                          AuditResult.SUCCESS if status is AgentTaskStatus.COMPLETED else AuditResult.FAILURE)
+
+    async def notebook_get(self, binding: AgentRunBinding, key: str) -> str | None:
+        return None
+
+    async def notebook_put(self, binding: AgentRunBinding, key: str, value: str) -> str | None:
+        return "notebook_unavailable"
+
+    async def route_model(self, binding: AgentRunBinding, arguments: Mapping[str, Any]) -> RoutedModelCall | str:
+        return "model_routing_unavailable"
+
+
+class _PresentUserRun:
+    """`NativeRuntimePort` bound to the request that asked for the run: its
+    authenticated principal, its store transaction and the ordinary task
+    path. The provider hands it only the `AgentRunContext`; the run is then an
+    ordinary task of that principal, in the binding's mode, under its ceiling.
+    There is no other way for a native run to start — no background path."""
+
+    def __init__(self, *, tasks: "AgentTaskFacade", session: AsyncSession, principal: Principal,
+                 audit: AuditLogger, binding: AgentRunBinding) -> None:
+        self._tasks = tasks
+        self._session = session
+        self._principal = principal
+        self._audit = audit
+        self._binding = binding
+        self.result: AgentResult | None = None
+
+    async def start(self, ctx: AgentRunContext) -> AgentRunStatus:
+        binding = self._binding
+        if (ctx.run_id, ctx.agent_id, ctx.version, ctx.spec_hash) != (
+            binding.run_id, binding.agent_id, binding.version, binding.spec_hash
+        ):
+            raise ValueError("the run context does not match its binding")
+        self.result = await self._tasks.submit(self._session, principal=self._principal, user_input=ctx.input_text,
+                                               audit=self._audit, mode=binding.run_mode, agent=binding)
+        return AgentRunStatus.RUNNING
+
+    async def cancel(self, run_id: uuid.UUID, reason: CancelReason) -> None:
+        raise NotImplementedError("run control is not wired to this port")
+
+    async def status_of(self, run_id: uuid.UUID) -> AgentRunStatus:
+        raise NotImplementedError("run status is read from the run record")
+
+    async def purge(self, agent_id: uuid.UUID) -> None:
+        return None
+
+    async def export(self, agent_id: uuid.UUID) -> bytes:
+        return b""
+
+
 # ── the owner's HTTP path (docs/29 §23.2) ──────────────────────────────────
 
 
@@ -545,9 +669,11 @@ _NOT_FOUND = AppError(ErrorCode.NOT_FOUND, "not found")
 class AgentFactoryFacade:
     """`AgentFactoryPort` (server/gateway/agents_port.py)."""
 
-    def __init__(self, *, factory: AgentFactory, core: SecurityCore) -> None:
+    def __init__(self, *, factory: AgentFactory, core: SecurityCore,
+                 tasks: "AgentTaskFacade | None" = None) -> None:
         self._factory = factory
         self._core = core
+        self._tasks = tasks
 
     async def _authorize(self, session: AsyncSession, audit: AuditLogger, request: AccessRequest) -> AuthorizationOutcome:
         return await self._core.engine.authorize(session, request, audit=audit)
@@ -716,11 +842,119 @@ class AgentFactoryFacade:
         await self._audit(audit, principal, AuditAction.AGENT_DELETED, f"agentdefinition:{agent_id}")
 
 
+    # ── runs ────────────────────────────────────────────────────────────
+
+    async def _refuse_run(self, audit: AuditLogger, principal: Principal, agent_id: uuid.UUID, reason: str,
+                          message: str) -> AppError:
+        await self._audit(audit, principal, AuditAction.AGENT_RUN_REFUSED, f"agentdefinition:{agent_id}:{reason}",
+                          AuditResult.BLOCKED)
+        return AppError(ErrorCode.CONFLICT, message, details={"reason": reason})
+
+    async def run(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                  audit: AuditLogger) -> AgentRunView:
+        """docs/29 §7.4 run_now: an on-demand run by the present owner.
+
+        Nothing about the run comes from the request. The engine authorizes
+        the owner on the definition; the stored spec is hash-verified; the
+        definition must be active, in the session's own (live) graph, on its
+        current template, profile and runtime. The run is then an ordinary task
+        of this principal — so every tool call in it still passes activation,
+        the mode ceiling, 04 and confirmation, and the definition is
+        re-validated at every step."""
+
+        if self._tasks is None:
+            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "agent runs are not available",
+                           details={"dependency": "agents"})
+        definition, spec = await self._owned(session, audit, principal, agent_id, Operation.READ)
+        if spec is None:
+            raise await self._refuse_run(audit, principal, agent_id, "agent_revoked",
+                                         "this agent is revoked and cannot run")
+        if definition.status != AgentStatus.ACTIVE.value:
+            raise await self._refuse_run(audit, principal, agent_id, definition.status,
+                                         "this agent is not active")
+        graph_id = principal.active_graph_id
+        if graph_id is not None and not await self._core.graph_repository.is_active_member(
+            session, graph_id=graph_id, user_id=principal.user_id
+        ):
+            raise _NOT_FOUND
+        if spec.graph_id != graph_id:
+            raise await self._refuse_run(audit, principal, agent_id, "graph_mismatch",
+                                         "this agent belongs to another graph than this session's")
+        registries = self._factory.registries
+        if revalidation_required(spec, registries.enabled_templates):
+            await self._factory.service.mark_needs_reapproval(session, definition, "template_changed")
+            raise await self._refuse_run(audit, principal, agent_id, "needs_reapproval",
+                                         "this agent must be recompiled and re-approved")
+        selection = spec.selection
+        profile = registries.model_profiles.get(selection.model_profile_id)
+        owner = await self._factory.owner_context(session, user_id=principal.user_id, graph_id=graph_id)
+        if (profile is None or not profile.profile.enabled
+                or profile.profile.version != selection.model_profile_version
+                or (profile.profile_id not in registries.open_to_all
+                    and profile.profile.model_ref != owner.owner_primary_model_ref)):
+            raise await self._refuse_run(audit, principal, agent_id, "model_profile_unavailable",
+                                         "this agent's model profile is not available to you")
+        runtime = registries.runtimes.get(selection.runtime_id)
+        if runtime is None or not runtime.enabled or selection.runtime_id != "native":
+            raise await self._refuse_run(audit, principal, agent_id, "runtime_unavailable",
+                                         "this agent's runtime is not available")
+        service = self._factory.service
+        run_id = uuid.uuid4()
+        run = await service.create_run(session, spec=spec, run_id=run_id)
+        binding = AgentRunBinding.from_spec(spec, run_id=run_id, model_ref=profile.profile.model_ref,
+                                            budget_per_run=spec.budget.per_run,
+                                            input_text=self._factory.run_input(spec, run_id))
+        provider_port = _PresentUserRun(tasks=self._tasks, session=session, principal=principal, audit=audit,
+                                        binding=binding)
+        provider = NativeRuntimeProvider(provider_port)
+        await provider.provision(spec)
+        try:
+            await provider.start_run(AgentRunContext(
+                run_id=run_id, agent_id=spec.agent_id, version=spec.version, spec_hash=spec.spec_hash,
+                input_text=binding.input_text, deadline=self._factory.run_deadline(spec),
+            ))
+        except AppError:
+            # No task was created (a limit, the supervisor latch): the run
+            # ends here, failed, and says so.
+            await service.run_finished(session, run_id, status=AgentTaskStatus.FAILED,
+                                       failure="not_started", cost=0.0)
+            await session.commit()
+            raise
+        result = provider_port.result
+        if result is not None and result.status is AgentTaskStatus.AWAITING_CONFIRMATION:
+            await service.run_waiting(session, run_id)
+        run = await service.get_run(session, run_id) or run
+        return service.run_view(run, task=result)
+
+    async def _owned_run(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
+                         agent_id: uuid.UUID, run_id: uuid.UUID) -> AgentRunRow:
+        await self._owned(session, audit, principal, agent_id, Operation.READ)
+        run = await self._factory.service.get_run(session, run_id)
+        if run is None or run.agent_id != agent_id or run.owner_user_id != principal.user_id:
+            raise _NOT_FOUND
+        return run
+
+    async def list_runs(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                        audit: AuditLogger) -> AgentRunListResponse:
+        await self._owned(session, audit, principal, agent_id, Operation.READ)
+        service = self._factory.service
+        runs = await service.list_runs(session, agent_id=agent_id, owner_user_id=principal.user_id)
+        return AgentRunListResponse(items=tuple(
+            service.run_view(r) for r in runs if r.owner_user_id == principal.user_id
+        ))
+
+    async def get_run(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                      run_id: uuid.UUID, audit: AuditLogger) -> AgentRunView:
+        run = await self._owned_run(session, audit, principal, agent_id, run_id)
+        return self._factory.service.run_view(run)
+
+
 __all__ = [
     "CURRENT_AGENT_FACTORY_SCOPE",
     "AgentDefinitionLoader",
     "AgentFactory",
     "AgentFactoryFacade",
+    "AgentRunCoordinator",
     "AgentToolAdapter",
     "agent_factory_scope",
     "agent_tool_definitions",

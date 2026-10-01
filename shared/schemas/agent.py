@@ -111,6 +111,13 @@ class AgentFailureCode(str, Enum):
     # come back within the bound (or the wait could not survive a restart).
     PLATFORM_UNAVAILABLE = "platform_unavailable"
     INTERNAL_ERROR = "internal_error"
+    # `[PROPOSED]` docs/29 §25.1 (an `01` enum addition, OD-AF-10): an agent
+    # run stopped because its definition is no longer runnable (deleted,
+    # paused, revoked, needs re-approval), because its current version or hash
+    # changed under it, or because its monthly budget is spent.
+    AGENT_UNAVAILABLE = "agent_unavailable"
+    SPEC_CHANGED = "spec_changed"
+    AGENT_BUDGET_EXHAUSTED = "agent_budget_exhausted"
 
 
 # ── tool invocation (07 §3/§5) ─────────────────────────────────────────────

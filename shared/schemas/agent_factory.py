@@ -42,7 +42,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from shared.schemas.agent import TaskMode
+from shared.schemas.agent import AgentResult, TaskMode
 from shared.schemas.enums import RiskCategory
 
 # ── closed vocabularies (docs/29 §5.4, §6.2, §7.2, §9.3, §14) ──────────────
@@ -704,6 +704,34 @@ class CreateAgentRequest(_Strict):
     compile_id: UUID
 
 
+class RunAgentRequest(_Strict):
+    """`POST /agents/{id}/runs` (docs/29 §23.2): an empty body. The owner, the
+    graph, the agent version, its hash, the runtime and the input all come from
+    the session and the stored spec — a request can name none of them."""
+
+
+class AgentRunView(_Strict):
+    """docs/29 §23.3. `task` is the ordinary task the run is: a paused run is
+    confirmed through `/agent/tasks/{task_id}/confirm` like any task."""
+
+    run_id: UUID
+    agent_id: UUID
+    version: int
+    kind: Literal["on_demand"] = "on_demand"
+    status: AgentRunStatus
+    failure_code: str | None = None
+    task_id: UUID | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+    cost_total: float = 0.0
+    inbox_item_id: UUID | None = None
+    task: AgentResult | None = None
+
+
+class AgentRunListResponse(_Strict):
+    items: tuple[AgentRunView, ...]
+
+
 # ── the runtime-provider boundary (docs/29 §7.3, §11.2; interface only) ────
 
 
@@ -810,7 +838,9 @@ __all__ = [
     "AgentListResponse",
     "AgentModelProfile",
     "AgentRunContext",
+    "AgentRunListResponse",
     "AgentRunStatus",
+    "AgentRunView",
     "AgentRuntimeProfile",
     "AgentSelection",
     "AgentStatus",
@@ -846,6 +876,7 @@ __all__ = [
     "PersistenceModel",
     "ProviderHealth",
     "RequiredApi",
+    "RunAgentRequest",
     "RunHandle",
     "RuntimeRef",
     "RuntimeType",
