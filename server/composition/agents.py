@@ -47,6 +47,7 @@ from server.agents.compiler import OwnerContext, parse_draft, revalidation_requi
 from server.agents.gateway.model_routing import RouteRefused, route_model_call
 from server.agents.instructions import assemble_input
 from server.agents.providers.native import NativeRuntimeProvider
+from server.agents.registry.runtimes import NATIVE_RUNTIME_ID
 from server.agents.registry import AgentRegistries, ModelEntryFacts, build_registries
 from server.agents.rendering import render_card, spec_view
 from server.agents.service import AgentDefinitionService, PreviewRefused
@@ -95,6 +96,7 @@ from shared.schemas.agent_factory import (
     AgentView,
     CancelReason,
     CompiledAgentSpec,
+    RunHandle,
     CompiledAgentSpecView,
     CompileOutcome,
     CreateAgentRequest,
@@ -652,9 +654,10 @@ class _PresentUserRun:
     ordinary task of that principal, in the binding's mode, under its ceiling.
     There is no other way for a native run to start — no background path."""
 
-    def __init__(self, *, tasks: "AgentTaskFacade", session: AsyncSession, principal: Principal,
-                 audit: AuditLogger, binding: AgentRunBinding) -> None:
+    def __init__(self, *, tasks: "AgentTaskFacade", service: AgentDefinitionService, session: AsyncSession,
+                 principal: Principal, audit: AuditLogger, binding: AgentRunBinding | None = None) -> None:
         self._tasks = tasks
+        self._service = service
         self._session = session
         self._principal = principal
         self._audit = audit
@@ -663,7 +666,7 @@ class _PresentUserRun:
 
     async def start(self, ctx: AgentRunContext) -> AgentRunStatus:
         binding = self._binding
-        if (ctx.run_id, ctx.agent_id, ctx.version, ctx.spec_hash) != (
+        if binding is None or (ctx.run_id, ctx.agent_id, ctx.version, ctx.spec_hash) != (
             binding.run_id, binding.agent_id, binding.version, binding.spec_hash
         ):
             raise ValueError("the run context does not match its binding")
@@ -672,7 +675,23 @@ class _PresentUserRun:
         return AgentRunStatus.RUNNING
 
     async def cancel(self, run_id: uuid.UUID, reason: CancelReason) -> None:
-        raise NotImplementedError("run control is not wired to this port")
+        """Stop the run's task through the runtime's own cancel (05 §9): a
+        paused action is dropped and never performed; a running task stops at
+        its next checkpoint, an in-flight tool call is aborted. The run record
+        is closed here too, so the run's next re-validation fails even if its
+        task were somehow still driven."""
+
+        run = await self._service.get_run(self._session, run_id)
+        if run is None or run.finished_at is not None:
+            return
+        if run.task_id is not None:
+            try:
+                await self._tasks.cancel(self._session, principal=self._principal, task_id=run.task_id,
+                                         audit=self._audit)
+            except AppError as exc:
+                if exc.code is not ErrorCode.NOT_FOUND:
+                    raise
+        await self._service.run_cancelled(self._session, run_id, reason=reason.value)
 
     async def status_of(self, run_id: uuid.UUID) -> AgentRunStatus:
         raise NotImplementedError("run status is read from the run record")
@@ -870,6 +889,10 @@ class AgentFactoryFacade:
         loaded = await self._factory.service.load(session, agent_id)
         if loaded is None or loaded[0].owner_user_id != principal.user_id:
             raise _NOT_FOUND
+        if self._tasks is not None:
+            # docs/29 §14.4: no run of a deleted agent continues, and no paused
+            # action of one can still be confirmed.
+            await self._stop_runs(session, audit, principal, agent_id, CancelReason.DELETED)
         await self._factory.service.delete(session, loaded[0])
         await self._audit(audit, principal, AuditAction.AGENT_DELETED, f"agentdefinition:{agent_id}")
 
@@ -894,9 +917,7 @@ class AgentFactoryFacade:
         the mode ceiling, 04 and confirmation, and the definition is
         re-validated at every step."""
 
-        if self._tasks is None:
-            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "agent runs are not available",
-                           details={"dependency": "agents"})
+        tasks = self._run_tasks()
         definition, spec = await self._owned(session, audit, principal, agent_id, Operation.READ)
         if spec is None:
             raise await self._refuse_run(audit, principal, agent_id, "agent_revoked",
@@ -912,32 +933,15 @@ class AgentFactoryFacade:
         if spec.graph_id != graph_id:
             raise await self._refuse_run(audit, principal, agent_id, "graph_mismatch",
                                          "this agent belongs to another graph than this session's")
-        registries = self._factory.registries
-        if revalidation_required(spec, registries.enabled_templates):
-            await self._factory.service.mark_needs_reapproval(session, definition, "template_changed")
-            raise await self._refuse_run(audit, principal, agent_id, "needs_reapproval",
-                                         "this agent must be recompiled and re-approved")
-        selection = spec.selection
-        profile = registries.model_profiles.get(selection.model_profile_id)
-        owner = await self._factory.owner_context(session, user_id=principal.user_id, graph_id=graph_id)
-        if (profile is None or not profile.profile.enabled
-                or profile.profile.version != selection.model_profile_version
-                or (profile.profile_id not in registries.open_to_all
-                    and profile.profile.model_ref != owner.owner_primary_model_ref)):
-            raise await self._refuse_run(audit, principal, agent_id, "model_profile_unavailable",
-                                         "this agent's model profile is not available to you")
-        runtime = registries.runtimes.get(selection.runtime_id)
-        if runtime is None or not runtime.enabled or selection.runtime_id != "native":
-            raise await self._refuse_run(audit, principal, agent_id, "runtime_unavailable",
-                                         "this agent's runtime is not available")
+        profile = await self._still_runnable(session, audit, principal, definition, spec)
         service = self._factory.service
         run_id = uuid.uuid4()
         run = await service.create_run(session, spec=spec, run_id=run_id)
         binding = AgentRunBinding.from_spec(spec, run_id=run_id, model_ref=profile.profile.model_ref,
                                             budget_per_run=spec.budget.per_run,
                                             input_text=self._factory.run_input(spec, run_id))
-        provider_port = _PresentUserRun(tasks=self._tasks, session=session, principal=principal, audit=audit,
-                                        binding=binding)
+        provider_port = _PresentUserRun(tasks=tasks, service=service, session=session, principal=principal,
+                                        audit=audit, binding=binding)
         provider = NativeRuntimeProvider(provider_port)
         await provider.provision(spec)
         try:
@@ -957,6 +961,120 @@ class AgentFactoryFacade:
             await service.run_waiting(session, run_id)
         run = await service.get_run(session, run_id) or run
         return service.run_view(run, task=result)
+
+    def _run_tasks(self) -> "AgentTaskFacade":
+        if self._tasks is None:
+            raise AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, "agent runs are not available",
+                           details={"dependency": "agents"})
+        return self._tasks
+
+    async def _still_runnable(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
+                              definition: AgentDefinitionRow, spec: CompiledAgentSpec):
+        """What a new run — and a resume — must still satisfy against the
+        operator's *current* registries and the owner's current model policy:
+        the spec's template version, its model profile and its runtime. A
+        template that moved on sends the agent back for re-approval."""
+
+        registries = self._factory.registries
+        agent_id = definition.agent_id
+        if revalidation_required(spec, registries.enabled_templates):
+            await self._factory.service.mark_needs_reapproval(session, definition, "template_changed")
+            raise await self._refuse_run(audit, principal, agent_id, "needs_reapproval",
+                                         "this agent must be recompiled and re-approved")
+        selection = spec.selection
+        profile = registries.model_profiles.get(selection.model_profile_id)
+        owner = await self._factory.owner_context(session, user_id=principal.user_id, graph_id=spec.graph_id)
+        if (profile is None or not profile.profile.enabled
+                or profile.profile.version != selection.model_profile_version
+                or (profile.profile_id not in registries.open_to_all
+                    and profile.profile.model_ref != owner.owner_primary_model_ref)):
+            raise await self._refuse_run(audit, principal, agent_id, "model_profile_unavailable",
+                                         "this agent's model profile is not available to you")
+        runtime = registries.runtimes.get(selection.runtime_id)
+        if runtime is None or not runtime.enabled or selection.runtime_id != "native":
+            raise await self._refuse_run(audit, principal, agent_id, "runtime_unavailable",
+                                         "this agent's runtime is not available")
+        return profile
+
+    async def _stop_runs(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
+                         agent_id: uuid.UUID, reason: CancelReason) -> None:
+        """Stop every live run of the agent — the safe direction, never refused
+        to its owner and never confirmed."""
+
+        service = self._factory.service
+        live = await service.live_runs(session, agent_id)
+        if not live:
+            return
+        port = _PresentUserRun(tasks=self._run_tasks(), service=service, session=session, principal=principal,
+                               audit=audit)
+        provider = NativeRuntimeProvider(port)
+        for run in live:
+            if run.owner_user_id != principal.user_id:
+                continue
+            await provider.cancel_run(RunHandle(runtime_id=NATIVE_RUNTIME_ID, run_id=run.run_id), reason)
+            await self._audit(audit, principal, AuditAction.AGENT_RUN_CANCELLED,
+                              f"agentrun:{run.run_id}:{reason.value}")
+
+    async def cancel_run(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                         run_id: uuid.UUID, audit: AuditLogger) -> AgentRunView:
+        run = await self._owned_run(session, audit, principal, agent_id, run_id)
+        service = self._factory.service
+        if run.finished_at is None:
+            port = _PresentUserRun(tasks=self._run_tasks(), service=service, session=session,
+                                   principal=principal, audit=audit)
+            await NativeRuntimeProvider(port).cancel_run(
+                RunHandle(runtime_id=NATIVE_RUNTIME_ID, run_id=run_id), CancelReason.OWNER_STOP)
+            await self._audit(audit, principal, AuditAction.AGENT_RUN_CANCELLED,
+                              f"agentrun:{run_id}:{CancelReason.OWNER_STOP.value}")
+        run = await service.get_run(session, run_id) or run
+        return service.run_view(run)
+
+    async def pause(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                    audit: AuditLogger) -> AgentView:
+        """docs/29 §14.1: no confirmation — it only removes. Live runs stop."""
+
+        definition, spec = await self._owned(session, audit, principal, agent_id, Operation.READ)
+        service = self._factory.service
+        if await service.pause(session, definition):
+            await self._audit(audit, principal, AuditAction.AGENT_PAUSED, f"agentdefinition:{agent_id}")
+        await self._stop_runs(session, audit, principal, agent_id, CancelReason.OWNER_STOP)
+        return service.view(definition, spec)
+
+    async def resume(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                     confirmation_token: str | None, audit: AuditLogger) -> AgentView:
+        """docs/29 §14.1: the direction that gives authority back. Every check
+        a new run faces is re-run, then the engine decides (`write` on the
+        definition is consequential: the owner confirms, with a token bound to
+        this agent's current spec hash)."""
+
+        definition, spec = await self._owned(session, audit, principal, agent_id, Operation.READ)
+        service = self._factory.service
+        if spec is None:
+            raise await self._refuse_run(audit, principal, agent_id, "agent_revoked",
+                                         "this agent is revoked and cannot be resumed")
+        if definition.status == AgentStatus.ACTIVE.value:
+            return service.view(definition, spec)
+        if definition.status != AgentStatus.PAUSED.value:
+            raise await self._refuse_run(audit, principal, agent_id, definition.status,
+                                         "only a paused agent can be resumed")
+        await self._still_runnable(session, audit, principal, definition, spec)
+        outcome = await self._authorize(session, audit, AccessRequest(
+            principal=principal, operation=Operation.WRITE, resource_type=ResourceType.AGENTDEFINITION,
+            resource_ref=str(agent_id), confirmation_token=confirmation_token,
+            arguments={"action": "resume", "spec_hash": spec.spec_hash},
+        ))
+        await self._confirm_or_refuse(session, outcome, action="resume_agent",
+                                      card=_card_json(spec, self._factory.registries))
+        loaded = await service.load(session, agent_id, fresh=True)
+        if loaded is None or loaded[0].owner_user_id != principal.user_id:
+            raise _NOT_FOUND
+        definition, current = loaded
+        if current is None or current.spec_hash != spec.spec_hash or definition.status != AgentStatus.PAUSED.value:
+            raise await self._refuse_run(audit, principal, agent_id, "spec_changed",
+                                         "the agent changed while the resume was being confirmed")
+        await service.resume(session, definition)
+        await self._audit(audit, principal, AuditAction.AGENT_RESUMED, f"agentdefinition:{agent_id}")
+        return service.view(definition, current)
 
     async def _owned_run(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
                          agent_id: uuid.UUID, run_id: uuid.UUID) -> AgentRunRow:

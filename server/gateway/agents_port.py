@@ -79,5 +79,19 @@ class AgentFactoryPort(Protocol):
         audit: AuditLogger,
     ) -> AgentRunView: ...
 
+    async def cancel_run(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, run_id: uuid.UUID,
+        audit: AuditLogger,
+    ) -> AgentRunView: ...
+
+    async def pause(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+    ) -> AgentView: ...
+
+    async def resume(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+        confirmation_token: str | None, audit: AuditLogger,
+    ) -> AgentView: ...
+
 
 __all__ = ["AgentFactoryPort"]

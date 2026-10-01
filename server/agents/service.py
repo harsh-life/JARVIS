@@ -316,6 +316,35 @@ class AgentDefinitionService:
         definition.name = None
         definition.deleted_at = now
         definition.updated_at = now
+        # No run of a deleted agent stays open: a live one fails its next
+        # step's re-validation, and its record says it was stopped.
+        for run in await self.live_runs(session, definition.agent_id):
+            await self.run_cancelled(session, run.run_id, reason="deleted")
+        await session.flush()
+
+    # ── pause / resume (docs/29 §14.1) ──────────────────────────────────
+
+    async def pause(self, session: AsyncSession, definition: AgentDefinitionRow) -> bool:
+        """Active → paused; anything else is left as it is. Returns whether
+        the status changed. Pausing is always allowed: it only removes."""
+
+        if definition.status != AgentStatus.ACTIVE.value:
+            return False
+        definition.status = AgentStatus.PAUSED.value
+        definition.status_reason = "owner_paused"
+        definition.updated_at = self._clock()
+        await session.flush()
+        return True
+
+    async def resume(self, session: AsyncSession, definition: AgentDefinitionRow) -> None:
+        """Paused → active. The caller has re-run every check a new run would
+        face, and the owner's confirmation, before calling this."""
+
+        if definition.status != AgentStatus.PAUSED.value:
+            raise ValueError("only a paused agent can be resumed")
+        definition.status = AgentStatus.ACTIVE.value
+        definition.status_reason = None
+        definition.updated_at = self._clock()
         await session.flush()
 
     # ── runs (docs/29 §14.2, §22.1) ─────────────────────────────────────
@@ -378,9 +407,17 @@ class AgentDefinitionService:
             run.status = AgentRunStatus.WAITING.value
             await session.flush()
 
+    async def run_cancelled(self, session: AsyncSession, run_id: uuid.UUID, *, reason: str) -> AgentRunRow | None:
+        run = await session.get(AgentRunRow, run_id, populate_existing=True)
+        if run is None or run.finished_at is not None:
+            return run
+        return await self.run_finished(session, run_id, status=AgentTaskStatus.CANCELLED, failure=reason,
+                                       cost=run.cost_total)
+
     async def run_finished(self, session: AsyncSession, run_id: uuid.UUID, *, status: AgentTaskStatus,
                            failure: str | None, cost: float) -> AgentRunRow | None:
-        run = await session.get(AgentRunRow, run_id)
+        # Fresh: a stop recorded by another request is never overwritten.
+        run = await session.get(AgentRunRow, run_id, populate_existing=True)
         if run is None or run.finished_at is not None:
             return run
         run.status = _RUN_STATUS.get(status, AgentRunStatus.FAILED).value

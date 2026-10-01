@@ -967,6 +967,7 @@ class AgentRuntime:
     async def _request_capabilities(
         self, env: TaskEnvironment, state: TaskState, proposal: RequestCapabilities
     ) -> AgentResult | None:
+        await self._check_agent(env, state)  # as for a tool call (docs/29 §10.3)
         lines: list[str] = []
         for index, ask in enumerate(proposal.capabilities):
             if state.tripped is not None:
@@ -1189,6 +1190,11 @@ class AgentRuntime:
                                   resource=f"stall:{state.task_id}:loop")
                 await self._switch(env, state, models, SwitchReason.LOOP, stuck=AgentFailureCode.STALLED)
                 return None
+        # docs/29 §10.3: an agent run's definition and run record are
+        # re-validated at every tool call — after the model proposed it and
+        # before anything is decided — so a stop, delete or change made while
+        # the model was thinking applies to the call it proposed.
+        await self._check_agent(env, state)
         routed = False
         if state.agent is not None and call.tool == MODEL_ROUTE_TOOL:
             rewritten = await self._route_model_call(env, state, call, resource)

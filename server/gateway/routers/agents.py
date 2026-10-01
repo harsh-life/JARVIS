@@ -17,6 +17,10 @@ conventions:
   of the present owner, in the spec's mode, and answers with the run and its
   task (`202`: a run paused for confirmation is confirmed like any task). The
   body is empty: nothing about the run is the request's to name.
+* `POST /agents/{id}/runs/{run_id}/cancel` stops a run and `POST
+  /agents/{id}/pause` pauses the agent and stops its live runs — the safe
+  direction, never confirmed. `POST /agents/{id}/resume` gives authority back:
+  it is re-checked and confirmed like a change to the agent.
 * Another user's agent or preview is `404`, indistinguishable from an absent
   one (04 §7, AGENT-T9).
 
@@ -188,3 +192,43 @@ async def get_run(
 ) -> AgentRunView:
     return await _factory(request).get_run(session, principal=principal, agent_id=agent_id, run_id=run_id,
                                            audit=audit)
+
+
+@router.post("/agents/{agent_id}/runs/{run_id}/cancel", response_model=AgentRunView)
+async def cancel_run(
+    request: Request,
+    agent_id: uuid.UUID,
+    run_id: uuid.UUID,
+    body: RunAgentRequest,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentRunView:
+    return await _factory(request).cancel_run(session, principal=principal, agent_id=agent_id, run_id=run_id,
+                                              audit=audit)
+
+
+@router.post("/agents/{agent_id}/pause", response_model=AgentView)
+async def pause_agent(
+    request: Request,
+    agent_id: uuid.UUID,
+    body: RunAgentRequest,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> AgentView:
+    return await _factory(request).pause(session, principal=principal, agent_id=agent_id, audit=audit)
+
+
+@router.post("/agents/{agent_id}/resume", response_model=AgentView)
+async def resume_agent(
+    request: Request,
+    agent_id: uuid.UUID,
+    body: RunAgentRequest,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+    confirmation_token: str | None = Header(default=None, alias=CONFIRMATION_HEADER, max_length=512),
+) -> AgentView:
+    return await _factory(request).resume(session, principal=principal, agent_id=agent_id,
+                                          confirmation_token=confirmation_token, audit=audit)
