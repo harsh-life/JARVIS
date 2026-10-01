@@ -87,6 +87,7 @@ EVENT_ACTIONS: dict[AgentEvent, AuditAction] = {
     AgentEvent.WORKER_SWITCHED: AuditAction.AGENT_WORKER_SWITCHED,
     AgentEvent.STALL_DETECTED: AuditAction.AGENT_STALL_DETECTED,
     AgentEvent.RECOVERY_EXHAUSTED: AuditAction.AGENT_RECOVERY_EXHAUSTED,
+    AgentEvent.ENVELOPE_DENIED: AuditAction.AGENT_ENVELOPE_DENIED,
 }
 
 # Acts of the human, not the agent.

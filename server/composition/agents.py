@@ -573,10 +573,16 @@ class AgentRunCoordinator:
     exactly that version and hash — read fresh from the store at every step,
     never cached — and the rest records what happened."""
 
-    def __init__(self, service: AgentDefinitionService, session: AsyncSession, audit: AuditLogger) -> None:
+    def __init__(self, service: AgentDefinitionService, session: AsyncSession, audit: AuditLogger,
+                 core: SecurityCore) -> None:
         self._service = service
         self._session = session
         self._audit_logger = audit
+        self._core = core
+
+    async def _is_member(self, graph_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        return await self._core.graph_repository.is_active_member(self._session, graph_id=graph_id,
+                                                                 user_id=user_id)
 
     async def _audit(self, action: AuditAction, run: AgentRunRow | None, resource: str,
                      result: AuditResult = AuditResult.SUCCESS) -> None:
@@ -589,7 +595,8 @@ class AgentRunCoordinator:
 
     async def check(self, binding: AgentRunBinding) -> AgentFailureCode | None:
         return await self._service.check_run(self._session, run_id=binding.run_id, agent_id=binding.agent_id,
-                                             version=binding.version, spec_hash=binding.spec_hash)
+                                             version=binding.version, spec_hash=binding.spec_hash,
+                                             is_member=self._is_member)
 
     async def usage_recorded(self, binding: AgentRunBinding, *, usage_id: uuid.UUID, cost: float) -> None:
         return None

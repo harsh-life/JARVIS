@@ -37,7 +37,7 @@ import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Mapping
 
 from server.agent import context as ctx
 from server.agent.bounds import ConcurrencyGate, RuntimeBounds
@@ -974,6 +974,12 @@ class AgentRuntime:
                 break
             capability = ask.capability.strip()
             scope = dict(ask.resource_scope) if ask.resource_scope else None
+            # docs/29 §10.3: an agent run's envelope comes first and can only
+            # remove — outside it, nothing is activated, checked or offered.
+            if not agent_envelope.activation_within_envelope(self._envelope(state), capability, scope):
+                await self._envelope_denied(env, state, f"capability:{capability}")
+                lines.append(agent_envelope.not_in_envelope(capability))
+                continue
             info = env.security.describe_capability(capability)
 
             if info.status is CapabilityStatus.PROHIBITED:
@@ -1047,6 +1053,14 @@ class AgentRuntime:
     async def _approve_activation(
         self, env: TaskEnvironment, state: TaskState, pending: PendingStep
     ) -> None:
+        if not agent_envelope.activation_within_envelope(self._envelope(state), pending.capability,
+                                                         pending.resource_scope):
+            # An approval never carries an activation past the ceiling that
+            # applies now (docs/29 §10.3).
+            await self._envelope_denied(env, state, f"capability:{pending.capability}")
+            state.messages.append(ctx.observation(agent_envelope.not_in_envelope(pending.capability),
+                                                  limit=self._bounds.max_observation_chars))
+            return
         verdict = await env.security.authorize_activation(ActivationRequest(
             principal=state.principal, graph_id=state.graph_id, task_id=state.task_id,
             capability=pending.capability, resource_scope=pending.resource_scope,
@@ -1101,6 +1115,12 @@ class AgentRuntime:
             handles = [h for h in handles if h.tool_id in state.allowed_tool_ids]
         if self._bounds.max_model_tool_nesting_depth < 1:
             handles = [h for h in handles if not h.is_model_tool]
+        envelope = self._envelope(state)
+        if envelope is not None:
+            # docs/29 §10.3: an agent's worker is shown only what its envelope
+            # could ever reach (the gate still refuses anything else).
+            reachable = {e.capability for e in envelope.entries}
+            handles = [h for h in handles if h.required_capability in reachable]
         return handles
 
     async def _reject(self, env: TaskEnvironment, state: TaskState, message: str, resource: str,
@@ -1168,6 +1188,17 @@ class AgentRuntime:
             self._breaker.record_denial(state)
             return None
 
+        scope = _merge_scope(activation.resource_scope, handle.natural_scope)
+        # docs/29 §10.3: the envelope gate, before the engine is asked — the
+        # capability, the operation, the effective scope and the tier must all
+        # be inside the agent's compiled ceiling. Re-checked at every call.
+        if not self._within_envelope(env, state, handle.required_capability, call.operation,
+                                     resource_type, operation, scope):
+            await self._envelope_denied(env, state, resource)
+            state.messages.append(ctx.observation(agent_envelope.not_in_envelope(handle.required_capability),
+                                                  limit=self._bounds.max_observation_chars))
+            return None
+
         if handle.is_model_tool and self._bounds.max_model_tool_nesting_depth < 1:
             # RT-T7 / OD-RT-1: the nesting bound, enforced by the runtime.
             await self._reject(env, state, "Model-tool nesting limit reached.", resource)
@@ -1175,8 +1206,6 @@ class AgentRuntime:
 
         if state.tool_calls >= self._max_tool_calls(state):
             raise _Stop(AgentFailureCode.MAX_TOOL_CALLS)
-
-        scope = _merge_scope(activation.resource_scope, handle.natural_scope)
         request = ActionRequest(
             principal=state.principal, graph_id=state.graph_id, task_id=state.task_id,
             capability=handle.required_capability, capability_operation=call.operation,
@@ -1243,6 +1272,13 @@ class AgentRuntime:
                 limit=self._bounds.max_observation_chars,
             ))
             self._breaker.record_denial(state)
+            return
+        if not self._within_envelope(env, state, pending.capability, pending.operation or "",
+                                     pending.resource_type or ResourceType.TOOL_ACTION,
+                                     pending.resource_operation or Operation.CREATE, pending.resource_scope):
+            await self._envelope_denied(env, state, self._pending_resource(pending))
+            state.messages.append(ctx.observation(agent_envelope.not_in_envelope(pending.capability),
+                                                  limit=self._bounds.max_observation_chars))
             return
 
         verdict = await env.security.authorize_action(ActionRequest(
@@ -1796,6 +1832,25 @@ class AgentRuntime:
         # The selected profile's configured entry, through the same key path.
         return await env.models.resolve(principal=state.principal, graph_id=state.graph_id,
                                         agent_model_ref=state.agent.model_ref)
+
+    @staticmethod
+    def _envelope(state: TaskState) -> agent_envelope.Envelope | None:
+        return state.agent.envelope if state.agent is not None else None
+
+    def _within_envelope(self, env: TaskEnvironment, state: TaskState, capability: str, capability_operation: str,
+                         resource_type: ResourceType, operation: Operation,
+                         scope: Mapping[str, str] | None) -> bool:
+        envelope = self._envelope(state)
+        if envelope is None:
+            return True
+        tier = env.security.operation_tier(capability=capability, capability_operation=capability_operation,
+                                           resource_type=resource_type, operation=operation)
+        return agent_envelope.within_envelope(envelope, capability, capability_operation, scope, tier)
+
+    async def _envelope_denied(self, env: TaskEnvironment, state: TaskState, resource: str) -> None:
+        await self._event(env, state, AgentEvent.ENVELOPE_DENIED, AuditResult.BLOCKED, resource=resource,
+                          decision=PermissionDecisionValue.DENY)
+        self._breaker.record_denial(state)
 
     @staticmethod
     async def _check_agent(env: TaskEnvironment, state: TaskState) -> None:

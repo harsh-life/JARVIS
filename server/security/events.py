@@ -171,6 +171,8 @@ class AuditAction(str, Enum):
     AGENT_RUN_STARTED = "agent.run.started"
     AGENT_RUN_FINISHED = "agent.run.finished"
     AGENT_RUN_REFUSED = "agent.run.refused"
+    # `resource` is `capability:<name>` or `tool:<tool>.<operation>`.
+    AGENT_ENVELOPE_DENIED = "agent.envelope.denied"
 
     # ── voice (docs/27). `resource` names a voice event id or a refusal
     # reason — never a transcript, never audio, never synthesized text.

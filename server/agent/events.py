@@ -37,3 +37,6 @@ class AgentEvent(str, Enum):
     WORKER_SWITCHED = "agent.worker.switched"
     STALL_DETECTED = "agent.stall.detected"
     RECOVERY_EXHAUSTED = "agent.recovery.exhausted"
+    # docs/29 §10.3: an agent run proposed something outside its compiled
+    # envelope; refused before activation or the engine was asked.
+    ENVELOPE_DENIED = "agent.envelope.denied"

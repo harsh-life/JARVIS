@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Callable, Mapping
+from typing import Awaitable, Callable, Mapping
 
 from pydantic import ValidationError
 from sqlalchemy import delete, func, select
@@ -331,9 +331,12 @@ class AgentDefinitionService:
         await session.flush()
 
     async def check_run(self, session: AsyncSession, *, run_id: uuid.UUID, agent_id: uuid.UUID, version: int,
-                        spec_hash: str) -> AgentFailureCode | None:
+                        spec_hash: str,
+                        is_member: Callable[[uuid.UUID, uuid.UUID], Awaitable[bool]]) -> AgentFailureCode | None:
         """May a run bound to (run, agent, version, hash) take its next step?
-        Everything is read fresh from the store: `None`, or why not."""
+        Everything is read fresh from the store: `None`, or why not.
+        `is_member(graph_id, user_id)` is the graph repository's live answer:
+        an owner who has left the agent's graph stops its run (04 §9)."""
 
         run = await session.get(AgentRunRow, run_id, populate_existing=True)
         if run is None or run.agent_id != agent_id or run.finished_at is not None:
@@ -345,6 +348,8 @@ class AgentDefinitionService:
         if spec is None or definition.status != AgentStatus.ACTIVE.value:
             return AgentFailureCode.AGENT_UNAVAILABLE
         if definition.owner_user_id != run.owner_user_id:
+            return AgentFailureCode.AGENT_UNAVAILABLE
+        if definition.graph_id is not None and not await is_member(definition.graph_id, run.owner_user_id):
             return AgentFailureCode.AGENT_UNAVAILABLE
         if definition.current_version != version or spec.spec_hash != spec_hash:
             return AgentFailureCode.SPEC_CHANGED
