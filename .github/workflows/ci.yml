@@ -114,7 +114,7 @@ jobs:
         # The Android rows (docs/23 §9) measure the device client (§3d).
         env:
           HYPERMIND_REQUIRE_MEMORY_STACK: "1"
-        run: python -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py tests/integration/test_br_t2_memory_rows.py tests/integration/test_br_t2_android_rows.py -q -s
+        run: python -m pytest tests/security_core/test_od_a1_br_t2.py tests/integration/test_br_t2_execution_rows.py tests/integration/test_br_t2_memory_rows.py tests/integration/test_br_t2_android_rows.py tests/integration/test_br_t2_unattended_rows.py -q -s
 
   postgres:
     # H-1 (docs/DECISION_REGISTER.md): the pilot's runtime store is PostgreSQL.

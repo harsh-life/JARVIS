@@ -127,9 +127,13 @@ class AgentDefinitionService:
         preview_ttl_minutes: int,
         max_agents_per_user: int = 5,
         unattended_available: bool = False,
+        delegation_ended: "Callable[[AsyncSession, StandingDelegationRow], Awaitable[None]] | None" = None,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._registries = registries
+        # docs/29 §26: told of every delegation that ends, however it ends —
+        # the composition root records it in the audit trail.
+        self._delegation_ended = delegation_ended
         # docs/29 §15 (OD-AF-2): `agents.unattended_enabled`, read once.
         self._unattended = unattended_available
         self._ttl = timedelta(minutes=preview_ttl_minutes)
@@ -903,6 +907,8 @@ class AgentDefinitionService:
         row.status_reason = reason
         row.revoked_at = self._clock()
         await session.flush()
+        if self._delegation_ended is not None:
+            await self._delegation_ended(session, row)
         if notify:
             notice = {DelegationStatus.REVOKED: AgentNotice.DELEGATION_REVOKED,
                       DelegationStatus.EXPIRED: AgentNotice.DELEGATION_EXPIRED,

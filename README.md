@@ -328,9 +328,35 @@ tests) put every run behind the in-process **Agent Gateway** and add the
   the owner presses Run, which is the same authenticated run as on demand
   (`reminder_tap`, one run per tap). The app also lists the owner's agents.
 
-Agent output never becomes memory. Unattended execution (Phase 5), standing
-delegation, external runtimes, MCP, Letta, child agents and Darwin are not
-built. Decisions: `docs/DECISION_REGISTER.md` §2J (none ratified).
+**Phase 5 — unattended agents** (PRD §22 as amended by OD-AF-2; off unless
+the operator sets `agents.unattended_enabled: true`, which also needs
+`agents.enabled` and `agents.standing_delegation_ratified`). An owner may
+grant one agent a **StandingDelegation** (`POST /api/v1/agents/{id}/delegation`:
+a confirmation bound to the exact terms, then a fresh device re-attestation;
+`DELETE` revokes, never confirmed). It is a **ceiling, never a grant**: bound
+to the agent's exact spec and envelope hash, schedule, explicit non-zero
+budgets, ≤ 24 runs a day and an expiry of at most `delegation_max_days` (30).
+The Agent Factory's own trigger loop — not the scheduler — runs the agent on
+that schedule as a **DelegatedPrincipal** (owner, agent, delegation, run; no
+device, no session), through the same gateway, envelope gate and engine. An
+unattended run:
+
+- uses only the owner's existing standing grants and never asks for a
+  confirmation; anything above `low_write`, any device or app action,
+  `system.restricted`, `agent.*` and `net.request` other than `get` are
+  refused before the engine;
+- is re-checked against its owner, graph, delegation, spec and run at every
+  step, so a revoke, pause, new version, delete, lost grant or lost graph
+  stops it; the global latch and the operator's pause stop it too;
+- misses are coalesced (one run at most within the grace, never a catch-up
+  storm), and the day's limit and the month's budget skip runs;
+- reports only to the owner's inbox, with closed-code notices (missed,
+  coalesced, skipped, expiring, expired, revoked, invalidated).
+
+Agent output never becomes memory. External runtimes (Phase 6), MCP, Letta,
+child agents, external recipients and Darwin are not built. Decisions:
+`docs/DECISION_REGISTER.md` §2J and §2K (OD-AF-2/3/4/5/7/8 ratified
+2026-10-02; OD-AF-1/6/9/10 open).
 
 **Still not built** (each is a later, separate subsystem; nothing in the
 runtime depends on it): **Darwin**, a real **IntelligenceProvider** (only

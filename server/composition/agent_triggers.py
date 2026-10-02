@@ -119,12 +119,8 @@ class AgentTriggerLoop:
 
     async def _end(self, session, audit: AuditLogger, row: StandingDelegationRow, status: DelegationStatus,
                    reason: str, report: TriggerReport) -> None:
+        # Audited by the service's hook (`audit_delegation_ended`).
         if await self._service.end_delegation(session, row, status, reason):
-            action = (AuditAction.AGENT_DELEGATION_EXPIRED if status is DelegationStatus.EXPIRED
-                      else AuditAction.AGENT_DELEGATION_INVALIDATED)
-            await audit.record(actor=AuditActor.SYSTEM, action=action,
-                               resource=f"agentdelegation:{row.delegation_id}:{reason}"[:128],
-                               result=AuditResult.SUCCESS, user_id=row.owner_user_id)
             report.ended.append((row.agent_id, reason))
 
     async def _process(self, delegation_id: uuid.UUID, now: datetime, report: TriggerReport) -> None:

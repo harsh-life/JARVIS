@@ -223,6 +223,24 @@ only a human approval made without reading the text. The row exists only when
 the Judge is enabled (`evaluation.enabled: false` by default) with a provider
 that writes candidates. It is listed in §5 as an owner action.
 
+### 3f. Unattended agents (Phase 5, docs/29 §15)
+
+Phase 5 adds a second principal form, an unattended run's `DelegatedPrincipal`
+(owner, agent, delegation, run; no device, no session), and a server-driven
+start. The re-run lives in `tests/integration/test_br_t2_unattended_rows.py`,
+on the production composition root; every row is asserted in both directions.
+`standing_delegations` holds no content (ids, the schedule, limits, budgets);
+notices are closed codes.
+
+| # | Attempt | Model | Result | Why |
+|---|---|---|---|---|
+| 42 | B's unattended run reads A's private file | authorized | contained | The engine decides B's delegated principal as B (D4 → `404`); B's own file still needs B's live grant |
+| 43 | An unattended run reaches a phone (its owner's or anyone's) | authorized | contained | The principal has no `device_id`; device/session grants never match it; device and app operations are refused before the engine, even with the envelope gate broken open |
+| 44 | B's unattended run continues after B's delegation is revoked | authorized | contained | Delegation, owner, graph, spec and run are re-read at every step and every trigger pass; nothing is cached |
+| 45 | In-process code constructs a `DelegatedPrincipal` naming A and has the engine decide as A | app-RCE | **REACHABLE** | Identity values are process-local, exactly as rows 3 and 11; the runtime refuses such a principal (no fresh delegation), but an attacker inside the process need not call the runtime. Inside OD-A1 (a) |
+
+No authorized row is reachable. Row 45 is inside the accepted class.
+
 ---
 
 ## 4. Dimensions — measured, and what is still not measured
@@ -238,6 +256,7 @@ hardware (below):
 | Filesystem sandbox (`09`) | **MEASURED** — §3b rows 12, 13, 15, 17 | In-process reach is REACHABLE (accepted class); authorized reach is contained |
 | Network egress exfiltration (`10`) | **MEASURED** — §3b row 14 (in-process); `system.restricted` sockets denied by Landlock TCP rules + seccomp `socket()` filter | In-process reach is REACHABLE (accepted class) |
 | Android device (`08`, docs/23) | **MEASURED** — §3d rows 29–37 | Authorized reach contained. In-process reach into a phone is bounded by that phone's own guard (rows 30–32). At-rest: push token plaintext (row 36, owner action) |
+| Unattended agents (docs/29 §15) | **MEASURED** — §3f rows 42–45 | Authorized reach contained; a forged delegated principal in-process is REACHABLE (accepted class) |
 | Judge improvement path / operator console (19 §9, 28) | **MEASURED** — §3e rows 38–41 | Unapproved, secret-shaped and default-view reach are contained. Operator-approved guidance carries one user's content to every user (row 38, owner action) |
 | Android device on **physical hardware** | **NOT MEASURED** | No phone or emulator was available. §3d runs the reference guard against the real hub; the Kotlin guard is unit- and mutation-tested on the JVM. A physical-device re-run of rows 30–32 remains outstanding (docs/RELEASE_VALIDATION.md §9) |
 

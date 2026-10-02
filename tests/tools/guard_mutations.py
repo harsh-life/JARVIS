@@ -1097,6 +1097,11 @@ MUTANTS: tuple[Mutant, ...] = (
            '            if agent is None or agent.delegation_id is None or (',
            '            if False and (',
            (*PY, "tests/agents/test_unattended_runs.py")),
+    Mutant("M-AG164", 'Audit: a delegation ended by pause, delete, update or renewal leaves no audit row',
+           'server/agents/service.py',
+           '        if self._delegation_ended is not None:\n            await self._delegation_ended(session, row)',
+           '        if False:\n            await self._delegation_ended(session, row)',
+           (*PY, "tests/agents/test_unattended_hardening.py")),
 )
 
 

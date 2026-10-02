@@ -34,6 +34,7 @@ from server.composition.agents import (
     AgentReminders,
     AgentRunCoordinator,
     agent_tool_definitions,
+    audit_delegation_ended,
     registries_from_config,
 )
 from server.composition.break_glass import BreakGlassRegistry
@@ -289,6 +290,7 @@ def build_application(
                 agent_registries, preview_ttl_minutes=config.agents.compile_preview_ttl_minutes,
                 max_agents_per_user=config.agents.max_agents_per_user,
                 unattended_available=config.agents.unattended_enabled,
+                delegation_ended=audit_delegation_ended,
             ),
         )
         core.resource_loader.register(ResourceType.AGENTDEFINITION, AgentDefinitionLoader())

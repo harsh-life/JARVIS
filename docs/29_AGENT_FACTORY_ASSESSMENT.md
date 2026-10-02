@@ -1451,7 +1451,7 @@ Also `[FUTURE]`:
 | **2** — native runs, envelope gate, inbox, notebook, attribution | **READY TO IMPLEMENT** | present-user principal (no new identity); `observe` mode already enforces read-only; envelope gate mirrors `modes.py` |
 | **3** — Agent Gateway (in-process), tokens, Judge/console integration | **READY TO IMPLEMENT** | in-process only; the network surface is Phase 6 |
 | **4** — reminder-tap | **READY TO IMPLEMENT** | scheduler contract unchanged (reminder carries data); needs one nullable `01` field (behind the flag) and an Android screen |
-| **5** — unattended recurring agents | **UNBLOCKED 2026-10-02** | OD-AF-2/4/5 ratified, PRD §22 amended, DelegatedPrincipal in `03`/`04` (register §2K) |
+| **5** — unattended recurring agents | **BUILT** (off by default) | OD-AF-2/4/5 ratified, PRD §22 amended, DelegatedPrincipal in `03`/`04` (register §2K); implementation facts AF-P5-1…11 (register §2J) |
 | **6** — first external provider | **BLOCKED BY INFRASTRUCTURE** (and OD-AF-6, OD-TOOL-3) | no container/netns isolation, no MCP server/transport, no egress proxy for P2 in the repository |
 | **7+** — additional providers | **FUTURE** | one per concrete task class, after Phase 6 |
 | Darwin | **FUTURE** | separate subsystem, not started |

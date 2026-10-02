@@ -201,6 +201,30 @@ def registries_from_config(config: AppConfig) -> AgentRegistries:
     )
 
 
+# ── the audit trail of standing delegations (docs/29 §26) ─────────────────
+
+_ENDED_ACTIONS = {
+    DelegationStatus.REVOKED.value: AuditAction.AGENT_DELEGATION_REVOKED,
+    DelegationStatus.EXPIRED.value: AuditAction.AGENT_DELEGATION_EXPIRED,
+    DelegationStatus.INVALIDATED.value: AuditAction.AGENT_DELEGATION_INVALIDATED,
+}
+# Who ended it: the owner's own acts, the operator's pause, or the system.
+_OWNER_ENDS = frozenset({"owner_revoked", "renewed", "paused", "deleted", "spec_changed"})
+
+
+async def audit_delegation_ended(session: AsyncSession, row: StandingDelegationRow) -> None:
+    """Every delegation that ends — revoked, expired or invalidated, by any
+    path — leaves one audit row: ids and the reason code only."""
+
+    reason = row.status_reason or ""
+    actor = (AuditActor.SUPERUSER if reason == OPERATOR_PAUSED
+             else AuditActor.USER if reason in _OWNER_ENDS else AuditActor.SYSTEM)
+    await AuditLogger(session, request_id=uuid.uuid4()).record(
+        actor=actor, action=_ENDED_ACTIONS[row.status],
+        resource=f"agentdelegation:{row.delegation_id}:{reason}"[:128], result=AuditResult.SUCCESS,
+        user_id=row.owner_user_id)
+
+
 # ── the engine's projection of a definition ───────────────────────────────
 
 
@@ -1718,9 +1742,8 @@ class AgentFactoryFacade:
         row = await service.active_delegation(session, agent_id)
         if row is None or row.owner_user_id != principal.user_id:
             raise _NOT_FOUND
+        # Audited by the service's hook (`audit_delegation_ended`).
         await service.end_delegation(session, row, DelegationStatus.REVOKED, "owner_revoked")
-        await self._audit(audit, principal, AuditAction.AGENT_DELEGATION_REVOKED,
-                          f"agentdelegation:{row.delegation_id}:owner_revoked")
         await self._stop_runs(session, audit, principal, agent_id, CancelReason.PRINCIPAL_REVOKED,
                               delegation_id=row.delegation_id)
         return service.delegation_view(row)
