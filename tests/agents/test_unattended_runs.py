@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import update
 
 from server.agent import envelope as agent_envelope
 from server.scheduler.schedule import parse_schedule
@@ -169,8 +170,15 @@ async def test_the_days_run_limit_skips_with_a_notice(h):
     hourly = {**UNATTENDED_DRAFT, "trigger_request": {"kind": "unattended", "cron": "0 * * * *", "timezone": "UTC"}}
     agent, row = await _setup(h, alice, draft=hourly, terms={**TERMS, "max_runs_per_day": 1})
     first, second = _occurrences(row, 2)
-    if first.date() != second.date():  # keep both in one UTC day
-        first, second = _occurrences(row, 3)[1:]
+    if first.date() != second.date():
+        # Keep both in one UTC day: the occurrence before midnight counts as
+        # already claimed, so it is neither run nor coalesced into a notice.
+        skipped, first, second = _occurrences(row, 3)
+        async with h.storage.session() as s:
+            await s.execute(update(StandingDelegationRow)
+                            .where(StandingDelegationRow.delegation_id == row.delegation_id)
+                            .values(last_occurrence_at=skipped))
+            await s.commit()
     h.model.push(final("one"))
     await _tick(h, first + timedelta(minutes=1))
     await _tick(h, second + timedelta(minutes=1))
