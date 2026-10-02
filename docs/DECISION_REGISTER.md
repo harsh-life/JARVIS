@@ -217,7 +217,7 @@ implemented.
 |---|---|---|---|
 | OD-SCH-1 | `scheduler.create` name and tier | `scheduler.create{create_reminder: low_write}` in the closed registry — one entry to change. The agent tool is one switch (`scheduler.agent_tool_enabled`), independent of the API and of firing. | `server/capabilities/registry.py`, `server/composition/scheduler.py` |
 | OD-SCH-2 | Fire-time `suggest` task | **Not implemented.** No principal at fire time, no automatic task. The notification's "Start task" only pre-fills the task box; the user sends it. | `android/…/reminders/` |
-| OD-SCH-3 | Scheduled execution | `[FUTURE]`; nothing in the build can express it (no standing delegation, the scheduler cannot import the runtime). | `pyproject.toml` contracts |
+| OD-SCH-3 | Scheduled execution | **Resolved by reference** (OD-AF-2, §2K, 2026-10-02): unattended execution exists only as docs/29 §15's StandingDelegation, run by the Agent Factory's own trigger loop. The scheduler is unchanged and still cannot import the runtime or the factory. | `pyproject.toml` contracts |
 | SCH-B1 | Backend | APScheduler's cron/one-shot **trigger semantics** over the application database as the one job store (`scheduled_jobs.next_fire_at`). APScheduler's own pickling `SQLAlchemyJobStore` is not used (a deserialization surface and a second source of truth). | `server/scheduler/backend.py` |
 | SCH-B2 | `job.status` | Kept to the locked `active\|cancelled\|fired` (01 §1.2). Outcomes (`delivered`, `queued`, `undeliverable`, `missed`, `cancelled_recheck`) live in `scheduled_job_firings`; a failed fire-time re-check sets `cancelled`. | `server/storage/models.py` |
 | SCH-B3 | Timezones | Carried in the `schedule` string: an ISO datetime must have an offset; a cron may be prefixed `CRON_TZ=<IANA zone> ` (UTC otherwise). The entity keeps its one field. | `server/scheduler/schedule.py` |
@@ -340,7 +340,7 @@ row of §2F, §2H and §3 is unchanged.
 | **Validation method** | Test first: `tests/memory/test_prd32_service_measurement.py` (the #32 acceptance, S1/S2) failed on SQLite and refuses to run on anything but PostgreSQL; `tests/runtime/test_concurrent_store.py` (no open transaction during model/tool calls, same-key retry, budget race, ten users' rows, deadlock → `503`) failed for the intended reasons before the fix. Then every suite on a real PostgreSQL server (and still on SQLite), the migration round-trip on both, the import contracts, BR-T2 and the guard mutations (M42–M44 added for the new guards). CI's `postgres` job runs all of it on every push. Measurements: `docs/RELEASE_VALIDATION.md` §I. |
 | **Acceptance status** | **PRD #32: MET on PostgreSQL** (`docs/RELEASE_VALIDATION.md` §I). The Real-Data Gate is **not** opened by this: its other blockers stand (§P). |
 
-## 2J. Agent Factory — Phases 1 to 4 (`[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]`)
+## 2J. Agent Factory — Phases 1 to 5 (`[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]`, except the OD-AF rows ratified in §2K)
 
 `docs/29_AGENT_FACTORY_ASSESSMENT.md` is a proposal. Its Phase 1 boundary
 (docs/29 §31) is built **behind `agents.enabled: false`** as implemented
@@ -354,13 +354,13 @@ recorded after the Phase 1 tables; nothing runs unattended.
 | ID | Decision | Value implemented (not ratified) | Where |
 |---|---|---|---|
 | OD-AF-1 | Ratify the factory abstractions | **`[OPEN — OWNER]`.** Built as docs/29 describes: templates, model/runtime profile registries, a pure selector and compiler (the only writer of `CompiledAgentSpec`), owner-private definitions with immutable hashed spec versions, and the `AgentRuntimeProvider` Protocol (declared, no provider wired). No separate AgentStateProvider. | `server/agents/`, `shared/schemas/agent_factory.py` |
-| OD-AF-2 | PRD §22 amendment for unattended runs | **`[OPEN — OWNER]`.** Not built. The compiler rejects `trigger.kind: unattended` (`unattended_unavailable`) and the config refuses `agents.unattended_enabled: true` even with `standing_delegation_ratified: true`. The scheduler is unchanged and cannot import the factory (AF-C4). | `server/agents/compiler.py`, `server/config/schema.py` |
-| OD-AF-3 | The `agent.*` tier table | **`[OPEN — OWNER]`.** Registered as proposed: `agent.define` {`compile`, `compile_update` → low_read; `create`, `update` → consequential}, `agent.inspect` {`list`, `get` → low_read}, `agent.delete` {`delete` → consequential}; `agentdefinition` create/write are consequential in the resource axis too, so the HTTP path confirms as well. `agent.run`/`agent.control`/`agent.delegate` and `agent.inspect` {`runs`, `inbox`} are **still not registered** after Phase 2 (AF-P2-1). | `server/capabilities/registry.py`, `server/capabilities/risk.py` |
-| OD-AF-4 | Consequential actions in unattended runs | **`[OPEN — OWNER]`.** Moot until Phase 5; no unattended run exists. | — |
-| OD-AF-5 | Default delegation lifetime | **`[OPEN — OWNER]`.** Only the config field exists (`agents.delegation_max_days`, 30); nothing reads it. | `server/config/schema.py` |
+| OD-AF-2 | PRD §22 amendment for unattended runs | **RATIFIED 2026-10-02 (§2K).** Before that: Not built. The compiler rejects `trigger.kind: unattended` (`unattended_unavailable`) and the config refuses `agents.unattended_enabled: true` even with `standing_delegation_ratified: true`. The scheduler is unchanged and cannot import the factory (AF-C4). | `server/agents/compiler.py`, `server/config/schema.py` |
+| OD-AF-3 | The `agent.*` tier table | **RATIFIED 2026-10-02 (§2K).** Before that: Registered as proposed: `agent.define` {`compile`, `compile_update` → low_read; `create`, `update` → consequential}, `agent.inspect` {`list`, `get` → low_read}, `agent.delete` {`delete` → consequential}; `agentdefinition` create/write are consequential in the resource axis too, so the HTTP path confirms as well. `agent.run`/`agent.control`/`agent.delegate` and `agent.inspect` {`runs`, `inbox`} are **still not registered** after Phase 2 (AF-P2-1). | `server/capabilities/registry.py`, `server/capabilities/risk.py` |
+| OD-AF-4 | Consequential actions in unattended runs | **RATIFIED 2026-10-02 (§2K).** Before that: Moot until Phase 5; no unattended run exists. | — |
+| OD-AF-5 | Default delegation lifetime | **RATIFIED 2026-10-02 (§2K).** Before that: Only the config field exists (`agents.delegation_max_days`, 30); nothing reads it. | `server/config/schema.py` |
 | OD-AF-6 | First external provider | **`[OPEN — OWNER]`.** None. Every docs/29 §30 runtime id is reserved; enabling one fails startup (no container/netns, MCP transport or egress proxy exists). | `server/agents/registry/runtimes.py` |
-| OD-AF-7 | Per-user quota and default budgets | **`[OPEN — OWNER]`.** `agents.max_agents_per_user: 5`; `default_budget_per_run`/`per_month: 0.0`, so only local models can be selected until an operator raises them (`no_model:budget` otherwise). | `server/config/schema.py`, `server/agents/selector.py` |
-| OD-AF-8 | Outputs beyond the owner's inbox | **`[OPEN — OWNER]`.** Inbox only (`OutputKind` has one value). Phase 2 builds the inbox (AF-P2-6); there is no recipient field and no other output. | `shared/schemas/agent_factory.py`, `server/agents/service.py` |
+| OD-AF-7 | Per-user quota and default budgets | **RATIFIED 2026-10-02 (§2K).** Before that: `agents.max_agents_per_user: 5`; `default_budget_per_run`/`per_month: 0.0`, so only local models can be selected until an operator raises them (`no_model:budget` otherwise). | `server/config/schema.py`, `server/agents/selector.py` |
+| OD-AF-8 | Outputs beyond the owner's inbox | **RATIFIED 2026-10-02 (§2K).** Before that: Inbox only (`OutputKind` has one value). Phase 2 builds the inbox (AF-P2-6); there is no recipient field and no other output. | `shared/schemas/agent_factory.py`, `server/agents/service.py` |
 | OD-AF-9 | Attribution: join table vs extending `UsageEvent` | **`[OPEN — OWNER]`.** Phase 2 builds the join table, as docs/29 recommends: `agent_run_usage` (run_id, usage_id). `usage_events` is unchanged; the ledger's `record` now returns the row's `usage_id`. | `server/storage/models.py`, `server/security/usage.py` |
 | OD-AF-10 | `agentdefinition` in `ResourceType`; new `01` entities | **`[OPEN — OWNER]`.** Added as proposed: `ResourceType.AGENTDEFINITION` (owner-private, decided by the one engine; a deleted agent is `not_found`) and migration `e1f3a5c7b9d2` (`agent_definitions`, `agent_spec_versions`, `agent_compile_previews`). Phase 2 adds `agent_runs` (`f2a4c6e8b0d1`), `agent_notebook_entries` (`a3c5e7f9b1d4`), `agent_inbox_items` (`b5d7f9a1c3e6`) and `agent_run_usage` (`c7e9b1d3f5a8`), and the `01` failure codes `agent_unavailable`, `spec_changed`, `agent_budget_exhausted`. All additive, round-tripped on SQLite and PostgreSQL. | `shared/schemas/authorization.py`, `server/storage/` |
 
@@ -450,6 +450,57 @@ child agent or agent-to-agent messaging is built.
 Phase 3/4 mutants M-AG6–M-AG8 and M-AG70–M-AG122 are in
 `tests/tools/guard_mutations.py` (four of them Kotlin).
 
+
+## 2K. Agent Factory owner decisions (2026-10-02)
+
+**Owner instruction, 2026-10-02:** for the Agent Factory decisions that block
+Phase 5, the recommended values docs/29 already documents (§15, §23.1, §32)
+are the owner's decisions for this milestone. Each row below is that
+recommendation, recorded as ratified, with its exact scope. Nothing else in
+docs/29 is ratified by this: **OD-AF-1, OD-AF-6, OD-AF-9 and OD-AF-10 stay
+open** (§3), and docs/29 remains a proposal outside these rows. OD-AF-6 in
+particular is not derived: its recommendation depends on which task class the
+owner wants first, and Phase 6 (external runtimes, MCP, containers) is not
+started.
+
+| ID | Decision (ratified) | Exact scope | Rationale |
+|---|---|---|---|
+| **OD-AF-2** | **PRD §22 is amended** with docs/29 §15.8's exact sentence: *"An agent with an active, step-up-granted StandingDelegation may execute unattended within its compiled envelope (≤ low_write), outputs to the owner's inbox only. The scheduler itself still never executes."* | The canonical changes of docs/29 §15.8 are made: PRD §22 (and §47), `03` §8 and `04` §1 (DelegatedPrincipal as a second principal form; device operations excluded), `01` §7.1A (StandingDelegation), `docs/22` §0 and OD-SCH-3 (resolved by reference). The feature stays **off by default**: `agents.unattended_enabled: false`, and it can be set true only with `agents.enabled: true` and `agents.standing_delegation_ratified: true` (the operator's acknowledgement of this row). | Phases 1–4 shipped (the docs/29 §32 precondition). The amendment keeps SCHED-001 intact: the scheduler still never executes; the factory's own trigger loop does, only under a delegation. |
+| **OD-AF-3** | **The `agent.*` tier table of docs/29 §23.1, as proposed.** | Already-registered `agent.define`/`agent.inspect`/`agent.delete` tiers are signed as built. `agent.delegate`: `grant_standing` is **consequential + step-up**, `revoke_standing` is **low_write and always allowed**. As AF-P2-1 did for run/control, delegation is an **owner HTTP path** (`POST`/`DELETE /api/v1/agents/{id}/delegation`) decided by the engine on the `agentdefinition`, not a worker tool: no task, model or agent can grant a delegation. Every `agent.*` capability stays excluded from every envelope. | The tiers are docs/29's; keeping delegation out of the tool registry removes the only path by which an agent-mediated task could ask for standing authority. |
+| **OD-AF-4** | **No consequential action in an unattended run (v1).** | Unattended envelopes are ≤ `low_write`. The compiler rejects an `unattended` trigger for any template whose `risk_ceiling > low_write`, or whose envelope reaches an operation outside the unattended ceiling. At run time a consequential (or higher) request is **refused, never paused**: no confirmation token is issued, no activation is offered, and a run that would pause fails closed. The docs/29 §15.6 *alternative* (delegated confirmation) is not built. | A confirmation needs a present human; an unattended run has none, so a pause would either strand the action or become a confirmation path without a person. |
+| **OD-AF-5** | **Delegation lifetime: at most 30 days (`agents.delegation_max_days`, default 30), renewal by a new step-up grant.** | `expires_at ≤ created_at + delegation_max_days`; mandatory, never open-ended. A new grant supersedes the agent's active delegation (status `revoked`, reason `renewed`). The owner is notified (inbox notice) 3 days before expiry and at expiry. | docs/29 §15.4 / §32. |
+| **OD-AF-7** | **5 agents per owner; budgets explicit, non-zero, set by the operator.** | `agents.max_agents_per_user: 5` (as built). A delegation requires `budget_per_run > 0` and `budget_per_month > 0`, each ≤ the spec's; a spec whose budgets are 0 cannot be delegated (`budget_required`). The owner's own budget (13) applies on top of both. | Unattended spending has no person watching it; zero must not mean "unbounded" and must not silently become a dead agent either. |
+| **OD-AF-8** | **No output beyond the owner's inbox in v1.** | `OutputKind` keeps one value. Unattended results and every delegation notice (skipped, missed, expired, revoked, invalidated, budget, breaker) are inbox items of the owner only; no recipient field exists; notices are data and never authorize anything. | docs/29 §15.7, §19. |
+
+**The unattended ceiling (docs/29 §15.7), as built.** An unattended run is
+refused, before the engine is asked, anything outside **all** of: tier ≤
+`low_write`; server platform only; capability not `device.*`, `app.*`,
+`system.restricted` or `agent.*`; `net.request` only `get` (never `post`).
+It runs as a `DelegatedPrincipal` (no device, no session), so device- and
+session-scoped grants never match it and device operations are structurally
+impossible. Its effective authority for every step is
+
+    owner's live grants ∩ graph scope ∩ template ceiling ∩ compiled envelope
+      ∩ standing delegation ∩ runtime/platform ∩ run restrictions
+      ∩ risk ceiling ∩ unattended ceiling ∩ global floor
+
+and the delegation is only a ceiling: **no capability is activated by it.**
+An unattended run activates only capabilities the owner already holds as a
+`user`- or `graph`-scoped standing grant; anything else is refused.
+
+**Deviations from docs/29 §15.8, recorded.**
+* `01` §1.2 `CapabilityScopeType += agent` is **not** added. docs/29 gives it
+  for "delegation-scoped activation records"; since a delegation is not a grant
+  and an unattended run never activates anything the owner has not granted,
+  no such record exists. Adding an unused scope value would only widen what a
+  grant row could name.
+* Step-up for the grant is the device's **re-attestation** (`03` §5.5, the
+  user-presence-bound key), the same check `/confirm` applies to a
+  `high_irreversible` approval — token freshness does not count, because a
+  device refreshes its token with nobody present.
+
+Implementation facts for Phase 5 are recorded in §2J ("Phase 5").
+
 ---
 
 ## 3. Genuinely unresolved owner decisions
@@ -471,7 +522,7 @@ Phase 3/4 mutants M-AG6–M-AG8 and M-AG70–M-AG122 are in
 | OD-DASH-1 | Dashboard/control split vs amending DASH-002 | Split built as recommended; DASH-002 unchanged; not ratified. |
 | OD-DASH-2 | Console UI | Not built; JSON API only (§2G). |
 | OD-JDG-5 | How approved Judge guidance may carry user content (§2H) | Global guidance with secret screening only reaches every user with one user's content (BR-T2 row 38); which control fits is a product and privacy call. |
-| OD-AF-1…10 | The Agent Factory's abstractions, tiers, entities and the unattended-run amendment (§2J) | docs/29 is a proposal; Phases 1 to 4 are built behind `agents.enabled: false` and none of its decisions is ratified. Phase 5 (unattended) waits on OD-AF-2. |
+| OD-AF-1, 6, 9, 10 | The Agent Factory's abstractions, first external provider, attribution form and `01` entities (§2J) | Still open. OD-AF-2, 3, 4, 5, 7 and 8 were ratified on 2026-10-02 (§2K). OD-AF-6's recommendation is conditional on the owner's priority (`browser_use` if browser monitoring matters most, else `letta`), so it is not derivable and stays the owner's; Phase 6 waits on it, on OD-TOOL-3 and on container/netns infrastructure. |
 
 ---
 

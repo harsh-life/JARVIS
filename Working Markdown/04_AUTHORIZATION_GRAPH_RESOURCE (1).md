@@ -27,6 +27,8 @@ The second load-bearing rule, inherited from `03` and PRD PHONE-003: **the clien
 ```
 Principal = { user_id, device_id, session_id, active_graph_id? }   # all validated by 03, never client-asserted
 ```
+**Amendment (owner decision OD-AF-2, 2026-10-02; docs/29 §15.2):** the engine also accepts `03` §8's second form, `DelegatedPrincipal = { user_id, agent_id, delegation_id, run_id, graph_id? }`, for an unattended agent run. It is decided by exactly the same dimensions D1–D5 with `user_id` as the principal user. Grants scoped to a `device` or `session` never match it (it has neither); `user`- and `graph`-scoped grants match as for the owner. A decision that would need the owner's confirmation is a refusal for it, never a pause (OD-AF-4). Nothing about a delegation is itself a grant: it only narrows.
+
 **Input — the access request:**
 ```
 AccessRequest = {

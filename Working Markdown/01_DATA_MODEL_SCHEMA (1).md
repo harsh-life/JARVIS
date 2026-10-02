@@ -283,6 +283,29 @@ VaultQueryResponse (read side, PRD §26): `{ results: [{ chunk, source_file, rel
 **Keys/indexes:** PK `grant_id`; index `(principal_id, scope_type, capability)` where active.
 **Validation `[LOCKED]`:** a grant authorizes exactly the concrete operations its `capability` maps to (`07`/`08`), never broader by name. Absolute-floor capabilities (PERM-006) can never be granted — they are prohibited by absence, so no `CapabilityGrant` row for them can be created; attempting to create one is a hard error, not a stored-but-denied grant.
 
+### 7.1A StandingDelegation (amendment, owner decision OD-AF-2, 2026-10-02; docs/29 §15.3, `docs/DECISION_REGISTER.md` §2K)
+
+An owner's standing permission for one agent to run **unattended**, on exactly its compiled schedule, within its compiled envelope. A ceiling, never a grant. Table `standing_delegations`; kept for audit (no content).
+
+| Field | Type | Notes |
+|---|---|---|
+| `delegation_id` | uuid | PK |
+| `agent_id` | uuid | at most one `active` per agent |
+| `owner_user_id`, `graph_id` | uuid, uuid? | copied from the definition |
+| `spec_version`, `spec_hash`, `envelope_hash` | int, sha256, sha256 | any spec change → `invalidated` |
+| `allowed_trigger_cron`, `timezone` | str | exactly the compiled trigger |
+| `max_runs_per_day` | int 1–24 | calendar day in `timezone` |
+| `budget_per_run`, `budget_per_month` | decimal > 0 | ≤ the spec's |
+| `created_at`, `expires_at` | timestamptz | `expires_at ≤ created_at + agents.delegation_max_days` |
+| `created_with_step_up` | bool | must be true |
+| `created_by_device_id`, `created_by_session_id` | uuid | provenance only — never an execution credential |
+| `status` | `active \| revoked \| expired \| invalidated` | |
+| `status_reason`, `revoked_at` | | |
+| `last_occurrence_at` | timestamptz? | the last schedule occurrence claimed (run or coalesced) |
+| `expiry_notice_at` | timestamptz? | when the owner was told of the coming expiry |
+
+No `CapabilityScopeType` value is added: no activation record is ever scoped to an agent or a delegation (§2K).
+
 ### 7.2 PermissionDecision `[LOCKED]` (PRD PERM-004/005 — the audited output of an authZ check)
 
 **Purpose:** the recorded result of evaluating whether an operation is allowed / needs confirmation / denied. **Storage scope:** audit store (append-only).

@@ -187,6 +187,18 @@ Principal = {
 ```
 `[LOCKED]` `04` treats every field here as trustworthy *identity* (this doc validated it) but re-checks *authorization* (membership/visibility/capability) itself — establishing identity is not granting access (§0).
 
+**Second principal form — `DelegatedPrincipal` (amendment, owner decision OD-AF-2, 2026-10-02; docs/29 §15.2, `docs/DECISION_REGISTER.md` §2K).** An unattended agent run is not a present user and never authenticates as one. It is represented as
+```
+DelegatedPrincipal = {
+  user_id,          # the agent's owner (copied from the definition, never from a request)
+  agent_id,
+  delegation_id,    # the owner's active, step-up-granted StandingDelegation
+  run_id,
+  graph_id?         # the agent's graph (nullable for a personal agent)
+}
+```
+It has **no `device_id` and no `session_id` — structurally** (the type has no such field; an attempt to read one fails). It is never derived from a device, session, push token or last-used device, and no device or session credential is ever issued to, or reused for, it. Its identity is fresh only while (re-checked before every step) the owner is `active`, the owner is still an active member of `graph_id`, the delegation is `active` and unexpired, its spec hash and envelope hash equal the agent's current spec, and the run is open. Device operations require a `device_id` and are therefore refused for it (OD-DEV-1 unchanged).
+
 ---
 
 ## 9. Open items
