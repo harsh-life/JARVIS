@@ -567,13 +567,14 @@ open (§3).
 | **OD-AF-6** | **Browser Use (`browser_use`) is the first external runtime**, under docs/29 §21.1's **P2 contained-workspace** pattern. | Browser Use is **untrusted execution infrastructure**: it never authorizes anything. Its own `allowed_domains`, its safety settings and any framework approval feature are **advisory only, never authorization** (docs/29 §30.3). JARVIS stays the sole authority for task, graph, capability, risk, budget, confirmation and network policy: the JARVIS egress boundary is authoritative for every host it reaches (allowed hosts, checked-IP = connected-IP, `10` §4–§5). **No stored credentials in v1** (`sensitive_data` unused; no browser profile persists between runs). Its model calls go only through the JARVIS Model Gateway, with a run token and no provider key. Results return to the owner's inbox as data (OD-AF-8). No other external runtime is enabled: `letta`, `openhands`, `openclaw` and the SDK frameworks stay reserved ids. | It is a capability the native Agent Factory genuinely lacks (browser-based monitoring and interaction), and P2 keeps the authority boundary at the workspace: what enters, what it can reach, what leaves. |
 | **OD-TOOL-3** | **T0 — no MCP, in either direction, for the first Phase 6 provider.** | No inbound MCP (JARVIS consuming third-party MCP servers, `07` §6 / TOOL-004) and no outbound MCP (a JARVIS MCP server as the Tool Gateway's transport). No MCP transport is built for future-proofing. docs/29 §21 item 8's "JARVIS MCP server" is **not required** for a P2 provider: Browser Use's effects are browser actions inside its disposable workspace, bounded by the egress boundary, and its results come back as inbox data — it makes no Tool Gateway calls in v1. PRD §17 (TOOL-004) is unchanged and still governs any future MCP. | The first provider uses the P2 path, which needs no tool transport; an unused transport would only be attack surface. |
 
-### Open infrastructure decisions that Browser Use genuinely requires
+### Infrastructure decisions that Browser Use requires
 
 Each row is the owner's. "Requirements" are what the canonical documents
-already fix; the options are the realistic ways to meet them; the
-recommendation is a recommendation, **not** a decision.
+already fix; the options are the realistic ways to meet them. **All five
+recommendations were ratified on 2026-10-02** (below the table); the table
+is kept as the record of what was weighed.
 
-| ID | Question | Requirements already fixed | Options | Recommendation (not ratified) | Blocks |
+| ID | Question | Requirements already fixed | Options | Recommendation (ratified 2026-10-02) | Blocks |
 |---|---|---|---|---|---|
 | **OD-AF-11** | **Container mechanism** for the per-run Browser Use workspace | docs/29 §21 items 1, 4, 5: one disposable container per run; non-root; read-only root filesystem; no host mount except a per-run scratch volume; all capabilities dropped; `no-new-privileges`; deterministic kill (token revocation → `cancel_run` → kill after 10 s); a listing for reconciliation (§25.2). `14` §2: a container escape is a shared-kernel residual, `[FUTURE]` stronger sandbox. JARVIS must not gain root-equivalent authority by driving it. | **(A)** OCI container through a **rootless** Docker-API-compatible engine (rootless Podman or rootless Docker), driven by a launcher in `server/execution` over the engine's local API socket, OCI runtime `runc`. **(B)** As (A), with **gVisor `runsc`** as the OCI runtime (a user-space kernel between Chromium and the host kernel). **(C)** JARVIS-managed OCI bundles run directly by rootless `runc`/`crun`, no daemon (JARVIS owns lifecycle and listing itself). A rootful engine socket is not an option: it is root-equivalent for whoever holds it. | **(B)**, with (A) acceptable only for a disposable-data pilot when `runsc` is unavailable, recorded in BR-T2. A browser parses hostile content, so the kernel is the main residual; rootless means an escape lands as an unprivileged user. | 6C, 6D |
 | **OD-AF-12** | **Network namespace design** for the workspace | `10` §3 NET-005 (enforced at the network boundary, not by a proxy variable the tool can ignore; `[REC]` netns + filtered egress, ratified in `14`); docs/29 §21 item 2: the only routes are the Agent Gateway and the egress proxy; item 8: the gateway listeners bound to the container network only; AGENT-T12 (egress probe). | **(A)** **No network interface**: the container has only loopback in its own namespace (`--network none`); the Model Gateway and the egress proxy are reached through **per-run Unix sockets** in a host directory mounted into the container, and a forwarder in the pinned image maps an in-container loopback port to each socket. **(B)** An internal bridge network (no masquerade) plus host nftables rules admitting the container subnet only to the two listener ports on the bridge address. **(C)** A JARVIS-created namespace per run with a veth pair and nftables rules. | **(A)**. There is no route at all, so nothing else on the host (even a service bound to `0.0.0.0`) is reachable; each run gets its own listener in addition to its token; DNS is impossible inside, so the proxy resolves (`10` §5); it needs no privileged firewall rules and is testable unprivileged. (B) and (C) depend on correct host firewall state. | 6B, 6C, the 6A listener's container binding |
@@ -597,6 +598,27 @@ and OD-AF-13; 6C (container and namespace) on OD-AF-11, 12 and 14; 6D (the
 Browser Use adapter) on OD-AF-14 and 15; 6E/6F (integration, kill path,
 reconciliation, BR-T2 container rows) on all of them.
 
+### OD-AF-11…15 — ratified (owner, 2026-10-02)
+
+**Owner instruction, 2026-10-02:** the recommended answers in the table
+above are ratified for the Phase 6 implementation, as stated here. Nothing
+else is decided by this; OD-AF-1, 9 and 10 stay open.
+
+| ID | Decision (ratified) | Exact scope |
+|---|---|---|
+| **OD-AF-11** | **A rootless container engine with gVisor** is the external runtime's boundary. | One disposable container per run, started by the JARVIS server's own unprivileged user through a rootless OCI engine (Podman, driven by argv from `server/execution`), with **gVisor `runsc`** as the OCI runtime. Non-root inside; read-only root filesystem; all capabilities dropped; `no-new-privileges`; one per-run scratch directory as the only writable mount; deterministic kill (token revocation → `cancel_run` → stop, killed after 10 s); a label on every container for reconciliation (every 10 minutes, and at startup). A rootful engine socket is never used. Verified feasible on 2026-10-02: rootless Podman 4.9 + `runsc` release-20260928.0 runs a container with no capabilities, `NoNewPrivs`, a read-only root, a non-root uid and the host's home directories invisible. |
+| **OD-AF-12** | **No general-purpose network interface.** | The container's only paths out are **per-run Unix sockets** — the Model Gateway's and the egress proxy's — in one host directory mounted into it. Podman `--network=none` plus gVisor's own `network=none` (loopback only, so an in-image forwarder can expose each socket on an in-container loopback port) and `host-uds=open` (the sandbox may open a host socket only if it was mounted in). Verified: every external, private, metadata and host address is unreachable (`ENETUNREACH`), DNS fails, and the mounted socket answers. |
+| **OD-AF-13** | **JARVIS's own CONNECT proxy, reusing `server/net`; no TLS interception.** | One proxy per run, on its socket. **It is authoritative** for outbound hosts and IPs: the CONNECT host must be in the run's explicit host list ∩ the operator's `EgressPolicy`; the host is resolved by the proxy (never by the runtime), every resolved address is classified by `server/net/policy.py`, and the proxy connects to exactly the checked address (**checked IP = connected IP**). Port 443 only; default deny. Browser Use's `allowed_domains` and any similar runtime or library control are **advisory only**. |
+| **OD-AF-14** | **Images built and published by CI, pinned by immutable digest.** | The Browser Use image is built from this repository (base image pinned by digest, dependencies hash-locked, telemetry off) by CI and published to the repository's registry; the runtime refuses any image reference that is not `name@sha256:<digest>` — **no floating tag is ever executed** — and the digest it runs is the one recorded in the repository. |
+| **OD-AF-15** | **`browser.session`, one operation `browse`, at `low_write`, constrained to an explicit host allowlist.** | The scope is a required, non-empty list of exact host names (no wildcard, no IP literal). The capability is the closed registry's; the tier is the owner's. `use_vision` is off in v1; no stored credentials. |
+
+**The accepted trade-off (OD-AF-13 → OD-AF-15).** Without TLS
+interception the proxy decides **which allowed hosts** the browser may
+reach, but it **cannot see HTTP methods or form submissions inside TLS**: a
+browser can POST to a host it may reach. That is why `browse` is `low_write`,
+not `low_read`. v1 limits it further with an explicit host list (no
+wildcard), no stored credentials, and a fresh browser profile per run.
+
 ---
 
 ## 3. Genuinely unresolved owner decisions
@@ -617,8 +639,7 @@ reconciliation, BR-T2 container rows) on all of them.
 | OD-DASH-1 | Dashboard/control split vs amending DASH-002 | Split built as recommended; DASH-002 unchanged; not ratified. |
 | OD-DASH-2 | Console UI | Not built; JSON API only (§2G). |
 | OD-JDG-5 | How approved Judge guidance may carry user content (§2H) | Global guidance with secret screening only reaches every user with one user's content (BR-T2 row 38); which control fits is a product and privacy call. |
-| OD-AF-1, 9, 10 | The Agent Factory's abstractions, attribution form and `01` entities (§2J) | Still open. OD-AF-2, 3, 4, 5, 7 and 8 were ratified on 2026-10-02 (§2K); OD-AF-6 (`browser_use`, P2) and OD-TOOL-3 (no MCP) on 2026-10-02 (§2L). |
-| OD-AF-11…15 | Browser Use's container mechanism, network namespace design, egress proxy architecture, image pinning, and browsing capability/tier (§2L) | Each has a recommendation in §2L and none is ratified. Phase 6 slices 6B–6F wait on them; 6A (the HTTP Model Gateway) does not. |
+| OD-AF-1, 9, 10 | The Agent Factory's abstractions, attribution form and `01` entities (§2J) | Still open. OD-AF-2, 3, 4, 5, 7 and 8 were ratified on 2026-10-02 (§2K); OD-AF-6 (`browser_use`, P2), OD-TOOL-3 (no MCP) and OD-AF-11…15 (Browser Use's infrastructure) on 2026-10-02 (§2L). |
 
 ---
 
