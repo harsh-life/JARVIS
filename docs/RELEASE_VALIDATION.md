@@ -91,7 +91,7 @@ All of these ran green in this run's server or memory suite.
 | Memory (`11`) | MEM-T1, T3, T6 | `memory/*` on the real store | green (§F) |
 | Usage (`13`) | US-T1, US-T3 | metering assertions across `runtime/*`; `runtime/test_resource_control.py` | green |
 | Config / repo (`15`/`16`) | CFG-T1, T3, T4, T5; REPO-T1, T2, T7 | `foundation/test_config.py`, `foundation/test_repo_secret_scan.py`, `foundation/test_module_boundaries.py`, `lint-imports` | green. CFG-T1 holds for the test and build path only (see PRD #28 below) |
-| MCP (`07`) | TL-T6 | — | N/A: no MCP server exists (OD-TOOL-3 default "none"); prohibition by absence |
+| MCP (`07`) | TL-T6 | — | N/A: no MCP server exists (OD-TOOL-3 decided "none", 2026-10-02, register §2L); prohibition by absence |
 | Blast radius (`14`) | BR-T2, BR-T4, INV-20 | §H | measured, with owner actions |
 
 ### D.1 PRD §39 RB criteria
@@ -391,7 +391,7 @@ is decided.
 | OD-EXEC-2 | A (docs/20 ratified form) | — | — |
 | OD-BG-1 | C (transcription) | no | authorize the register edit |
 | OD-EXEC-2 global `unconfined` text in §2B | D | — | the switch no longer exists (BG-T2) |
-| OD-AND-2/3/4/5, OD-VOI-1, VOI-B3, OD-SCH-1/2, OD-SUP-1/3, OD-BG-2/3, OD-MEM-A/B, OD-VLT-1, OD-AUTHZ-1, OD-TOOL-3, OD-JDG-1/2/4, OD-DASH-1/2, OD-02, OD-USE-1..3, OD-RT-1..3 | C (implemented recommendation or PROPOSED) | no: each is off, empty, or in its more restrictive reading by default | ratify or change. OD-AUTHZ-1 (shared facts stay on leave) and OD-DASH-1 are the ones that touch real-data semantics |
+| OD-AND-2/3/4/5, OD-VOI-1, VOI-B3, OD-SCH-1/2, OD-SUP-1/3, OD-BG-2/3, OD-MEM-A/B, OD-VLT-1, OD-AUTHZ-1, OD-JDG-1/2/4, OD-DASH-1/2, OD-02, OD-USE-1..3, OD-RT-1..3 | C (implemented recommendation or PROPOSED) | no: each is off, empty, or in its more restrictive reading by default | ratify or change. OD-AUTHZ-1 (shared facts stay on leave) and OD-DASH-1 are the ones that touch real-data semantics |
 | OD-DP-9 | C | no: nothing depends on it | ratify DecisionProvider at all |
 | Stable HTTPS hostname (NEXT_BUILD_INDEX §6.3) | infrastructure | yes, for Android login and the smoke test | provide one |
 

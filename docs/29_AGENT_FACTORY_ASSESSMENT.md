@@ -3,7 +3,8 @@
 
 **Written:** 2026-09-30 · **Audited against:** `harsh-life/JARVIS` `origin/main` @ `ddbb038` (PR #30; PostgreSQL store, Stage 5 Judge and console, scheduler, memory, voice, Android device hub all merged).
 **Document status:** **`[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]`**. The *technical design* is implementation-ready where marked. Nothing here is `[LOCKED]` unless it restates existing canonical text with its source.
-**Ratified 2026-10-02 (owner instruction; `docs/DECISION_REGISTER.md` §2K):** OD-AF-2, 3, 4, 5, 7 and 8 at the §32 recommended values; PRD §22 carries the §15.8 amendment. OD-AF-1, 6, 9 and 10 stay open, and everything else here stays a proposal.
+**Ratified 2026-10-02 (owner instruction; `docs/DECISION_REGISTER.md` §2K):** OD-AF-2, 3, 4, 5, 7 and 8 at the §32 recommended values; PRD §22 carries the §15.8 amendment. OD-AF-1, 9 and 10 stay open, and everything else here stays a proposal.
+**Ratified 2026-10-02 (owner; register §2L):** OD-AF-6 — the first external runtime is Browser Use under P2 — and OD-TOOL-3 — no MCP for it. The infrastructure mechanisms it needs are open owner decisions OD-AF-11…15 (register §2L).
 **Authority:** below `Working Markdown/00_CANONICAL_PRD.md` and `docs/DECISION_REGISTER.md`. Consumes `04`, `05`, `07`, `13`, `18`–`24`, `27`, `28` and the code of record named in each section.
 
 ### Classification used throughout
@@ -1025,8 +1026,11 @@ Before any external provider is enabled, every item below must exist and be test
 6. **Reconciliation** at startup and every 10 minutes (§25.2).
 7. **BR-T2 rows** measured for each container class.
 8. A **JARVIS MCP server** (Tool Gateway transport) and an OpenAI-compatible Model Gateway listener bound to the container network only.
+   *Owner decision OD-TOOL-3 (2026-10-02, register §2L): no MCP for the first provider. A P2 provider makes no Tool Gateway calls (its results are inbox data), so for Browser Use item 8 is the Model Gateway listener only; a P1 provider later needs a Tool Gateway transport and a new OD-TOOL-3 decision.*
 
 None of these exist in the repository today (see the facts table), so Phase 6 is blocked by infrastructure, not by design.
+
+**Owner decisions (2026-10-02, register §2L).** OD-AF-6: the first provider is **Browser Use, P2**. The mechanisms for items 1, 2, 4 and the egress proxy are open owner decisions OD-AF-11 (container), OD-AF-12 (network namespace), OD-AF-13 (egress proxy) and OD-AF-14 (image pinning), with recommendations in the register; OD-AF-15 adds the browsing capability and tier. Browser Use's own `allowed_domains` and safety settings are advisory, never authorization: the JARVIS egress boundary is.
 
 ### 21.1 Two isolation patterns
 
@@ -1376,7 +1380,7 @@ Each phase is test-first: tests from §27 → implement → run the full suite o
 | **3** | Agent Gateway modules (in-process), run tokens + nonces (data model and validation used by native for parity), Judge agent attribution and `agent.purpose` candidates, console views + control pause | T6, T7, T8, T23, T26; M-AG6, 7, 8 |
 | **4** | Reminder-tap: scheduler job creation via port, `scheduled_jobs.agent_id`, `agent_reminders` channel feature, Android "Run agent" screen | T10 (reminder half), T35 |
 | **5** | StandingDelegation, DelegatedPrincipal, unattended trigger loop, owner notifications | T29, T30, T36; M-AG12 |
-| **6** | First external provider (recommended: `letta` for P1 or `browser_use` for P2, OD-AF-6); container/netns infra; MCP Tool Gateway transport; HTTP Model Gateway | T11, T12, T13, T19 (external); BR-T2 container rows |
+| **6** | First external provider: **`browser_use`, P2** (OD-AF-6, ratified 2026-10-02); no MCP (OD-TOOL-3); slices 6A HTTP Model Gateway → 6B egress boundary → 6C container + namespace → 6D Browser Use adapter → 6E/6F integration, kill path, reconciliation, BR-T2 (6B–6F wait on OD-AF-11…15) | T12, T13, T19 (external); BR-T2 container rows. T11 (forged tool-call fields) applies once a P1 provider uses the Tool Gateway over the network |
 | **7+** | Further providers, one per concrete task class | per-provider suite |
 
 > **Implementation note (Track B; not a ratification).** Engineering phases 3
@@ -1414,13 +1418,14 @@ Each phase is test-first: tests from §27 → implement → run the full suite o
 | **OD-AF-3** | Sign the `agent.*` tier table (§23.1) | as proposed | real-user enablement |
 | **OD-AF-4** | Consequential actions in unattended runs | not allowed in v1 | Phase 5 scope |
 | **OD-AF-5** | Default delegation lifetime | 30 days, step-up renewal | Phase 5 |
-| **OD-AF-6** | First external provider | `browser_use` (P2) if browser monitoring matters most; else `letta` | Phase 6 |
+| **OD-AF-6** | First external provider | **Ratified 2026-10-02: `browser_use` (P2)** (register §2L) | Phase 6 |
 | **OD-AF-7** | Per-user agent quota and default budgets | 5 agents; explicit non-zero budgets set by the operator | real-user enablement |
 | **OD-AF-8** | Agent outputs beyond the owner's inbox (email, messages) | not in v1 | — |
 | **OD-AF-9** | Attribution: join table (§12.4) vs extending `01` `UsageEvent` | join table | — |
 | **OD-AF-10** | Adding `agentdefinition` to `ResourceType`, the new entities and enum values to `01` | approve | real-user enablement (code may land behind the flag, register practice) |
 | (existing) OD-MT-2 | Cloud primary by default | unchanged here; agents inherit whatever model entries the operator configures | — |
-| (existing) OD-TOOL-3 | Enabling MCP at all | stays "none" until Phase 6 | Phase 6 |
+| (existing) OD-TOOL-3 | Enabling MCP at all | **Decided 2026-10-02: none** for the first provider (register §2L) | — |
+| **OD-AF-11…15** | Browser Use infrastructure: container mechanism, network namespace, egress proxy, image pinning, browsing capability/tier | recommendations in register §2L (open) | Phase 6 slices 6B–6F |
 | (existing) OD-JDG-5 | Cross-user Judge guidance | agent candidates are owner-scoped by design (§18); the global guidance question stays open | — |
 
 ---
@@ -1452,7 +1457,7 @@ Also `[FUTURE]`:
 | **3** — Agent Gateway (in-process), tokens, Judge/console integration | **READY TO IMPLEMENT** | in-process only; the network surface is Phase 6 |
 | **4** — reminder-tap | **READY TO IMPLEMENT** | scheduler contract unchanged (reminder carries data); needs one nullable `01` field (behind the flag) and an Android screen |
 | **5** — unattended recurring agents | **BUILT** (off by default) | OD-AF-2/4/5 ratified, PRD §22 amended, DelegatedPrincipal in `03`/`04` (register §2K); implementation facts AF-P5-1…11 (register §2J) |
-| **6** — first external provider | **BLOCKED BY INFRASTRUCTURE** (and OD-AF-6, OD-TOOL-3) | no container/netns isolation, no MCP server/transport, no egress proxy for P2 in the repository |
+| **6** — first external provider | **6A READY** (HTTP Model Gateway); **6B–6F BLOCKED** on OD-AF-11…15 | OD-AF-6 (`browser_use`, P2) and OD-TOOL-3 (no MCP) ratified 2026-10-02 (register §2L); no container, namespace or egress proxy exists, and their mechanisms are open owner decisions |
 | **7+** — additional providers | **FUTURE** | one per concrete task class, after Phase 6 |
 | Darwin | **FUTURE** | separate subsystem, not started |
 

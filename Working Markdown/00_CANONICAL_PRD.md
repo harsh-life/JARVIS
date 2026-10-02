@@ -559,8 +559,10 @@ hypermind-track-b/
 | OD-MT-2 | Whether any task justifies a cloud primary by default | `06` | Default local |
 | OD-TOOL-1 | Exact risk-tier assignment per operation | `07` | **RATIFIED AT THE SEMANTIC-CAPABILITY LEVEL** (owner); concrete names/tiers `[PROPOSED]` in `docs/CAPABILITY_MATRIX.md`, owner signs the tier table |
 | OD-TOOL-2 | Provisional/untrusted-tool enablement gate specifics | `07` | `[IMPL]` |
-| OD-TOOL-3 | Which MCP servers (if any) are enabled at pilot | `07` | Default none |
-| OD-AF-2…5, 7, 8 | Agent Factory: unattended runs (§22 amendment), `agent.*` tiers, no consequential unattended actions, delegation lifetime, quota/budgets, inbox-only outputs | docs/29 | **RATIFIED** (owner, 2026-10-02) at docs/29 §32's recommended values — exact scope in `docs/DECISION_REGISTER.md` §2K. OD-AF-1, 6, 9, 10 stay open |
+| OD-TOOL-3 | Which MCP servers (if any) are enabled at pilot | `07` | **DECIDED** (owner, 2026-10-02): **none** — no inbound or outbound MCP for the first Agent Factory external runtime (T0, `docs/DECISION_REGISTER.md` §2L). §17 is unchanged and still governs any future MCP |
+| OD-AF-2…5, 7, 8 | Agent Factory: unattended runs (§22 amendment), `agent.*` tiers, no consequential unattended actions, delegation lifetime, quota/budgets, inbox-only outputs | docs/29 | **RATIFIED** (owner, 2026-10-02) at docs/29 §32's recommended values — exact scope in `docs/DECISION_REGISTER.md` §2K. OD-AF-1, 9, 10 stay open |
+| OD-AF-6 | Agent Factory: first external runtime | docs/29 | **RATIFIED** (owner, 2026-10-02): **Browser Use**, P2 contained workspace (docs/29 §21.1); untrusted execution infrastructure, never an authority; its own domain/safety settings are advisory; no stored credentials in v1 (`docs/DECISION_REGISTER.md` §2L) |
+| OD-AF-11…15 | Browser Use infrastructure: container mechanism, network namespace design, egress proxy architecture, image pinning, browsing capability/tier | docs/29 §21, `10`, `14` | **OPEN — OWNER**; recommendations in `docs/DECISION_REGISTER.md` §2L. Phase 6 beyond the HTTP Model Gateway waits on them |
 | OD-AND-1 | Full capability→operation→primitive table | `08` | `[IMPL]`; owner signs |
 | OD-AND-2 | Shizuku required for MVP, or Accessibility-only | `08` | Rec Accessibility-first |
 | OD-AND-3 | Expose `system.restricted` at all in MVP | `08` | Rec no |

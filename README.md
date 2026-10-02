@@ -355,8 +355,9 @@ unattended run:
 
 Agent output never becomes memory. External runtimes (Phase 6), MCP, Letta,
 child agents, external recipients and Darwin are not built. Decisions:
-`docs/DECISION_REGISTER.md` §2J and §2K (OD-AF-2/3/4/5/7/8 ratified
-2026-10-02; OD-AF-1/6/9/10 open).
+`docs/DECISION_REGISTER.md` §2J, §2K and §2L (OD-AF-2/3/4/5/7/8 ratified
+2026-10-02; OD-AF-6 — Browser Use, P2 — and OD-TOOL-3 — no MCP — ratified
+2026-10-02; OD-AF-1/9/10 and Browser Use's infrastructure OD-AF-11…15 open).
 
 **Still not built** (each is a later, separate subsystem; nothing in the
 runtime depends on it): **Darwin**, a real **IntelligenceProvider** (only
