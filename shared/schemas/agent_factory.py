@@ -895,6 +895,10 @@ class AgentGatewayErrorCode(str, Enum):
     MODEL_NOT_ALLOWED = "model_not_allowed"   # a model the run's spec does not select
     BUDGET_EXCEEDED = "budget_exceeded"
     AGENT_BUDGET_EXHAUSTED = "agent_budget_exhausted"
+    # docs/29 §12.3 (Phase 6, the HTTP Model Gateway).
+    RATE_LIMITED = "rate_limited"                       # the owner's usage rates
+    MAX_MODEL_CALLS = "max_model_calls"                 # the run's model-call bound (`[IMPL]`, register §2J)
+    DEPENDENCY_UNAVAILABLE = "dependency_unavailable"   # the configured provider failed
 
 
 class AgentGatewayRequest(_Strict):
@@ -922,6 +926,51 @@ class AgentGatewayRequest(_Strict):
     request_nonce: str = Field(max_length=512)
     sent_at: datetime
     request_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ChatTextPart(_Strict):
+    """One text part of an OpenAI-style message. Nothing but text is accepted:
+    no images (docs/29 §29.2 — `use_vision` is off in v1), no audio, no files."""
+
+    type: Literal["text"]
+    text: Annotated[str, Field(max_length=200_000)]
+
+
+class ChatCompletionMessage(_Strict):
+    """docs/29 §12.2: what an external runtime may send the Model Gateway. The
+    roles a text chat model takes; no `tool`/`function` role — v1 offers the
+    external runtime no tools through the model (OD-TOOL-3: none)."""
+
+    role: Literal["system", "user", "assistant"]
+    content: Annotated[str, Field(max_length=200_000)] | Annotated[list[ChatTextPart], Field(min_length=1,
+                                                                                            max_length=64)]
+    name: Annotated[str, Field(max_length=64)] | None = None
+
+    @property
+    def text(self) -> str:
+        if isinstance(self.content, str):
+            return self.content
+        return "".join(part.text for part in self.content)
+
+
+class ChatCompletionRequest(_Strict):
+    """docs/29 §12.2 — an OpenAI-compatible `POST /v1/chat/completions` body,
+    closed: the request names an *alias* and messages, never a provider, an
+    endpoint, a key, tools, a response format or a budget. Sampling hints a
+    runtime commonly sends are accepted and **not** forwarded — the selected
+    profile's configured entry decides how the model is called. `stream` and
+    `n` are accepted only to be refused with a clear reason
+    (`chat_request_refusal`)."""
+
+    model: Annotated[str, Field(max_length=128)]
+    messages: Annotated[list[ChatCompletionMessage], Field(min_length=1, max_length=256)]
+    stream: bool = False
+    n: int = Field(default=1, ge=1, le=16)
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    top_p: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
+    max_completion_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
+    user: Annotated[str, Field(max_length=128)] | None = None
 
 
 class RuntimeRef(_Strict):
@@ -1087,6 +1136,9 @@ class ModelCallRequest(_Strict):
 
 
 __all__ = [
+    "ChatCompletionMessage",
+    "ChatCompletionRequest",
+    "ChatTextPart",
     "AgentNotice",
     "DelegationRequest",
     "DelegationStatus",

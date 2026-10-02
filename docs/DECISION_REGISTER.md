@@ -477,6 +477,29 @@ Phase 5 mutants M-AG123–M-AG164 are in `tests/tools/guard_mutations.py`
 (M41, M-AG19 and M-AG118 were re-anchored onto the same guards). The BR-T2
 re-run is `docs/OD_A1_BR_T2.md` §3f (rows 42–45).
 
+### Phase 6, slice 6A — the HTTP Model Gateway (implementation facts)
+
+Built under §2L (OD-AF-6: Browser Use, P2; OD-TOOL-3: no MCP), **off by
+default** (`agents.model_gateway.enabled: false`), and it loads as true only
+with `agents.enabled` and an internal `listen`. It needs none of the open
+infrastructure decisions OD-AF-11…15, and it builds none of them: no
+container, namespace, egress proxy, image, browser capability or Browser Use
+adapter exists. Nothing calls it yet but tests; 6D's adapter will.
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P6-1 | **A separate internal listener.** Its own FastAPI app with one route, `POST /v1/chat/completions`, and no docs, schema or other route; **never included in the public app**. Served by its own background service on `agents.model_gateway.listen`: a Unix socket created `0600` before it accepts anything (a non-socket file at that path is refused, never replaced), or a loopback `address:port`. Wildcard, private, routable and hostname bindings are refused at load: a container network's address is OD-AF-12's to decide. | `server/gateway/routers/model_gateway.py`, `server/composition/model_gateway.py`, `server/net/listen.py` (the only module besides egress that opens a raw socket), `server/config/schema.py` |
+| AF-P6-2 | **One core.** The token is checked by `AgentGateway.authenticate` (the native runtime's core; model purpose only), the profile by `AgentFactory.model_screen` and the month by `AgentFactory.agent_budget` — both moved from the native coordinator unchanged, so one implementation serves native and external runs. Order: token → request shape → alias → global stop → run and task running and the owner's → profile permitted now → deadline → model-call bound → the run's budget, the owner's budget and rates, the agent's month → provider. Authentication comes first: an unauthenticated caller learns nothing else. | `server/composition/model_gateway.py`, `server/composition/agents.py` |
+| AF-P6-3 | **A closed request.** `model` must be exactly `agent-model` (a `model-tool:` alias is refused here too); text messages with roles system/user/assistant only; no tools, functions, response format, images or unknown fields. `stream: true` and `n ≠ 1` are refused with `400`. Sampling hints (`temperature`, `top_p`, `max_tokens`) are accepted and **not** forwarded: the configured entry decides. A body over `max_request_bytes` (1 MiB) is refused unread (`413`). | `shared/schemas/agent_factory.py`, `server/agents/gateway/model_gateway.py` |
+| AF-P6-4 | **Errors** (docs/29 §12.3): `401 invalid_run_token`, `400 schema_invalid`, `403 model_not_allowed`, `409 run_not_running` (the run not running, its task ended, the agent paused/changed/unavailable, the deadline passed, or the global stop), `429 budget_exceeded \| agent_budget_exhausted \| rate_limited \| max_model_calls`, `503 dependency_unavailable`. **`max_model_calls`** is a code docs/29 does not name: the run's model-call bound (`min(runtime, spec)`) needed one, and none of the three it lists is accurate. Messages are fixed text; no provider error, endpoint, model name, key or token ever appears in a response. Every refusal is audited (`agent.gateway.denied`). | `server/agents/gateway/model_gateway.py`, `server/composition/model_gateway.py` |
+| AF-P6-5 | **Bounds without a race.** The run's model-call bound is taken by one conditional `UPDATE` on its task (`model_calls < limit`), so concurrent requests cannot overrun it. The run's budget is `min(runtime per-task budget, spec per-run, delegation per-run)` against its live attributed usage (its `cost_total` is written only when it ends). | `server/agents/service.py` |
+| AF-P6-6 | **Metering.** Every provider attempt is a `UsageEvent(model_call)` as the run's owner (a delegated run's has no device or session), joined to the run in `agent_run_usage`; a failed, timed-out or abandoned attempt is metered at zero units. No transaction is open while the provider answers (H-1). A caller that disconnects cancels the provider call. | `server/composition/model_gateway.py` |
+| AF-P6-7 | **The answer** names only the alias; its text is scrubbed of anything secret-shaped and cut at `max_completion_chars` (16 000) with a marker and `finish_reason: length`. docs/29 §12.2 points at `05` §6's observation bound; that bound (4 000) is too small for a browser runtime's structured answers, so the gateway has its own. | `server/composition/model_gateway.py` |
+
+6A mutants M-AG166–M-AG189 are in `tests/tools/guard_mutations.py` (24/24
+killed). No data class changes (no new table or column), so BR-T2 is not
+re-measured for 6A; the container rows come with 6C/6E.
+
 
 ## 2K. Agent Factory owner decisions (2026-10-02)
 

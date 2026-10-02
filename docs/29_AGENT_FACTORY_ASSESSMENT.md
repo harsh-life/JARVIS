@@ -686,6 +686,7 @@ Every model call of every agent run — native in-process in Phase 3, external o
 ### 12.2 Contract `[IMPLEMENTATION-READY]` (Phase 3 in-process; Phase 6 HTTP)
 
 - **Phase 6 wire format:** OpenAI-compatible `POST {model_endpoint}/v1/chat/completions` with `Authorization: Bearer <run_token(model)>`.
+  *Built in Phase 6 slice 6A (register §2J, AF-P6-1…7): a separate internal listener, off by default; the order, errors and bounds below as specified, plus `429 max_model_calls` for the run's model-call bound.*
 - **Model name:** the request's `model` must equal `model_alias`; anything else is `403 model_not_allowed`.
 - **Pipeline:**
 

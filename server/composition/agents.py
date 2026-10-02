@@ -483,6 +483,44 @@ class AgentFactory:
 
         return assemble_input(spec, run_id, max_chars=self._config.agent.bounds.max_input_chars)
 
+    async def model_screen(self, session: AsyncSession, model: ModelCallFacts | None,
+                           context: GatewayContext) -> GatewayDenied | None:
+        """docs/29 §12.2: the Model Gateway's own check — the alias, the
+        approved profile, the owner's model policy now, the exact model. One
+        implementation for native runs (in-process) and external runs (HTTP)."""
+
+        not_allowed = AgentGatewayErrorCode.MODEL_NOT_ALLOWED
+        if model is None:
+            return GatewayDenied(not_allowed, "no_alias")
+        loaded = await self._service.load(session, context.agent_id, fresh=True)
+        if loaded is None or loaded[1] is None or loaded[1].spec_hash != context.spec_hash:
+            return GatewayDenied(AgentGatewayErrorCode.AGENT_UNAVAILABLE, "spec")
+        definition, spec = loaded
+        owner_ref = await self.primary_model_ref(session, user_id=definition.owner_user_id,
+                                                 graph_id=definition.graph_id)
+        refused = model_refusal(spec, self.registries, alias=model.alias, provider=model.provider,
+                                model=model.model, owner_primary_model_ref=owner_ref)
+        return GatewayDenied(not_allowed, refused) if refused is not None else None
+
+    async def agent_budget(self, session: AsyncSession, *, agent_id: uuid.UUID, delegation_id: uuid.UUID | None,
+                           projected_cost: float) -> str | None:
+        """docs/29 §10.5 / §12.2: `None`, or why a paid call would take the
+        agent's month past its budget (read live from attributed usage)."""
+
+        loaded = await self._service.load(session, agent_id, fresh=True)
+        if loaded is None or loaded[1] is None:
+            return AgentGatewayErrorCode.AGENT_UNAVAILABLE.value
+        spent = await self._service.month_usage(session, agent_id)
+        month_budget = loaded[1].budget.per_month
+        if delegation_id is not None:
+            # docs/29 §15.3 / OD-AF-7: an unattended run spends at most the
+            # delegation's month, never more than the spec's.
+            delegation = await session.get(StandingDelegationRow, delegation_id, populate_existing=True)
+            if delegation is None:
+                return AgentGatewayErrorCode.AGENT_UNAVAILABLE.value
+            month_budget = min(month_budget, delegation.budget_per_month)
+        return budget_refusal(projected_cost=projected_cost, month_spent=spent, month_budget=month_budget)
+
     def run_deadline(self, spec: CompiledAgentSpec) -> datetime:
         seconds = min(float(spec.bounds.max_run_seconds), self._config.agent.bounds.wall_clock_timeout_seconds)
         return datetime.now(timezone.utc) + timedelta(seconds=seconds)
@@ -936,21 +974,7 @@ class AgentRunCoordinator:
         return None
 
     async def _model_screen(self, model: ModelCallFacts | None, context: GatewayContext) -> GatewayDenied | None:
-        """docs/29 §12.2: the Model Gateway's own check — the alias, the
-        approved profile, the owner's model policy now, the exact model."""
-
-        not_allowed = AgentGatewayErrorCode.MODEL_NOT_ALLOWED
-        if model is None:
-            return GatewayDenied(not_allowed, "no_alias")
-        loaded = await self._service.load(self._session, context.agent_id, fresh=True)
-        if loaded is None or loaded[1] is None or loaded[1].spec_hash != context.spec_hash:
-            return GatewayDenied(AgentGatewayErrorCode.AGENT_UNAVAILABLE, "spec")
-        definition, spec = loaded
-        owner_ref = await self._factory.primary_model_ref(self._session, user_id=definition.owner_user_id,
-                                                          graph_id=definition.graph_id)
-        refused = model_refusal(spec, self._factory.registries, alias=model.alias, provider=model.provider,
-                                model=model.model, owner_primary_model_ref=owner_ref)
-        return GatewayDenied(not_allowed, refused) if refused is not None else None
+        return await self._factory.model_screen(self._session, model, context)
 
     async def admit(self, binding: AgentRunBinding, request: AgentGatewayRequest,
                     model: ModelCallFacts | None = None) -> GatewayAdmission:
@@ -972,20 +996,8 @@ class AgentRunCoordinator:
             await self._gateway.settle(self._session, admission.ticket, _scrubbed(response))
 
     async def agent_budget(self, binding: AgentRunBinding, *, projected_cost: float) -> str | None:
-        loaded = await self._service.load(self._session, binding.agent_id, fresh=True)
-        if loaded is None or loaded[1] is None:
-            return AgentGatewayErrorCode.AGENT_UNAVAILABLE.value
-        spent = await self._service.month_usage(self._session, binding.agent_id)
-        month_budget = loaded[1].budget.per_month
-        if binding.delegation_id is not None:
-            # docs/29 §15.3 / OD-AF-7: an unattended run spends at most the
-            # delegation's month, never more than the spec's.
-            delegation = await self._session.get(StandingDelegationRow, binding.delegation_id,
-                                                 populate_existing=True)
-            if delegation is None:
-                return AgentGatewayErrorCode.AGENT_UNAVAILABLE.value
-            month_budget = min(month_budget, delegation.budget_per_month)
-        return budget_refusal(projected_cost=projected_cost, month_spent=spent, month_budget=month_budget)
+        return await self._factory.agent_budget(self._session, agent_id=binding.agent_id,
+                                                delegation_id=binding.delegation_id, projected_cost=projected_cost)
 
     async def usage_recorded(self, binding: AgentRunBinding, *, usage_id: uuid.UUID, cost: float) -> None:
         await self._service.attribute_usage(self._session, binding.run_id, usage_id)
