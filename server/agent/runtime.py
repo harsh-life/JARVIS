@@ -100,7 +100,7 @@ from shared.schemas.agent import (
     ToolInvocation,
     ToolOutput,
 )
-from shared.schemas.agent_factory import RunTokenPurpose
+from shared.schemas.agent_factory import RunTokenPurpose, unattended_refusal
 from shared.schemas.authorization import (
     AnyPrincipal,
     DelegatedPrincipal,
@@ -1062,6 +1062,12 @@ class AgentRuntime:
                 await self._envelope_denied(env, state, f"capability:{capability}")
                 lines.append(agent_envelope.not_in_envelope(capability))
                 continue
+            if self._unattended(state) and agent_envelope.unattended_capability_refused(capability):
+                # docs/29 §15.7: nothing device-, app-, break-glass- or
+                # factory-shaped is ever activated in an unattended run.
+                await self._unattended_denied(env, state, f"capability:{capability}")
+                lines.append(agent_envelope.not_unattended(capability))
+                continue
             info = env.security.describe_capability(capability)
 
             if info.status is CapabilityStatus.PROHIBITED:
@@ -1097,6 +1103,15 @@ class AgentRuntime:
                 await self._event(env, state, AgentEvent.CAPABILITY_ACTIVATED, AuditResult.SUCCESS,
                                   resource=f"capability:{capability}")
                 lines.append(f"{capability}: active for this task (your existing grant).")
+                continue
+
+            if self._unattended(state):
+                # docs/29 §15.6 (OD-AF-4): the delegation is a ceiling, not a
+                # grant. An unattended run uses only what its owner already
+                # granted; it never asks anyone to activate anything.
+                await self._unattended_denied(env, state, f"capability:{capability}")
+                lines.append(f"{capability}: not granted to you as a standing grant — an unattended run "
+                             "never asks for confirmation.")
                 continue
 
             verdict = await env.security.authorize_activation(ActivationRequest(
@@ -1428,6 +1443,19 @@ class AgentRuntime:
             state.messages.append(ctx.observation(agent_envelope.not_in_envelope(handle.required_capability),
                                                   limit=self._bounds.max_observation_chars))
             return None
+        if self._unattended(state):
+            # docs/29 §15.7 (OD-AF-4): the unattended ceiling, before the
+            # engine — ≤ low_write, server only, no device/app/break-glass/
+            # agent.*, no net.request but `get`. Refused, never confirmable.
+            tier = env.security.operation_tier(capability=handle.required_capability,
+                                               capability_operation=call.operation,
+                                               resource_type=resource_type, operation=operation)
+            if unattended_refusal(handle.required_capability, call.operation, tier,
+                                  platform=platform.value) is not None:
+                await self._unattended_denied(env, state, resource)
+                state.messages.append(ctx.observation(agent_envelope.not_unattended(handle.required_capability),
+                                                      limit=self._bounds.max_observation_chars))
+                return None
 
         if handle.is_model_tool and self._bounds.max_model_tool_nesting_depth < 1:
             # RT-T7 / OD-RT-1: the nesting bound, enforced by the runtime.
@@ -1451,6 +1479,13 @@ class AgentRuntime:
             await self._reject(env, state, "That action is prohibited and can never be performed.",
                                resource, decision=verdict.decision)
             self._breaker.record_denial(state)
+            return None
+        if verdict.needs_confirmation and self._unattended(state):
+            # The engine refuses these for a delegated principal; were one
+            # ever offered, it is a refusal here too — no token is issued.
+            await self._unattended_denied(env, state, resource)
+            state.messages.append(ctx.observation(agent_envelope.not_unattended(handle.required_capability),
+                                                  limit=self._bounds.max_observation_chars))
             return None
         if verdict.needs_confirmation and verdict.binding is not None:
             issued = await env.security.issue_confirmation(verdict.binding, verdict.risk_category)
@@ -1750,6 +1785,10 @@ class AgentRuntime:
     # ── lifecycle ───────────────────────────────────────────────────────
 
     async def _pause(self, env: TaskEnvironment, state: TaskState) -> AgentResult:
+        if self._unattended(state):
+            # docs/29 §15.6: an unattended run never waits for a person. A
+            # pause reached here is a broken gate upstream: fail closed.
+            return await self._fail(env, state, AgentFailureCode.AGENT_UNAVAILABLE)
         if state.tripped is not None:
             # Tripped while this step was being decided: the confirmation just
             # issued is spent by the stop, and the task never pauses.
@@ -1763,6 +1802,9 @@ class AgentRuntime:
         return self._result_from_state(state, AgentTaskStatus.AWAITING_CONFIRMATION)
 
     async def _pause_for_platform(self, env: TaskEnvironment, state: TaskState) -> AgentResult:
+        if self._unattended(state):
+            state.platform_wait = None
+            return await self._fail(env, state, AgentFailureCode.AGENT_UNAVAILABLE)
         if state.tripped is not None:
             state.platform_wait = None
             return await self._emergency_stop(env, state)
@@ -2108,6 +2150,18 @@ class AgentRuntime:
     @staticmethod
     def _envelope(state: TaskState) -> agent_envelope.Envelope | None:
         return state.agent.envelope if state.agent is not None else None
+
+    @staticmethod
+    def _unattended(state: TaskState) -> bool:
+        """docs/29 §15: an unattended agent run — its principal is the
+        delegation's, so it has no device, no session and nobody to ask."""
+
+        return is_delegated(state.principal)
+
+    async def _unattended_denied(self, env: TaskEnvironment, state: TaskState, resource: str) -> None:
+        await self._event(env, state, AgentEvent.ENVELOPE_DENIED, AuditResult.BLOCKED,
+                          resource=f"unattended:{resource}", decision=PermissionDecisionValue.DENY)
+        self._breaker.record_denial(state)
 
     def _within_envelope(self, env: TaskEnvironment, state: TaskState, capability: str, capability_operation: str,
                          resource_type: ResourceType, operation: Operation,

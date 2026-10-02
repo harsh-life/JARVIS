@@ -133,7 +133,16 @@ from shared.schemas.agent_factory import (
     RunTokenPurpose,
     TriggerKind,
 )
-from shared.schemas.authorization import DelegatedPrincipal, DenialSurface, Operation, Principal, ResourceType
+from shared.schemas.authorization import (
+    AnyPrincipal,
+    DelegatedPrincipal,
+    DenialSurface,
+    Operation,
+    Principal,
+    ResourceType,
+    device_of,
+    session_of,
+)
 from shared.schemas.enums import (
     AgentConfigScopeType,
     AuditActor,
@@ -1049,7 +1058,7 @@ class _PresentUserRun:
     There is no other way for a native run to start — no background path."""
 
     def __init__(self, *, tasks: "AgentTaskFacade", factory: AgentFactory, session: AsyncSession,
-                 principal: Principal, audit: AuditLogger, binding: AgentRunBinding | None = None) -> None:
+                 principal: AnyPrincipal, audit: AuditLogger, binding: AgentRunBinding | None = None) -> None:
         self._tasks = tasks
         self._service = factory.service
         self._gateway = factory.gateway
@@ -1090,8 +1099,8 @@ class _PresentUserRun:
         if await self._gateway.revoke_run(self._session, run_id, reason.value):
             await self._audit.record(actor=AuditActor.USER, action=AuditAction.AGENT_TOKEN_REVOKED,
                                      resource=f"agentrun:{run_id}:{reason.value}", result=AuditResult.SUCCESS,
-                                     user_id=self._principal.user_id, device_id=self._principal.device_id,
-                                     session_id=self._principal.session_id)
+                                     user_id=self._principal.user_id, device_id=device_of(self._principal),
+                                     session_id=session_of(self._principal))
         if run.task_id is not None:
             try:
                 await self._tasks.cancel(self._session, principal=self._principal, task_id=run.task_id,

@@ -26,6 +26,7 @@ from server.agent import AgentRuntime, ConcurrencyGate, ConcurrencyLimits, Runti
 from server.agent.breaker import BreakerLimits
 from server.agent.recovery import RecoveryPolicy
 from server.agents.service import AgentDefinitionService
+from server.composition.agent_triggers import AgentTriggerLoop
 from server.composition.agents import (
     AgentDefinitionLoader,
     AgentFactory,
@@ -383,6 +384,17 @@ def build_application(
             if agent_factory is not None and config.agents.unattended_enabled else None
         ),
     )
+    # docs/29 §15.5 (Phase 5): the unattended trigger loop — the Agent
+    # Factory's own, not the scheduler's; nothing at all unless the operator
+    # switched unattended runs on.
+    agent_triggers: AgentTriggerLoop | None = None
+    if agent_factory is not None and config.agents.unattended_enabled:
+        agent_triggers = AgentTriggerLoop(
+            factory=agent_factory, tasks=facade, storage=storage,
+            grace_minutes=config.agents.misfire_grace_minutes,
+            interval_seconds=config.agents.trigger_interval_seconds,
+        )
+        background.append(agent_triggers)
     # 19: the Judge — nothing at all unless `evaluation.enabled`.
     evaluation = build_evaluation(
         config, runtime=runtime, storage=storage, factory=factory, tuning=tuning, switches=switchboard,
@@ -430,6 +442,7 @@ def build_application(
         ),
     )
     app.state.evaluation = evaluation_jobs
+    app.state.agent_triggers = agent_triggers
     # docs/23 §4: the optional push wake — nothing at all unless configured.
     attach_push_wake(config, app, device_hub)
     return app
