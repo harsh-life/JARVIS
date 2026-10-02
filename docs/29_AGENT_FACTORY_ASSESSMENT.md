@@ -3,6 +3,7 @@
 
 **Written:** 2026-09-30 · **Audited against:** `harsh-life/JARVIS` `origin/main` @ `ddbb038` (PR #30; PostgreSQL store, Stage 5 Judge and console, scheduler, memory, voice, Android device hub all merged).
 **Document status:** **`[PROPOSAL — NOT CANONICAL UNTIL RATIFIED]`**. The *technical design* is implementation-ready where marked. Nothing here is `[LOCKED]` unless it restates existing canonical text with its source.
+**Ratified 2026-10-02 (owner instruction; `docs/DECISION_REGISTER.md` §2K):** OD-AF-2, 3, 4, 5, 7 and 8 at the §32 recommended values; PRD §22 carries the §15.8 amendment. OD-AF-1, 6, 9 and 10 stay open, and everything else here stays a proposal.
 **Authority:** below `Working Markdown/00_CANONICAL_PRD.md` and `docs/DECISION_REGISTER.md`. Consumes `04`, `05`, `07`, `13`, `18`–`24`, `27`, `28` and the code of record named in each section.
 
 ### Classification used throughout
@@ -1450,7 +1451,7 @@ Also `[FUTURE]`:
 | **2** — native runs, envelope gate, inbox, notebook, attribution | **READY TO IMPLEMENT** | present-user principal (no new identity); `observe` mode already enforces read-only; envelope gate mirrors `modes.py` |
 | **3** — Agent Gateway (in-process), tokens, Judge/console integration | **READY TO IMPLEMENT** | in-process only; the network surface is Phase 6 |
 | **4** — reminder-tap | **READY TO IMPLEMENT** | scheduler contract unchanged (reminder carries data); needs one nullable `01` field (behind the flag) and an Android screen |
-| **5** — unattended recurring agents | **BLOCKED BY OWNER DECISION** | OD-AF-2 (PRD §22 amendment), DelegatedPrincipal in `03`/`04`, OD-AF-4/5 |
+| **5** — unattended recurring agents | **UNBLOCKED 2026-10-02** | OD-AF-2/4/5 ratified, PRD §22 amended, DelegatedPrincipal in `03`/`04` (register §2K) |
 | **6** — first external provider | **BLOCKED BY INFRASTRUCTURE** (and OD-AF-6, OD-TOOL-3) | no container/netns isolation, no MCP server/transport, no egress proxy for P2 in the repository |
 | **7+** — additional providers | **FUTURE** | one per concrete task class, after Phase 6 |
 | Darwin | **FUTURE** | separate subsystem, not started |

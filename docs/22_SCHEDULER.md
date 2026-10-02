@@ -15,6 +15,8 @@
 
 This keeps the scheduler out of the execution path entirely, which is what makes it safe to build now. It is also the only reading consistent with PRD §22 ("task-linked reminders only") and OD-F1 ("suggest must not execute").
 
+**Unchanged by PRD §22's amendment (OD-AF-2, 2026-10-02).** Unattended agent execution under a StandingDelegation is *not* a scheduler feature: it is the Agent Factory's own trigger loop (`server/agents/triggers.py`, run by the composition root), which reads the agent's compiled schedule itself. The scheduler still imports none of the runtime, the tools or the factory, and a firing reminder still only delivers a message. OD-SCH-3 is resolved by reference to docs/29 §15.
+
 ---
 
 ## 1. Creation
@@ -84,7 +86,7 @@ security:
 |---|---|---|
 | OD-SCH-1 | Ratify `scheduler.create` capability name and `low_write` tier (matrix §3.2) | `[OPEN — OWNER]` |
 | OD-SCH-2 | Fire-time `suggest` task with a sessionless, read-only principal | `[OPEN — OWNER]`, rec not in next build |
-| OD-SCH-3 | Scheduled *execution* (a job that runs actions unattended) | `[FUTURE]`; would need a standing-delegation model and conflicts with PRD §22 as written |
+| OD-SCH-3 | Scheduled *execution* (a job that runs actions unattended) | **Resolved by reference** (OD-AF-2, 2026-10-02): unattended execution exists only as docs/29 §15 — an agent's StandingDelegation, run by the Agent Factory's trigger loop, never by the scheduler |
 
 ---
 

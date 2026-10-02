@@ -768,11 +768,19 @@ class AgentTask(Base):
 
     task_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
-    device_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("devices.device_id"), nullable=False
+    # A present user's task carries the device and session it was started
+    # from. docs/29 §15.2 (Phase 5, OD-AF-2): an unattended agent run is a
+    # `DelegatedPrincipal`'s task instead — no device, no session, and the
+    # standing delegation it runs under. Never both, never neither
+    # (`ck_agent_tasks_principal`).
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("devices.device_id"), nullable=True
     )
-    session_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("sessions.session_id"), nullable=False
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("sessions.session_id"), nullable=True
+    )
+    delegation_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("standing_delegations.delegation_id"), nullable=True
     )
     graph_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("graphs.graph_id"), nullable=True
@@ -798,6 +806,11 @@ class AgentTask(Base):
         ),
         CheckConstraint(
             "mode IN ('execute','draft','suggest','observe')", name="ck_agent_tasks_mode"
+        ),
+        CheckConstraint(
+            "(device_id IS NOT NULL AND session_id IS NOT NULL AND delegation_id IS NULL)"
+            " OR (device_id IS NULL AND session_id IS NULL AND delegation_id IS NOT NULL)",
+            name="ck_agent_tasks_principal",
         ),
         Index("ix_agent_tasks_user_created", "user_id", "created_at"),
     )
@@ -1042,6 +1055,62 @@ class AgentCompilePreviewRow(Base):
     )
 
 
+class StandingDelegationRow(Base):
+    """docs/29 §15.3 (Phase 5; OD-AF-2/5/7, register §2K) — the owner's
+    step-up-confirmed permission for one agent to run **unattended**, on
+    exactly its compiled schedule, within exactly its compiled envelope, under
+    explicit budgets, a daily run limit and a mandatory expiry. A ceiling, never
+    a grant. Bound to one spec version, hash and envelope hash: any change to
+    the spec invalidates it. Kept for audit; it holds no content.
+
+    `created_by_device_id`/`created_by_session_id` are provenance of the grant
+    only — never an execution credential (an unattended run has no device and
+    no session). `last_occurrence_at` is the last schedule occurrence claimed
+    (run or coalesced): the trigger loop claims an occurrence by moving it
+    forward, compare-and-set, so concurrent loops never run one twice."""
+
+    __tablename__ = "standing_delegations"
+
+    delegation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_definitions.agent_id"), nullable=False)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    graph_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("graphs.graph_id"), nullable=True)
+    spec_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    spec_hash: Mapped[str] = mapped_column(String, nullable=False)
+    envelope_hash: Mapped[str] = mapped_column(String, nullable=False)
+    allowed_trigger_cron: Mapped[str] = mapped_column(String, nullable=False)
+    timezone: Mapped[str] = mapped_column(String, nullable=False)
+    max_runs_per_day: Mapped[int] = mapped_column(Integer, nullable=False)
+    budget_per_run: Mapped[float] = mapped_column(Float, nullable=False)
+    budget_per_month: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_with_step_up: Mapped[bool] = mapped_column(nullable=False)
+    created_by_device_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_by_session_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    status_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_occurrence_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expiry_notice_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('active','revoked','expired','invalidated')",
+                        name="ck_standing_delegations_status"),
+        CheckConstraint("created_with_step_up", name="ck_standing_delegations_step_up"),
+        CheckConstraint("max_runs_per_day >= 1 AND max_runs_per_day <= 24",
+                        name="ck_standing_delegations_runs"),
+        CheckConstraint("budget_per_run > 0 AND budget_per_month > 0", name="ck_standing_delegations_budget"),
+        CheckConstraint("expires_at > created_at", name="ck_standing_delegations_expiry"),
+        CheckConstraint("spec_version >= 1", name="ck_standing_delegations_version"),
+        # At most one active delegation per agent (docs/29 §15.3).
+        Index("uq_standing_delegations_active", "agent_id", unique=True,
+              sqlite_where=text("status = 'active'"), postgresql_where=text("status = 'active'")),
+        Index("ix_standing_delegations_status", "status"),
+        Index("ix_standing_delegations_owner", "owner_user_id"),
+    )
+
+
 class AgentRunRow(Base):
     """docs/29 §22.1 — one run of an agent: which version (and hash) it ran,
     the ordinary task it ran as, and how it ended. A run is always the present
@@ -1067,10 +1136,23 @@ class AgentRunRow(Base):
     # docs/29 §17.1 (Phase 4): the reminder delivery a `reminder_tap` run was
     # tapped from — unique, so one tap is one run. A reference, not a key.
     reminder_delivery_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # docs/29 §15.5 (Phase 5): an `unattended` run names the standing
+    # delegation it ran under and the schedule occurrence it is — unique
+    # together, so one occurrence is at most one run whatever races.
+    delegation_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("standing_delegations.delegation_id"), nullable=True
+    )
+    occurrence_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
-        CheckConstraint("kind IN ('on_demand','reminder_tap')", name="ck_agent_runs_kind"),
+        CheckConstraint("kind IN ('on_demand','reminder_tap','unattended')", name="ck_agent_runs_kind"),
+        CheckConstraint(
+            "(kind = 'unattended' AND delegation_id IS NOT NULL AND occurrence_at IS NOT NULL)"
+            " OR (kind <> 'unattended' AND delegation_id IS NULL AND occurrence_at IS NULL)",
+            name="ck_agent_runs_delegation",
+        ),
         Index("uq_agent_runs_reminder_delivery", "reminder_delivery_id", unique=True),
+        Index("uq_agent_runs_occurrence", "delegation_id", "occurrence_at", unique=True),
         CheckConstraint(
             "status IN ('queued','running','waiting','completed','failed','cancelled')", name="ck_agent_runs_status"
         ),
@@ -1122,7 +1204,17 @@ class AgentInboxItemRow(Base):
     item_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
     agent_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_definitions.agent_id"), nullable=False)
-    run_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("agent_runs.run_id"), nullable=False, unique=True)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("agent_runs.run_id"), nullable=True, unique=True
+    )
+    # docs/29 §15 / OD-AF-8 (Phase 5): a `notice` tells the owner about the
+    # agent's standing delegation — a closed `notice` code, no run, no body
+    # from any agent or model.
+    kind: Mapped[str] = mapped_column(String, nullable=False, default="result", server_default="result")
+    notice: Mapped[str | None] = mapped_column(String, nullable=True)
+    delegation_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("standing_delegations.delegation_id"), nullable=True
+    )
     status: Mapped[str] = mapped_column(String, nullable=False)
     failure_code: Mapped[str | None] = mapped_column(String, nullable=True)
     body: Mapped[str] = mapped_column(String, nullable=False)
@@ -1132,7 +1224,12 @@ class AgentInboxItemRow(Base):
     read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
-        CheckConstraint("status IN ('completed','failed','cancelled')", name="ck_agent_inbox_items_status"),
+        CheckConstraint("status IN ('completed','failed','cancelled','notice')", name="ck_agent_inbox_items_status"),
+        CheckConstraint(
+            "(kind = 'result' AND run_id IS NOT NULL AND notice IS NULL AND status <> 'notice')"
+            " OR (kind = 'notice' AND run_id IS NULL AND notice IS NOT NULL AND status = 'notice')",
+            name="ck_agent_inbox_items_kind",
+        ),
         Index("ix_agent_inbox_items_owner_created", "owner_user_id", "created_at"),
         Index("ix_agent_inbox_items_agent", "agent_id"),
     )

@@ -229,6 +229,8 @@ Anti-enumeration `[LOCKED]`: a denial that would reveal the existence or visibil
 
 `[LOCKED]` Realizes `SCHED-001`. The scheduler (APScheduler-class mechanism) creates **task-linked reminders only** — a `ScheduledJob` with an empty or absent user-given `task_reason` must not exist and is rejected. If no user-given reason exists, the scheduler does nothing; there is no unprompted proactivity. Job creation counts against the per-user rate/quota limit (§32) and fails explicitly, never silently, on breach.
 
+**Amendment (owner decision OD-AF-2, 2026-10-02; `docs/DECISION_REGISTER.md` §2K, docs/29 §15.8):** An agent with an active, step-up-granted StandingDelegation may execute unattended within its compiled envelope (≤ low_write), outputs to the owner's inbox only. The scheduler itself still never executes.
+
 ## 23. Emotional-Content Hard Boundary
 
 `[LOCKED]` Realizes `EMO-001..005`. This is a hard line, not a style preference — restated fully here because Track B may be the only AI system some of its eventual users have access to, on the cheapest phones in the largest market segment; simulated emotional attachment at that scale is a real, material harm.
@@ -558,6 +560,7 @@ hypermind-track-b/
 | OD-TOOL-1 | Exact risk-tier assignment per operation | `07` | **RATIFIED AT THE SEMANTIC-CAPABILITY LEVEL** (owner); concrete names/tiers `[PROPOSED]` in `docs/CAPABILITY_MATRIX.md`, owner signs the tier table |
 | OD-TOOL-2 | Provisional/untrusted-tool enablement gate specifics | `07` | `[IMPL]` |
 | OD-TOOL-3 | Which MCP servers (if any) are enabled at pilot | `07` | Default none |
+| OD-AF-2…5, 7, 8 | Agent Factory: unattended runs (§22 amendment), `agent.*` tiers, no consequential unattended actions, delegation lifetime, quota/budgets, inbox-only outputs | docs/29 | **RATIFIED** (owner, 2026-10-02) at docs/29 §32's recommended values — exact scope in `docs/DECISION_REGISTER.md` §2K. OD-AF-1, 6, 9, 10 stay open |
 | OD-AND-1 | Full capability→operation→primitive table | `08` | `[IMPL]`; owner signs |
 | OD-AND-2 | Shizuku required for MVP, or Accessibility-only | `08` | Rec Accessibility-first |
 | OD-AND-3 | Expose `system.restricted` at all in MVP | `08` | Rec no |
