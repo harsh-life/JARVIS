@@ -80,6 +80,7 @@ from server.agent.records import (
     create_task_row,
     load_task_row,
     non_terminal_task_ids,
+    row_principal,
     update_task_row,
 )
 from server.agent.state import Activation, PendingStep, PlatformWaitStep, TaskState, TaskStateRegistry
@@ -100,7 +101,16 @@ from shared.schemas.agent import (
     ToolOutput,
 )
 from shared.schemas.agent_factory import RunTokenPurpose
-from shared.schemas.authorization import Operation, Principal, ResourceType
+from shared.schemas.authorization import (
+    AnyPrincipal,
+    DelegatedPrincipal,
+    Operation,
+    Principal,
+    ResourceType,
+    device_of,
+    is_delegated,
+    session_of,
+)
 from shared.schemas.enums import AuditResult, PermissionDecisionValue, RiskCategory, UsageKind
 
 logger = logging.getLogger("hypermind.agent.runtime")
@@ -339,7 +349,7 @@ class AgentRuntime:
     # ── public API (02 §5) ──────────────────────────────────────────────
 
     async def submit(
-        self, env: TaskEnvironment, *, principal: Principal, user_input: str,
+        self, env: TaskEnvironment, *, principal: AnyPrincipal, user_input: str,
         mode: TaskMode = TaskMode.EXECUTE, agent: AgentRunBinding | None = None,
     ) -> AgentResult:
         """Run a new task until it finishes, pauses for a human, or fails.
@@ -360,6 +370,17 @@ class AgentRuntime:
             if env.agent_runs is None:
                 raise RuntimeError("agent runs are not available")
             mode = agent.run_mode
+        # docs/29 §15.2 (03 §8 as amended): an unattended run — and only one —
+        # runs as its delegation's `DelegatedPrincipal`, bound to exactly that
+        # run, agent and delegation. Anything else does not start.
+        if is_delegated(principal):
+            assert isinstance(principal, DelegatedPrincipal)
+            if agent is None or agent.delegation_id is None or (
+                agent.delegation_id, agent.run_id, agent.agent_id
+            ) != (principal.delegation_id, principal.run_id, principal.agent_id):
+                raise RuntimeError("a delegated principal runs only its own unattended agent run")
+        elif agent is not None and agent.delegation_id is not None:
+            raise RuntimeError("an unattended agent run needs its delegated principal")
         # 18 §5.4: while the global latch is set — or cannot be read — no task
         # is created at all.
         if not await env.supervisor.submissions_open():
@@ -373,10 +394,11 @@ class AgentRuntime:
                 env.session,
                 task_id=task_id,
                 user_id=principal.user_id,
-                device_id=principal.device_id,
-                session_id=principal.session_id,
+                device_id=device_of(principal),
+                session_id=session_of(principal),
                 graph_id=graph_id,
                 mode=mode.value,
+                delegation_id=principal.delegation_id if isinstance(principal, DelegatedPrincipal) else None,
             )
             state = TaskState(task_id=task_id, principal=principal, graph_id=graph_id, mode=mode,
                               user_input=user_input, agent=agent)
@@ -699,8 +721,7 @@ class AgentRuntime:
                                                AgentFailureCode.EMERGENCY_STOP, event=AgentEvent.TASK_FAILED)
         if not closed:
             return StopOutcome.ALREADY_TERMINAL
-        principal = Principal(user_id=row.user_id, device_id=row.device_id,
-                              session_id=row.session_id, active_graph_id=row.graph_id)
+        principal = await row_principal(env.session, row)
         await env.security.record(
             AgentEvent.BREAKER_TRIPPED, principal=principal, graph_id=row.graph_id,
             resource=_trip_resource(BreakerScope.TASK, task_id, source, reason),
@@ -1565,7 +1586,7 @@ class AgentRuntime:
                 tool_id=handle.tool_id, operation=operation, arguments=arguments,
                 user_id=state.principal.user_id, task_id=state.task_id, platform=platform,
                 resource_ref=resource_ref, resource_scope=scope,
-                device_id=state.principal.device_id,
+                device_id=device_of(state.principal),
                 # docs/22 §1: only a tool registered to bind it receives the
                 # user's own instruction — from the task, never the proposal.
                 task_input=state.user_input if handle.binds_task_input else None,
@@ -1634,7 +1655,7 @@ class AgentRuntime:
             output.ok
             or not waitable
             or platform is not ExecutionPlatform.ANDROID
-            or state.principal.device_id is None
+            or device_of(state.principal) is None
             or state.platform_waits >= self._bounds.max_platform_waits
         ):
             return
@@ -1642,7 +1663,7 @@ class AgentRuntime:
         state.platform_wait = PlatformWaitStep(
             tool=tool, operation=operation, arguments=arguments, platform=platform,
             resource_ref=resource_ref, scope=scope, dependency=output.required_platform,
-            device_id=state.principal.device_id,
+            device_id=device_of(state.principal),
             expires_at=datetime.now(timezone.utc) + timedelta(seconds=self._bounds.max_platform_wait_seconds),
         )
 
@@ -1936,8 +1957,7 @@ class AgentRuntime:
                                               failure_code=failure.value if failure else None)
         if not closed:
             return updated, False
-        principal = Principal(user_id=row.user_id, device_id=row.device_id,
-                              session_id=row.session_id, active_graph_id=row.graph_id)
+        principal = await row_principal(env.session, row)
         await env.security.settle_break_glass(principal=principal, graph_id=row.graph_id, task_id=row.task_id,
                                               ended=status, failure=failure)
         await env.security.deactivate_task(principal=principal, task_id=row.task_id)

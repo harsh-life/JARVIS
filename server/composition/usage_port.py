@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.agent.ports import UsageLimitReached
 from server.security.usage import LimitExceeded, UsagePolicy
-from shared.schemas.authorization import Principal
+from shared.schemas.authorization import Principal, device_of, session_of
 from shared.schemas.enums import UsageKind
 
 
@@ -63,7 +63,7 @@ class RuntimeUsageAdapter:
             admission_id = await self._policy.admit(
                 self._session,
                 user_id=principal.user_id,
-                device_id=principal.device_id,
+                device_id=device_of(principal),
                 projected_cost=projected_cost,
             )
         except LimitExceeded as exc:
@@ -86,8 +86,8 @@ class RuntimeUsageAdapter:
             self._session,
             request_id=self._request_id,
             user_id=principal.user_id,
-            device_id=principal.device_id,
-            session_id=principal.session_id,
+            device_id=device_of(principal),
+            session_id=session_of(principal),
             graph_id=graph_id,
             kind=kind,
             units=units,

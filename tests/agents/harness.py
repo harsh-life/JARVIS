@@ -82,3 +82,43 @@ async def create_agent(h, actor, *, draft: dict | None = None) -> dict:
 
 async def run_agent(h, actor, agent_id: str):
     return await h.client.post(f"{API}/{agent_id}/runs", json={}, headers=actor.auth)
+
+
+# ── Phase 5: unattended agents under a standing delegation (docs/29 §15) ──
+
+UNATTENDED_ON: dict[str, Any] = {
+    **AGENTS_ON,
+    "agents": {
+        **AGENTS_ON["agents"],
+        "unattended_enabled": True,
+        "standing_delegation_ratified": True,
+        "default_budget_per_run": 0.05,
+        "default_budget_per_month": 1.0,
+    },
+}
+
+UNATTENDED_TRIGGER = {"kind": "unattended", "cron": "0 7 * * *", "timezone": "Asia/Kolkata"}
+UNATTENDED_DRAFT: dict[str, Any] = {**DRAFT, "trigger_request": UNATTENDED_TRIGGER}
+TERMS: dict[str, Any] = {"max_runs_per_day": 2, "budget_per_run": 0.01, "budget_per_month": 0.2}
+
+
+def delegation_url(agent_id: str) -> str:
+    return f"{API}/{agent_id}/delegation"
+
+
+async def request_delegation(h, actor, agent_id: str, terms: dict | None = None, token: str | None = None):
+    headers = {**actor.auth, **({HEADER: token} if token else {})}
+    return await h.client.post(delegation_url(agent_id), json=terms or TERMS, headers=headers)
+
+
+async def grant_delegation(h, actor, agent_id: str, terms: dict | None = None) -> dict:
+    """The owner grants a standing delegation: the confirmation card, then
+    the confirmed retry after a fresh step-up (re-attestation)."""
+
+    first = await request_delegation(h, actor, agent_id, terms)
+    assert first.status_code == 403, first.text
+    token = first.json()["error"]["details"]["confirmation_token"]
+    await h.step_up(actor)
+    granted = await request_delegation(h, actor, agent_id, terms, token)
+    assert granted.status_code == 201, granted.text
+    return granted.json()

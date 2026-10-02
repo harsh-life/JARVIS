@@ -73,6 +73,10 @@ class AgentRunBinding:
     # docs/29 §11 (Phase 3): every request this run makes of the Agent
     # Gateway presents one of these. Set from the run's context at start.
     run_tokens: RunTokens | None = field(default=None, repr=False, compare=False)
+    # docs/29 §15 (Phase 5): set only for an unattended run — the standing
+    # delegation it runs under. Its principal is then that delegation's
+    # `DelegatedPrincipal`; every step re-checks the delegation fresh.
+    delegation_id: uuid.UUID | None = None
 
     @property
     def model_tools(self) -> bool:
@@ -80,7 +84,8 @@ class AgentRunBinding:
 
     @classmethod
     def from_spec(cls, spec: CompiledAgentSpec, *, run_id: uuid.UUID, model_ref: str,
-                  budget_per_run: float, input_text: str = "") -> "AgentRunBinding":
+                  budget_per_run: float, input_text: str = "",
+                  delegation_id: uuid.UUID | None = None) -> "AgentRunBinding":
         return cls(
             agent_id=spec.agent_id, run_id=run_id, version=spec.version, spec_hash=spec.spec_hash,
             run_mode=spec.run_mode, envelope=Envelope.from_spec(spec), input_text=input_text,
@@ -88,6 +93,7 @@ class AgentRunBinding:
             model_ref=model_ref, max_model_calls=spec.bounds.max_model_calls,
             max_tool_calls=spec.bounds.max_tool_calls, max_run_seconds=float(spec.bounds.max_run_seconds),
             budget_per_run=min(budget_per_run, spec.budget.per_run),
+            delegation_id=delegation_id,
         )
 
 

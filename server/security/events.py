@@ -189,6 +189,13 @@ class AuditAction(str, Enum):
     # Phase 3, the Agent Gateway (docs/29 §11.3, §26): `resource` is
     # `agentrun:<run_id>` plus the gateways, a reason, or the refusal's code
     # and detail identifier — never a token, a nonce or a request's content.
+    # docs/29 §15 / §26 (Phase 5): standing delegations and unattended runs.
+    AGENT_DELEGATION_GRANTED = "agent.delegation.granted"
+    AGENT_DELEGATION_REVOKED = "agent.delegation.revoked"
+    AGENT_DELEGATION_EXPIRED = "agent.delegation.expired"
+    AGENT_DELEGATION_INVALIDATED = "agent.delegation.invalidated"
+    AGENT_DELEGATION_REFUSED = "agent.delegation.refused"
+    AGENT_UNATTENDED_SKIPPED = "agent.unattended.skipped"
     AGENT_TOKEN_ISSUED = "agent.token.issued"
     AGENT_TOKEN_REVOKED = "agent.token.revoked"
     AGENT_GATEWAY_DENIED = "agent.gateway.denied"

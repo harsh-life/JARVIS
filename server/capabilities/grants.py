@@ -50,7 +50,7 @@ from server.capabilities.registry import (
     validate_resource_scope,
 )
 from server.storage.models import CapabilityGrant
-from shared.schemas.authorization import CapabilityCheckContext
+from shared.schemas.authorization import CapabilityCheckContext, device_of, session_of
 from shared.schemas.enums import CapabilityScopeType
 
 
@@ -230,11 +230,14 @@ def _candidate_principal_ids(context: CapabilityCheckContext) -> set[uuid.UUID]:
     principal is never even a candidate for the scope check below.
     """
 
+    # A delegated principal (an unattended agent run, 03 §8 as amended) has no
+    # device and no session: only the owner's user- and graph-scoped grants
+    # can ever be candidates for it.
     ids = {
         context.principal.user_id,
-        context.principal.device_id,
-        context.principal.session_id,
-    }
+        device_of(context.principal),
+        session_of(context.principal),
+    } - {None}
     if context.graph_id is not None:
         ids.add(context.graph_id)
     # A TASK-scoped grant is keyed on the task id (01 §7.1). Without this, a
@@ -257,9 +260,11 @@ def _scope_matches(row: CapabilityGrant, context: CapabilityCheckContext) -> boo
     if scope is CapabilityScopeType.USER:
         return row.principal_id == context.principal.user_id
     if scope is CapabilityScopeType.DEVICE:
-        return row.principal_id == context.principal.device_id
+        device_id = device_of(context.principal)
+        return device_id is not None and row.principal_id == device_id
     if scope is CapabilityScopeType.SESSION:
-        return row.principal_id == context.principal.session_id
+        session_id = session_of(context.principal)
+        return session_id is not None and row.principal_id == session_id
     if scope is CapabilityScopeType.GRAPH:
         # A graph-scoped grant applies only inside that graph. A request with
         # no graph context does not match one — the grant was consented to for

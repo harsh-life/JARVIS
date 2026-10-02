@@ -376,6 +376,12 @@ def build_application(
             (lambda session, audit: AgentRunCoordinator(agent_factory, session, audit, core))
             if agent_factory is not None else None
         ),
+        # docs/29 §15.2 (Phase 5): only with unattended runs switched on can a
+        # delegated principal ever be fresh.
+        delegations=(
+            agent_factory.delegated_principal_active
+            if agent_factory is not None and config.agents.unattended_enabled else None
+        ),
     )
     # 19: the Judge — nothing at all unless `evaluation.enabled`.
     evaluation = build_evaluation(

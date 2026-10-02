@@ -47,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.agent.agent_run import AgentRunBinding, GatewayAdmission, ModelCallFacts, RoutedModelCall, RunTokens
 from server.agents.compiler import OwnerContext, parse_draft, revalidation_required
+from server.agents.delegation import delegation_terms
 from server.agents.gateway.core import AgentGateway, GatewayAdmitted, GatewayContext, GatewayDenied, GatewayReplayed
 from server.agents.gateway.model_gateway import budget_refusal, model_refusal
 from server.agents.gateway.model_routing import RouteRefused, route_model_call
@@ -84,6 +85,8 @@ from server.storage.models import (
     AgentTask,
     ReminderDelivery,
     ScheduledJob,
+    StandingDelegationRow,
+    User,
 )
 from server.tools.registry import ToolDefinition
 from shared.schemas.agent import (
@@ -123,17 +126,21 @@ from shared.schemas.agent_factory import (
     CompiledAgentSpecView,
     CompileOutcome,
     CreateAgentRequest,
+    DelegationRequest,
+    DelegationStatus,
     ModelCallRequest,
+    StandingDelegationView,
     RunTokenPurpose,
     TriggerKind,
 )
-from shared.schemas.authorization import DenialSurface, Operation, Principal, ResourceType
+from shared.schemas.authorization import DelegatedPrincipal, DenialSurface, Operation, Principal, ResourceType
 from shared.schemas.enums import (
     AgentConfigScopeType,
     AuditActor,
     AuditResult,
     JobStatus,
     RiskCategory,
+    UserStatus,
     Visibility,
 )
 from shared.schemas.scheduler import ReasonSource
@@ -330,6 +337,14 @@ class AgentFactory:
     def registries(self) -> AgentRegistries:
         return self._service.registries
 
+    @property
+    def unattended_enabled(self) -> bool:
+        return self._config.agents.unattended_enabled
+
+    @property
+    def delegation_max_days(self) -> int:
+        return self._config.agents.delegation_max_days
+
     async def primary_model_ref(self, session: AsyncSession, *, user_id: uuid.UUID,
                                 graph_id: uuid.UUID | None) -> str:
         """docs/29 §6.2 via OD-RT-3: the owner's resolved primary as a model
@@ -393,6 +408,41 @@ class AgentFactory:
             runtime_max_tool_calls=bounds.max_tool_calls,
             url_allowed=self.url_allowed,
         )
+
+    async def owner_active(self, session: AsyncSession, user_id: uuid.UUID) -> bool:
+        user = await session.get(User, user_id, populate_existing=True)
+        return user is not None and user.status is UserStatus.ACTIVE
+
+    async def delegation_refusal(self, session: AsyncSession, *, delegation_id: uuid.UUID,
+                                 agent_id: uuid.UUID, now: datetime | None = None) -> str | None:
+        """docs/29 §15.2: the delegation, the agent, its spec, the owner and
+        the graph — all read fresh. `None`, or why it no longer holds."""
+
+        async def owner_active(user_id: uuid.UUID) -> bool:
+            return await self.owner_active(session, user_id)
+
+        async def is_member(graph_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+            return await self._core.graph_repository.is_active_member(session, graph_id=graph_id, user_id=user_id)
+
+        return await self._service.delegation_refusal(session, delegation_id=delegation_id, agent_id=agent_id,
+                                                      owner_active=owner_active, is_member=is_member, now=now)
+
+    async def delegated_principal_active(self, session: AsyncSession, principal: DelegatedPrincipal) -> bool:
+        """`DelegationCheck` (server/composition/security_port.py): is this
+        unattended run's principal fresh *now*? Its run must be open and be
+        exactly this delegation's unattended run of this agent for this owner,
+        in this graph — and the delegation must still hold. Nothing cached."""
+
+        run = await session.get(AgentRunRow, principal.run_id, populate_existing=True)
+        if (run is None or run.kind != "unattended" or run.finished_at is not None
+                or run.delegation_id != principal.delegation_id or run.agent_id != principal.agent_id
+                or run.owner_user_id != principal.user_id):
+            return False
+        delegation = await session.get(StandingDelegationRow, principal.delegation_id)
+        if delegation is None or delegation.graph_id != principal.graph_id:
+            return False
+        return await self.delegation_refusal(session, delegation_id=principal.delegation_id,
+                                             agent_id=principal.agent_id) is None
 
     def run_input(self, spec: CompiledAgentSpec, run_id: uuid.UUID) -> str:
         """docs/29 §9.7: the run's input, assembled by code from the spec,
@@ -492,6 +542,11 @@ class AgentToolAdapter:
         task = await scope.session.get(AgentTask, invocation.task_id)
         if task is None or task.user_id != invocation.user_id:
             return ToolOutput(ok=False, error="task_unavailable")
+        if task.delegation_id is not None or task.device_id is None or task.session_id is None:
+            # docs/29 §10.4 / §15.7: an unattended run can never define,
+            # inspect or delete agents (agent.* is never in any envelope; this
+            # is the adapter's own refusal, whatever reached it).
+            return ToolOutput(ok=False, error="unavailable_unattended")
         handler = {
             (AGENT_DEFINE_CAPABILITY, "compile"): self._compile,
             (AGENT_DEFINE_CAPABILITY, "compile_update"): self._compile_update,
@@ -834,6 +889,17 @@ class AgentRunCoordinator:
         if (outcome.version, outcome.spec_hash) != (binding.version, binding.spec_hash):
             # The runtime's own binding must be exactly the run the token is for.
             return AgentFailureCode.SPEC_CHANGED
+        if binding.delegation_id is not None:
+            # docs/29 §15.2 (Phase 5): an unattended run's every step needs
+            # its standing delegation still exactly as granted — read fresh.
+            refused = await self._factory.delegation_refusal(self._session, delegation_id=binding.delegation_id,
+                                                             agent_id=binding.agent_id)
+            if refused is not None:
+                run = await self._session.get(AgentRunRow, binding.run_id)
+                await self._audit(AuditAction.AGENT_DELEGATION_REFUSED, run,
+                                  f"agentrun:{binding.run_id}:delegation:{refused}"[:128], AuditResult.BLOCKED)
+                return (AgentFailureCode.SPEC_CHANGED if refused in ("spec_changed", "envelope_changed")
+                        else AgentFailureCode.AGENT_UNAVAILABLE)
         return None
 
     async def _model_screen(self, model: ModelCallFacts | None, context: GatewayContext) -> GatewayDenied | None:
@@ -877,8 +943,16 @@ class AgentRunCoordinator:
         if loaded is None or loaded[1] is None:
             return AgentGatewayErrorCode.AGENT_UNAVAILABLE.value
         spent = await self._service.month_usage(self._session, binding.agent_id)
-        return budget_refusal(projected_cost=projected_cost, month_spent=spent,
-                              month_budget=loaded[1].budget.per_month)
+        month_budget = loaded[1].budget.per_month
+        if binding.delegation_id is not None:
+            # docs/29 §15.3 / OD-AF-7: an unattended run spends at most the
+            # delegation's month, never more than the spec's.
+            delegation = await self._session.get(StandingDelegationRow, binding.delegation_id,
+                                                 populate_existing=True)
+            if delegation is None:
+                return AgentGatewayErrorCode.AGENT_UNAVAILABLE.value
+            month_budget = min(month_budget, delegation.budget_per_month)
+        return budget_refusal(projected_cost=projected_cost, month_spent=spent, month_budget=month_budget)
 
     async def usage_recorded(self, binding: AgentRunBinding, *, usage_id: uuid.UUID, cost: float) -> None:
         await self._service.attribute_usage(self._session, binding.run_id, usage_id)
@@ -1063,6 +1137,10 @@ class AgentFactoryFacade:
         self._factory = factory
         self._core = core
         self._tasks = tasks
+
+    @property
+    def factory(self) -> AgentFactory:
+        return self._factory
 
     async def _authorize(self, session: AsyncSession, audit: AuditLogger, request: AccessRequest) -> AuthorizationOutcome:
         return await self._core.engine.authorize(session, request, audit=audit)
@@ -1435,12 +1513,16 @@ class AgentFactoryFacade:
         return profile
 
     async def _stop_runs(self, session: AsyncSession, audit: AuditLogger, principal: Principal,
-                         agent_id: uuid.UUID, reason: CancelReason) -> None:
-        """Stop every live run of the agent — the safe direction, never refused
-        to its owner and never confirmed."""
+                         agent_id: uuid.UUID, reason: CancelReason,
+                         delegation_id: uuid.UUID | None = None) -> None:
+        """Stop every live run of the agent (or only those under one
+        delegation) — the safe direction, never refused to its owner and never
+        confirmed."""
 
         service = self._factory.service
         live = await service.live_runs(session, agent_id)
+        if delegation_id is not None:
+            live = [run for run in live if run.delegation_id == delegation_id]
         if not live:
             return
         port = _PresentUserRun(tasks=self._run_tasks(), factory=self._factory, session=session, principal=principal,
@@ -1527,6 +1609,118 @@ class AgentFactoryFacade:
         await self._commit(session, audit, planned)
         await self._audit(audit, principal, AuditAction.AGENT_RESUMED, f"agentdefinition:{agent_id}")
         return service.view(definition, current)
+
+    # ── standing delegation (docs/29 §15.3–§15.4, §23.2; Phase 5) ────────
+
+    async def delegation(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                         audit: AuditLogger) -> StandingDelegationView:
+        """The agent's current — or else most recent — delegation."""
+
+        await self._owned(session, audit, principal, agent_id, Operation.READ)
+        service = self._factory.service
+        row = await service.active_delegation(session, agent_id) or await service.latest_delegation(session, agent_id)
+        if row is None or row.owner_user_id != principal.user_id:
+            raise _NOT_FOUND
+        return service.delegation_view(row)
+
+    async def grant_delegation(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                               body: Any, confirmation_token: str | None, step_up_fresh: bool,
+                               audit: AuditLogger) -> StandingDelegationView:
+        """docs/29 §15.4 grant — the direction that gives standing authority,
+        so it is the owner's own call only (no task, model or agent can make
+        it), checked against everything a run would face, decided by the one
+        engine (`write` on the agent: consequential, so a confirmation bound
+        to these exact terms and this exact spec), and applied only with a
+        fresh step-up (device re-attestation). The terms come from the stored
+        spec; the owner only chooses tighter limits. A ceiling, never a grant:
+        it activates no capability."""
+
+        definition, spec = await self._owned(session, audit, principal, agent_id, Operation.READ)
+        try:
+            request = DelegationRequest.model_validate(body if isinstance(body, dict) else {})
+        except ValidationError as exc:
+            fields = sorted({str(e["loc"][0]) if e.get("loc") else "body" for e in exc.errors()})
+            raise AppError(ErrorCode.VALIDATION_FAILED, "the delegation request is not valid",
+                           details={"fields": fields}) from None
+        if not self._factory.unattended_enabled:
+            raise await self._refuse_delegation(audit, principal, agent_id, "unattended_unavailable",
+                                                "unattended agents are not enabled on this server")
+        if spec is None or definition.status != AgentStatus.ACTIVE.value:
+            raise await self._refuse_delegation(audit, principal, agent_id, "agent_not_active",
+                                                "only an active agent can be delegated")
+        graph_id = principal.active_graph_id
+        if graph_id is not None and not await self._core.graph_repository.is_active_member(
+            session, graph_id=graph_id, user_id=principal.user_id
+        ):
+            raise _NOT_FOUND
+        if spec.graph_id != graph_id:
+            raise await self._refuse_delegation(audit, principal, agent_id, "graph_mismatch",
+                                                "this agent belongs to another graph than this session's")
+        await self._still_runnable(session, audit, principal, definition, spec)
+        now = self._factory.service.now()
+        terms = delegation_terms(spec, request, now=now, max_days=self._factory.delegation_max_days)
+        if isinstance(terms, str):
+            raise await self._refuse_delegation(audit, principal, agent_id, terms,
+                                                "this delegation is outside what the agent was approved for")
+        if confirmation_token and not step_up_fresh:
+            # SESSION-003 / 03 §5.5: the confirmed grant needs the owner's
+            # presence now. Checked before the engine sees the token, so the
+            # token is not spent: the owner steps up and retries with it.
+            await self._audit(audit, principal, AuditAction.AGENT_DELEGATION_REFUSED,
+                              f"agentdefinition:{agent_id}:step_up_required", AuditResult.BLOCKED)
+            raise AppError(ErrorCode.UNAUTHENTICATED, "step-up required",
+                           details={"step_up_required": True})
+        outcome = await self._authorize(session, audit, AccessRequest(
+            principal=principal, operation=Operation.WRITE, resource_type=ResourceType.AGENTDEFINITION,
+            resource_ref=str(agent_id), confirmation_token=confirmation_token,
+            arguments={"action": "grant_standing_delegation", "spec_hash": spec.spec_hash,
+                       **request.model_dump(mode="json")},
+        ))
+        await self._confirm_or_refuse(session, outcome, action="grant_standing_delegation",
+                                      card={**_card_json(spec, self._factory.registries),
+                                            "delegation": {"schedule": terms.cron, "timezone": terms.timezone,
+                                                           "max_runs_per_day": terms.max_runs_per_day,
+                                                           "budget_per_run": terms.budget_per_run,
+                                                           "budget_per_month": terms.budget_per_month,
+                                                           "expires_at": terms.expires_at.isoformat()}})
+        # Re-read after the engine's decision: nothing may have moved since.
+        loaded = await self._factory.service.load(session, agent_id, fresh=True)
+        if loaded is None or loaded[0].owner_user_id != principal.user_id:
+            raise _NOT_FOUND
+        current_definition, current = loaded
+        if (current is None or current.spec_hash != spec.spec_hash
+                or current_definition.status != AgentStatus.ACTIVE.value):
+            raise await self._refuse_delegation(audit, principal, agent_id, "spec_changed",
+                                                "the agent changed while the delegation was being confirmed")
+        row = await self._factory.service.grant_delegation(
+            session, spec=current, terms=terms, created_at=now, device_id=principal.device_id,
+            session_id=principal.session_id)
+        await self._audit(audit, principal, AuditAction.AGENT_DELEGATION_GRANTED,
+                          f"agentdelegation:{row.delegation_id}:agent:{agent_id}")
+        return self._factory.service.delegation_view(row)
+
+    async def revoke_delegation(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID,
+                                audit: AuditLogger) -> StandingDelegationView:
+        """docs/29 §15.4 revoke — the safe direction: always allowed to the
+        owner, never confirmed. Live unattended runs under it stop now."""
+
+        await self._owned(session, audit, principal, agent_id, Operation.READ)
+        service = self._factory.service
+        row = await service.active_delegation(session, agent_id)
+        if row is None or row.owner_user_id != principal.user_id:
+            raise _NOT_FOUND
+        await service.end_delegation(session, row, DelegationStatus.REVOKED, "owner_revoked")
+        await self._audit(audit, principal, AuditAction.AGENT_DELEGATION_REVOKED,
+                          f"agentdelegation:{row.delegation_id}:owner_revoked")
+        await self._stop_runs(session, audit, principal, agent_id, CancelReason.PRINCIPAL_REVOKED,
+                              delegation_id=row.delegation_id)
+        return service.delegation_view(row)
+
+    async def _refuse_delegation(self, audit: AuditLogger, principal: Principal, agent_id: uuid.UUID,
+                                 reason: str, message: str) -> AppError:
+        await self._audit(audit, principal, AuditAction.AGENT_DELEGATION_REFUSED,
+                          f"agentdefinition:{agent_id}:{reason}", AuditResult.BLOCKED)
+        return AppError(ErrorCode.CONFLICT, message, details={"reason": reason})
 
     async def inbox(self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID | None,
                     unread: bool, audit: AuditLogger) -> AgentInboxResponse:

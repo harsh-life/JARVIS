@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Mapping
 
 from pydantic import ValidationError
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.agents.compiler import (
@@ -41,6 +41,7 @@ from server.agents.compiler import (
     compile_draft,
     verify_spec_hash,
 )
+from server.agents.delegation import DelegationFacts, DelegationTerms, delegation_refusal
 from server.agents.gateway.tokens import RETENTION, TokenFacts
 from server.agents.registry import AgentRegistries
 from server.agents.rendering import budget_line, can_lines, cannot_lines, spec_view, trigger_line
@@ -56,12 +57,16 @@ from server.storage.models import (
     AgentSpecVersionRow,
     AgentTask,
     ImprovementCandidateRow,
+    StandingDelegationRow,
     UsageEvent,
 )
 from shared.schemas.agent import AgentFailureCode, AgentResult, AgentTaskStatus
 from shared.schemas.agent_factory import (
     AgentDraft,
+    AgentNotice,
     AgentRunStatus,
+    DelegationStatus,
+    StandingDelegationView,
     AgentInboxItemView,
     AgentRunView,
     AgentStatus,
@@ -267,6 +272,10 @@ class AgentDefinitionService:
             definition.status_reason = None
         # docs/29 §11.3: no run token outlives the spec it was issued for.
         await self.revoke_agent_tokens(session, definition.agent_id, "spec_changed")
+        # docs/29 §15.3: nor does a standing delegation — it was granted for
+        # exactly the old spec; the owner grants anew (with step-up) if wanted.
+        await self.end_agent_delegations(session, definition.agent_id, DelegationStatus.INVALIDATED,
+                                         "spec_changed")
         await session.delete(preview)
         await session.flush()
         return definition, spec
@@ -315,6 +324,8 @@ class AgentDefinitionService:
             definition.status = AgentStatus.REVOKED.value
             definition.status_reason = "spec_tampered"
             definition.updated_at = self._clock()
+            await self.end_agent_delegations(session, definition.agent_id, DelegationStatus.INVALIDATED,
+                                             "spec_tampered")
             await session.flush()
             return definition, None
         return definition, spec
@@ -347,6 +358,10 @@ class AgentDefinitionService:
         definition.deleted_at = now
         definition.updated_at = now
         await self.revoke_agent_tokens(session, definition.agent_id, "deleted")
+        # docs/29 §15.4: no delegation survives its agent (kept for audit; its
+        # notices go with the inbox below).
+        await self.end_agent_delegations(session, definition.agent_id, DelegationStatus.REVOKED, "deleted",
+                                         notify=False)
         # The Judge's suggestions for this agent are its owner's content: gone with it.
         await session.execute(delete(ImprovementCandidateRow).where(
             ImprovementCandidateRow.agent_id == definition.agent_id,
@@ -495,6 +510,9 @@ class AgentDefinitionService:
         definition.status_reason = "owner_paused"
         definition.updated_at = self._clock()
         await self.revoke_agent_tokens(session, definition.agent_id, "paused")
+        # docs/29 §15.4: pausing revokes the standing delegation; resuming
+        # gives the agent back, never the delegation (a new step-up grant).
+        await self.end_agent_delegations(session, definition.agent_id, DelegationStatus.REVOKED, "paused")
         await session.flush()
         return True
 
@@ -510,6 +528,7 @@ class AgentDefinitionService:
             definition.status_reason = OPERATOR_PAUSED
             definition.updated_at = self._clock()
         revoked = await self.revoke_agent_tokens(session, definition.agent_id, OPERATOR_PAUSED)
+        await self.end_agent_delegations(session, definition.agent_id, DelegationStatus.REVOKED, OPERATOR_PAUSED)
         await session.flush()
         return revoked
 
@@ -545,6 +564,8 @@ class AgentDefinitionService:
         definition.status = AgentStatus.NEEDS_REAPPROVAL.value
         definition.status_reason = reason
         definition.updated_at = self._clock()
+        await self.end_agent_delegations(session, definition.agent_id, DelegationStatus.INVALIDATED,
+                                         "needs_reapproval")
         await session.flush()
 
     async def check_run(self, session: AsyncSession, *, run_id: uuid.UUID, agent_id: uuid.UUID, version: int,
@@ -573,11 +594,20 @@ class AgentDefinitionService:
         return None
 
     async def create_run(self, session: AsyncSession, *, spec: CompiledAgentSpec, run_id: uuid.UUID,
-                         reminder_delivery_id: uuid.UUID | None = None) -> AgentRunRow:
+                         reminder_delivery_id: uuid.UUID | None = None,
+                         delegation: StandingDelegationRow | None = None,
+                         occurrence_at: datetime | None = None) -> AgentRunRow:
+        if (delegation is None) != (occurrence_at is None):
+            raise ValueError("an unattended run names both its delegation and its occurrence")
+        if delegation is not None and (reminder_delivery_id is not None or delegation.agent_id != spec.agent_id):
+            raise ValueError("an unattended run is its own agent's, and never a reminder tap")
+        kind = ("unattended" if delegation is not None
+                else "reminder_tap" if reminder_delivery_id is not None else "on_demand")
         run = AgentRunRow(run_id=run_id, agent_id=spec.agent_id, owner_user_id=spec.owner_user_id,
-                          version=spec.version, spec_hash=spec.spec_hash,
-                          kind="reminder_tap" if reminder_delivery_id is not None else "on_demand",
+                          version=spec.version, spec_hash=spec.spec_hash, kind=kind,
                           reminder_delivery_id=reminder_delivery_id,
+                          delegation_id=delegation.delegation_id if delegation is not None else None,
+                          occurrence_at=occurrence_at,
                           status=AgentRunStatus.QUEUED.value, cost_total=0.0, started_at=self._clock())
         session.add(run)
         await session.flush()
@@ -809,6 +839,157 @@ class AgentDefinitionService:
             select(AgentRunRow).where(AgentRunRow.agent_id == agent_id, AgentRunRow.finished_at.is_(None))
         )).scalars().all()
         return list(rows)
+
+    # ── standing delegations (docs/29 §15; Phase 5) ─────────────────────
+
+    @staticmethod
+    def delegation_facts(row: StandingDelegationRow) -> DelegationFacts:
+        return DelegationFacts(
+            status=DelegationStatus(row.status), agent_id=row.agent_id, owner_user_id=row.owner_user_id,
+            graph_id=row.graph_id, spec_version=row.spec_version, spec_hash=row.spec_hash,
+            envelope_hash=row.envelope_hash, cron=row.allowed_trigger_cron, timezone=row.timezone,
+            max_runs_per_day=row.max_runs_per_day, budget_per_run=row.budget_per_run,
+            budget_per_month=row.budget_per_month, expires_at=_as_utc(row.expires_at),
+            created_with_step_up=bool(row.created_with_step_up),
+        )
+
+    async def active_delegation(self, session: AsyncSession, agent_id: uuid.UUID) -> StandingDelegationRow | None:
+        return (await session.execute(select(StandingDelegationRow).where(
+            StandingDelegationRow.agent_id == agent_id,
+            StandingDelegationRow.status == DelegationStatus.ACTIVE.value,
+        ).execution_options(populate_existing=True))).scalars().first()
+
+    async def latest_delegation(self, session: AsyncSession, agent_id: uuid.UUID) -> StandingDelegationRow | None:
+        return (await session.execute(select(StandingDelegationRow).where(
+            StandingDelegationRow.agent_id == agent_id,
+        ).order_by(StandingDelegationRow.created_at.desc(), StandingDelegationRow.delegation_id)
+            .limit(1))).scalars().first()
+
+    async def active_delegations(self, session: AsyncSession) -> list[StandingDelegationRow]:
+        return list((await session.execute(select(StandingDelegationRow).where(
+            StandingDelegationRow.status == DelegationStatus.ACTIVE.value,
+        ).order_by(StandingDelegationRow.created_at, StandingDelegationRow.delegation_id))).scalars().all())
+
+    async def grant_delegation(self, session: AsyncSession, *, spec: CompiledAgentSpec, terms: DelegationTerms,
+                               created_at: datetime, device_id: uuid.UUID,
+                               session_id: uuid.UUID) -> StandingDelegationRow:
+        """Write the grant the owner just confirmed with step-up. A delegation
+        already active for the agent is superseded (`renewed`): at most one
+        is ever active (the store enforces it too)."""
+
+        await self.end_agent_delegations(session, spec.agent_id, DelegationStatus.REVOKED, "renewed",
+                                         notify=False)
+        row = StandingDelegationRow(
+            delegation_id=uuid.uuid4(), agent_id=spec.agent_id, owner_user_id=spec.owner_user_id,
+            graph_id=spec.graph_id, spec_version=terms.spec_version, spec_hash=terms.spec_hash,
+            envelope_hash=terms.envelope_hash, allowed_trigger_cron=terms.cron, timezone=terms.timezone,
+            max_runs_per_day=terms.max_runs_per_day, budget_per_run=terms.budget_per_run,
+            budget_per_month=terms.budget_per_month, created_at=created_at, expires_at=terms.expires_at,
+            created_with_step_up=True, created_by_device_id=device_id, created_by_session_id=session_id,
+            status=DelegationStatus.ACTIVE.value,
+        )
+        session.add(row)
+        await session.flush()
+        return row
+
+    async def end_delegation(self, session: AsyncSession, row: StandingDelegationRow, status: DelegationStatus,
+                             reason: str, *, notify: bool = True) -> bool:
+        """Active → revoked / expired / invalidated. Returns whether it changed.
+        Always allowed: it only removes. The owner is told (OD-AF-8)."""
+
+        if row.status != DelegationStatus.ACTIVE.value or status is DelegationStatus.ACTIVE:
+            return False
+        row.status = status.value
+        row.status_reason = reason
+        row.revoked_at = self._clock()
+        await session.flush()
+        if notify:
+            notice = {DelegationStatus.REVOKED: AgentNotice.DELEGATION_REVOKED,
+                      DelegationStatus.EXPIRED: AgentNotice.DELEGATION_EXPIRED,
+                      DelegationStatus.INVALIDATED: AgentNotice.DELEGATION_INVALIDATED}[status]
+            await self.notify(session, agent_id=row.agent_id, owner_user_id=row.owner_user_id, notice=notice,
+                              delegation_id=row.delegation_id)
+        return True
+
+    async def end_agent_delegations(self, session: AsyncSession, agent_id: uuid.UUID, status: DelegationStatus,
+                                    reason: str, *, notify: bool = True) -> list[StandingDelegationRow]:
+        rows = (await session.execute(select(StandingDelegationRow).where(
+            StandingDelegationRow.agent_id == agent_id,
+            StandingDelegationRow.status == DelegationStatus.ACTIVE.value,
+        ))).scalars().all()
+        ended = [row for row in rows if await self.end_delegation(session, row, status, reason, notify=notify)]
+        return ended
+
+    async def claim_occurrence(self, session: AsyncSession, delegation_id: uuid.UUID,
+                               occurrence_at: datetime) -> bool:
+        """docs/29 §15.5: claim one schedule occurrence for an active
+        delegation — a single compare-and-set on the row, so of any number of
+        concurrent trigger passes exactly one wins, and no occurrence at or
+        before the last claimed one is ever claimed again."""
+
+        result = await session.execute(update(StandingDelegationRow).where(
+            StandingDelegationRow.delegation_id == delegation_id,
+            StandingDelegationRow.status == DelegationStatus.ACTIVE.value,
+            or_(StandingDelegationRow.last_occurrence_at.is_(None),
+                StandingDelegationRow.last_occurrence_at < occurrence_at),
+        ).values(last_occurrence_at=occurrence_at).execution_options(synchronize_session=False))
+        return result.rowcount == 1
+
+    async def delegation_refusal(self, session: AsyncSession, *, delegation_id: uuid.UUID, agent_id: uuid.UUID,
+                                 owner_active: Callable[[uuid.UUID], Awaitable[bool]],
+                                 is_member: Callable[[uuid.UUID, uuid.UUID], Awaitable[bool]],
+                                 now: datetime | None = None) -> str | None:
+        """docs/29 §15.2: may this delegation authorize anything *now*?
+        Everything is read fresh from the store — the delegation, the agent,
+        its verified current spec, the owner's status, the graph membership.
+        `None`, or the reason it no longer holds."""
+
+        row = await session.get(StandingDelegationRow, delegation_id, populate_existing=True)
+        if row is None or row.agent_id != agent_id:
+            return "delegation_unknown"
+        loaded = await self.load(session, agent_id, fresh=True)
+        if loaded is None:
+            return "agent_unavailable"
+        definition, spec = loaded
+        if spec is None or definition.status != AgentStatus.ACTIVE.value:
+            return "agent_unavailable"
+        if definition.owner_user_id != row.owner_user_id:
+            return "owner_mismatch"
+        refused = delegation_refusal(self.delegation_facts(row), spec, now=now or self._clock())
+        if refused is not None:
+            return refused
+        if not await owner_active(row.owner_user_id):
+            return "owner_inactive"
+        if row.graph_id is not None and not await is_member(row.graph_id, row.owner_user_id):
+            return "graph_membership_lost"
+        return None
+
+    async def notify(self, session: AsyncSession, *, agent_id: uuid.UUID, owner_user_id: uuid.UUID,
+                     notice: AgentNotice, delegation_id: uuid.UUID | None = None) -> AgentInboxItemRow:
+        """OD-AF-8: a notice to the agent's owner, and nobody else — a closed
+        code, no text from any agent or model. Data only: it authorizes
+        nothing and is never parsed."""
+
+        item = AgentInboxItemRow(
+            item_id=uuid.uuid4(), owner_user_id=owner_user_id, agent_id=agent_id, run_id=None, kind="notice",
+            notice=notice.value, delegation_id=delegation_id, status="notice", failure_code=None, body="",
+            withheld=False, truncated=False, created_at=self._clock(),
+        )
+        session.add(item)
+        await session.flush()
+        return item
+
+    @staticmethod
+    def delegation_view(row: StandingDelegationRow) -> StandingDelegationView:
+        return StandingDelegationView(
+            delegation_id=row.delegation_id, agent_id=row.agent_id, status=DelegationStatus(row.status),
+            status_reason=row.status_reason, spec_version=row.spec_version, schedule=row.allowed_trigger_cron,
+            timezone=row.timezone, max_runs_per_day=row.max_runs_per_day, budget_per_run=row.budget_per_run,
+            budget_per_month=row.budget_per_month, created_at=_as_utc(row.created_at),
+            expires_at=_as_utc(row.expires_at),
+            revoked_at=_as_utc(row.revoked_at) if row.revoked_at else None,
+            last_occurrence_at=_as_utc(row.last_occurrence_at) if row.last_occurrence_at else None,
+        )
 
     @staticmethod
     def run_view(run: AgentRunRow, *, task: AgentResult | None = None,

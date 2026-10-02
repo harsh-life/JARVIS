@@ -59,6 +59,59 @@ class Principal(ORMBase):
     active_graph_id: UUID | None = None
 
 
+class DelegatedPrincipal(ORMBase):
+    """The second principal form — an **unattended agent run** (`03` §8 / `04`
+    §1 as amended by OD-AF-2, 2026-10-02; docs/29 §15.2).
+
+    It is `(owner, agent, delegation, run, graph?)` and **structurally has no
+    device and no session**: the type has no such field, `extra="forbid"`
+    refuses one, and reading `device_id`/`session_id` off it raises. So a
+    device- or session-scoped grant can never match it, a device operation
+    can never be addressed for it, and no device or session credential can
+    be derived from, or reused for, it. It is never built from a request:
+    only the Agent Factory's trigger loop builds one, from the stored
+    delegation and the run it has just opened.
+
+    Like `Principal`, it is identity, not authority: the engine decides it on
+    D1–D5 as the owner (`user_id`), and anything that would need the owner's
+    confirmation is a refusal for it, never a pause (OD-AF-4). It is fresh only
+    while the owner is active and in `graph_id`, the delegation is active,
+    unexpired and exactly the agent's current spec, and the run is open — the
+    runtime re-checks that before every step."""
+
+    model_config = ConfigDict(from_attributes=True, extra="forbid", frozen=True)
+
+    user_id: UUID
+    agent_id: UUID
+    delegation_id: UUID
+    run_id: UUID
+    graph_id: UUID | None = None
+
+    @property
+    def active_graph_id(self) -> UUID | None:
+        """The run's graph context — the agent's graph, never a session's."""
+
+        return self.graph_id
+
+
+AnyPrincipal = Principal | DelegatedPrincipal
+
+
+def is_delegated(principal: AnyPrincipal) -> bool:
+    return isinstance(principal, DelegatedPrincipal)
+
+
+def device_of(principal: AnyPrincipal) -> UUID | None:
+    """The present user's device; `None` for a delegated principal (it has
+    none). Every consumer that needs a device reads it through here."""
+
+    return principal.device_id if isinstance(principal, Principal) else None
+
+
+def session_of(principal: AnyPrincipal) -> UUID | None:
+    return principal.session_id if isinstance(principal, Principal) else None
+
+
 class Operation(str, Enum):
     """04 §1 — `operation: enum(read | write | create | delete | share | administer)`."""
 
@@ -134,7 +187,7 @@ class CapabilityCheckContext:
     TL-T10).
     """
 
-    principal: Principal
+    principal: "AnyPrincipal"
     graph_id: UUID | None = None
     task_id: str | None = None
     # The concrete narrowing the operation claims to stay inside — e.g.

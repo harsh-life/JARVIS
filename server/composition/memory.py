@@ -38,7 +38,7 @@ from server.models.provider import ChatMessage
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
 from server.vault.index import VaultIndex, VaultUnavailable
-from shared.schemas.authorization import DenialSurface, Operation, Principal, ResourceType
+from shared.schemas.authorization import DenialSurface, Operation, Principal, ResourceType, device_of, session_of
 from shared.schemas.enums import AuditActor, AuditResult, FactType, Visibility
 from shared.schemas.errors import ErrorCode
 from shared.schemas.memory import (
@@ -148,7 +148,7 @@ class MemoryFacade:
                      actor: AuditActor = AuditActor.USER) -> None:
         await audit.record(
             actor=actor, action=action, resource=resource, result=result,
-            user_id=principal.user_id, device_id=principal.device_id, session_id=principal.session_id,
+            user_id=principal.user_id, device_id=device_of(principal), session_id=session_of(principal),
             graph_id=graph_id,
         )
 
@@ -189,7 +189,7 @@ class MemoryFacade:
         fact = Mem0Fact(
             owner_user_id=principal.user_id, source_user_id=principal.user_id, graph_id=graph_id,
             visibility=Visibility.PRIVATE, fact_type=verdict.fact_type, content=verdict.content,
-            source_session_id=principal.session_id,
+            source_session_id=session_of(principal),
         )
         # H-1: the authorization and its audit are durable before the memory
         # provider's write, and no store transaction is held across it.

@@ -44,7 +44,16 @@ from fastapi import APIRouter, Body, Depends, Header, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.gateway.agents_port import AgentFactoryPort
-from server.gateway.deps import get_audit_logger, get_db_session, get_principal
+from server.auth.errors import StepUpRequired
+from server.auth.sessions import ResolvedSession
+from server.gateway.deps import (
+    get_audit_logger,
+    get_db_session,
+    get_principal,
+    get_resolved_session,
+    get_security_core,
+)
+from server.gateway.security import SecurityCore
 from server.gateway.errors import AppError
 from server.security.audit import AuditLogger
 from shared.schemas.agent_factory import (
@@ -63,6 +72,7 @@ from shared.schemas.agent_factory import (
     CreateAgentRequest,
     NotebookResponse,
     RunAgentRequest,
+    StandingDelegationView,
 )
 from shared.schemas.authorization import Principal
 from shared.schemas.errors import ErrorCode
@@ -284,6 +294,56 @@ async def resume_agent(
 ) -> AgentView:
     return await _factory(request).resume(session, principal=principal, agent_id=agent_id,
                                           confirmation_token=confirmation_token, audit=audit)
+
+
+@router.get("/agents/{agent_id}/delegation", response_model=StandingDelegationView)
+async def get_delegation(
+    request: Request,
+    agent_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> StandingDelegationView:
+    return await _factory(request).delegation(session, principal=principal, agent_id=agent_id, audit=audit)
+
+
+@router.post("/agents/{agent_id}/delegation", response_model=StandingDelegationView,
+             status_code=status.HTTP_201_CREATED)
+async def grant_delegation(
+    request: Request,
+    agent_id: uuid.UUID,
+    body: Any = Body(...),
+    session: AsyncSession = Depends(get_db_session),
+    core: SecurityCore = Depends(get_security_core),
+    resolved: ResolvedSession = Depends(get_resolved_session),
+    audit: AuditLogger = Depends(get_audit_logger),
+    confirmation_token: str | None = Header(default=None, alias=CONFIRMATION_HEADER, max_length=512),
+) -> StandingDelegationView:
+    """docs/29 §15.4: consequential + step-up. The step-up is the device's
+    re-attestation (03 §5.5), as `/confirm` requires for high_irreversible —
+    token freshness does not count, since a device refreshes its token with
+    nobody present. It is computed here and enforced by the factory, before
+    the confirmation token is spent."""
+
+    try:
+        core.sessions.require_reattestation(resolved)
+        step_up_fresh = True
+    except StepUpRequired:
+        step_up_fresh = False
+    return await _factory(request).grant_delegation(
+        session, principal=resolved.principal, agent_id=agent_id, body=body,
+        confirmation_token=confirmation_token, step_up_fresh=step_up_fresh, audit=audit)
+
+
+@router.delete("/agents/{agent_id}/delegation", response_model=StandingDelegationView)
+async def revoke_delegation(
+    request: Request,
+    agent_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> StandingDelegationView:
+    return await _factory(request).revoke_delegation(session, principal=principal, agent_id=agent_id, audit=audit)
 
 
 @router.get("/agents/{agent_id}/notebook", response_model=NotebookResponse)

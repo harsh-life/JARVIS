@@ -12,8 +12,9 @@ from datetime import datetime, timezone
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from server.storage.models import AgentTask
+from server.storage.models import AgentRunRow, AgentTask, StandingDelegationRow
 from shared.schemas.agent import AgentTaskStatus, TERMINAL_STATUSES
+from shared.schemas.authorization import AnyPrincipal, DelegatedPrincipal, Principal
 
 MAX_RESPONSE_CHARS = 20_000
 _NON_TERMINAL = [s.value for s in AgentTaskStatus if s not in TERMINAL_STATUSES]
@@ -28,17 +29,23 @@ async def create_task_row(
     *,
     task_id: uuid.UUID,
     user_id: uuid.UUID,
-    device_id: uuid.UUID,
-    session_id: uuid.UUID,
+    device_id: uuid.UUID | None,
+    session_id: uuid.UUID | None,
     graph_id: uuid.UUID | None,
     mode: str = "execute",
+    delegation_id: uuid.UUID | None = None,
 ) -> AgentTask:
+    """A present user's task carries its device and session; an unattended
+    run's (docs/29 §15.2) carries its delegation and neither — the store's
+    `ck_agent_tasks_principal` refuses anything else."""
+
     now = _utcnow()
     row = AgentTask(
         task_id=task_id,
         user_id=user_id,
         device_id=device_id,
         session_id=session_id,
+        delegation_id=delegation_id,
         graph_id=graph_id,
         status=AgentTaskStatus.RUNNING.value,
         mode=mode,
@@ -131,3 +138,27 @@ async def non_terminal_task_ids(session: AsyncSession) -> list[uuid.UUID]:
     return list((await session.execute(
         select(AgentTask.task_id).where(AgentTask.status.in_(_NON_TERMINAL))
     )).scalars().all())
+
+
+async def row_principal(session: AsyncSession, row: AgentTask) -> AnyPrincipal:
+    """The principal a task row was created for — to close and audit that row
+    when no live state holds it (a stop, a restart). A present user's row
+    yields its `Principal`; an unattended run's yields its
+    `DelegatedPrincipal` (docs/29 §15.2), never a device or session. Used only
+    to close and record, never to authorize anything."""
+
+    if row.delegation_id is None:
+        return Principal(user_id=row.user_id, device_id=row.device_id, session_id=row.session_id,
+                         active_graph_id=row.graph_id)
+    delegation = await session.get(StandingDelegationRow, row.delegation_id)
+    run_id = (await session.execute(
+        select(AgentRunRow.run_id).where(AgentRunRow.task_id == row.task_id))).scalars().first()
+    return DelegatedPrincipal(
+        user_id=row.user_id,
+        agent_id=delegation.agent_id if delegation is not None else row.task_id,
+        delegation_id=row.delegation_id,
+        # A run whose record was never written still closes: the task id
+        # stands in for it in the audit trail.
+        run_id=run_id or row.task_id,
+        graph_id=row.graph_id,
+    )
