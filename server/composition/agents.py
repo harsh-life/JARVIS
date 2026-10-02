@@ -133,7 +133,16 @@ from shared.schemas.agent_factory import (
     RunTokenPurpose,
     TriggerKind,
 )
-from shared.schemas.authorization import DelegatedPrincipal, DenialSurface, Operation, Principal, ResourceType
+from shared.schemas.authorization import (
+    AnyPrincipal,
+    DelegatedPrincipal,
+    DenialSurface,
+    Operation,
+    Principal,
+    ResourceType,
+    device_of,
+    session_of,
+)
 from shared.schemas.enums import (
     AgentConfigScopeType,
     AuditActor,
@@ -190,6 +199,30 @@ def registries_from_config(config: AppConfig) -> AgentRegistries:
         implemented_providers=IMPLEMENTED_PROVIDERS,
         local_providers=frozenset(LOCAL_MODEL_PROVIDERS),
     )
+
+
+# ── the audit trail of standing delegations (docs/29 §26) ─────────────────
+
+_ENDED_ACTIONS = {
+    DelegationStatus.REVOKED.value: AuditAction.AGENT_DELEGATION_REVOKED,
+    DelegationStatus.EXPIRED.value: AuditAction.AGENT_DELEGATION_EXPIRED,
+    DelegationStatus.INVALIDATED.value: AuditAction.AGENT_DELEGATION_INVALIDATED,
+}
+# Who ended it: the owner's own acts, the operator's pause, or the system.
+_OWNER_ENDS = frozenset({"owner_revoked", "renewed", "paused", "deleted", "spec_changed"})
+
+
+async def audit_delegation_ended(session: AsyncSession, row: StandingDelegationRow) -> None:
+    """Every delegation that ends — revoked, expired or invalidated, by any
+    path — leaves one audit row: ids and the reason code only."""
+
+    reason = row.status_reason or ""
+    actor = (AuditActor.SUPERUSER if reason == OPERATOR_PAUSED
+             else AuditActor.USER if reason in _OWNER_ENDS else AuditActor.SYSTEM)
+    await AuditLogger(session, request_id=uuid.uuid4()).record(
+        actor=actor, action=_ENDED_ACTIONS[row.status],
+        resource=f"agentdelegation:{row.delegation_id}:{reason}"[:128], result=AuditResult.SUCCESS,
+        user_id=row.owner_user_id)
 
 
 # ── the engine's projection of a definition ───────────────────────────────
@@ -1049,7 +1082,7 @@ class _PresentUserRun:
     There is no other way for a native run to start — no background path."""
 
     def __init__(self, *, tasks: "AgentTaskFacade", factory: AgentFactory, session: AsyncSession,
-                 principal: Principal, audit: AuditLogger, binding: AgentRunBinding | None = None) -> None:
+                 principal: AnyPrincipal, audit: AuditLogger, binding: AgentRunBinding | None = None) -> None:
         self._tasks = tasks
         self._service = factory.service
         self._gateway = factory.gateway
@@ -1090,8 +1123,8 @@ class _PresentUserRun:
         if await self._gateway.revoke_run(self._session, run_id, reason.value):
             await self._audit.record(actor=AuditActor.USER, action=AuditAction.AGENT_TOKEN_REVOKED,
                                      resource=f"agentrun:{run_id}:{reason.value}", result=AuditResult.SUCCESS,
-                                     user_id=self._principal.user_id, device_id=self._principal.device_id,
-                                     session_id=self._principal.session_id)
+                                     user_id=self._principal.user_id, device_id=device_of(self._principal),
+                                     session_id=session_of(self._principal))
         if run.task_id is not None:
             try:
                 await self._tasks.cancel(self._session, principal=self._principal, task_id=run.task_id,
@@ -1709,9 +1742,8 @@ class AgentFactoryFacade:
         row = await service.active_delegation(session, agent_id)
         if row is None or row.owner_user_id != principal.user_id:
             raise _NOT_FOUND
+        # Audited by the service's hook (`audit_delegation_ended`).
         await service.end_delegation(session, row, DelegationStatus.REVOKED, "owner_revoked")
-        await self._audit(audit, principal, AuditAction.AGENT_DELEGATION_REVOKED,
-                          f"agentdelegation:{row.delegation_id}:owner_revoked")
         await self._stop_runs(session, audit, principal, agent_id, CancelReason.PRINCIPAL_REVOKED,
                               delegation_id=row.delegation_id)
         return service.delegation_view(row)

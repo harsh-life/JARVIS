@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
-from shared.schemas.agent_factory import CompiledAgentSpec, EnvelopeEntry, risk_severity
+from shared.schemas.agent_factory import CompiledAgentSpec, EnvelopeEntry, risk_severity, unattended_refusal
 from shared.schemas.enums import RiskCategory
 
 # Belt and braces: the compiler never maps these (docs/29 §9.3); the gate
@@ -101,8 +101,28 @@ def activation_within_envelope(
     return any(entry.capability == capability and _narrows(entry.scope, scope) for entry in envelope.entries)
 
 
+def unattended_capability_refused(capability: str) -> bool:
+    """docs/29 §15.7: a capability no unattended run can ever activate,
+    whatever its operations — anything on a device or an app, break-glass,
+    the Agent Factory itself."""
+
+    return unattended_refusal(capability, "*", RiskCategory.LOW_READ) in ("device_execution", "never_unattended")
+
+
+def not_unattended(capability: str) -> str:
+    return (f"{capability}: outside what an unattended run may ever do — refused, never offered for "
+            "confirmation.")
+
+
 def not_in_envelope(capability: str) -> str:
     return f"{capability}: outside this agent's approved abilities — not requested, never offered for confirmation."
 
 
-__all__ = ["Envelope", "activation_within_envelope", "not_in_envelope", "within_envelope"]
+__all__ = [
+    "Envelope",
+    "activation_within_envelope",
+    "not_in_envelope",
+    "not_unattended",
+    "unattended_capability_refused",
+    "within_envelope",
+]

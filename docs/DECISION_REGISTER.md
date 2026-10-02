@@ -349,7 +349,7 @@ prompt is unchanged, the `/api/v1/agents` endpoints answer `503` with
 `dependency: agents`, and nothing writes to the three new tables. **No OD-AF
 decision is ratified by being built**; each row below says what the build does
 while the decision is open. Phase 2 (native, present-user, on-demand runs) is
-recorded after the Phase 1 tables; nothing runs unattended.
+recorded after the Phase 1 tables; Phase 5 (unattended runs, under §2K) after Phases 3–4.
 
 | ID | Decision | Value implemented (not ratified) | Where |
 |---|---|---|---|
@@ -449,6 +449,33 @@ child agent or agent-to-agent messaging is built.
 
 Phase 3/4 mutants M-AG6–M-AG8 and M-AG70–M-AG122 are in
 `tests/tools/guard_mutations.py` (four of them Kotlin).
+
+### Phase 5 — standing delegation and unattended runs (implementation facts)
+
+Built under the decisions of §2K (OD-AF-2/3/4/5/7/8, ratified 2026-10-02),
+**off by default**: `agents.unattended_enabled: false`, and it loads as true
+only with `agents.enabled` and `agents.standing_delegation_ratified`. Nothing
+external is built (Phase 6: no external runtime, MCP, container or netns).
+No child agents, agent-to-agent delegation, external recipients, device
+execution by agents, Darwin or Mem0 extraction.
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P5-1 | **DelegatedPrincipal.** `(user_id, agent_id, delegation_id, run_id, graph_id?)`, frozen, `extra="forbid"`, with **no `device_id`/`session_id` attribute at all** (reading one raises). Every consumer reads a device or session through `device_of()`/`session_of()`, which return `None` for it. Built only by the trigger loop, from the stored delegation and the run it just opened. | `shared/schemas/authorization.py` |
+| AF-P5-2 | **The engine** decides it on D1–D5 as its owner. A tier above `low_write`, or one needing confirmation, is `DENY unattended_never_confirms` — no binding, no token. D5: device- and session-scoped grants never match; only the owner's `user`/`graph` grants are candidates. Audited with no device and no session. | `server/graph/authorization.py`, `server/capabilities/grants.py` |
+| AF-P5-3 | **StandingDelegation** (`standing_delegations`, migration `d1f3b5a7c9e2`): bound to the spec version, spec hash and a recomputed envelope hash, the exact cron and zone, `max_runs_per_day` 1–24, budgets > 0 and ≤ the spec's, mandatory `expires_at ≤ created_at + delegation_max_days`, `created_with_step_up` true; at most one active per agent. The store enforces each. A task row is either a present user's (device + session) or a delegation's (neither). | `server/storage/models.py`, `server/agents/delegation.py` |
+| AF-P5-4 | **Grant** (`POST /api/v1/agents/{id}/delegation`): the owner's own call only, never a tool. The agent must be active, in the session's graph, on its current template/profile/runtime, compiled `unattended` within the ceiling. The engine decides `write` on the definition (consequential): a confirmation bound to the exact terms and spec hash. The confirmed call needs a **fresh device re-attestation**, checked before the token is spent. A new grant supersedes the active one (`renewed`). **Revoke** (`DELETE …`) is always allowed, never confirmed, and stops live runs under it. | `server/composition/agents.py`, `server/gateway/routers/agents.py` |
+| AF-P5-5 | **Freshness**, read from the store at every check: the run open and exactly this delegation's; the owner `active`; still a member of the graph; the delegation active, unexpired, step-up-granted and exactly the agent's current spec (version, hash, envelope hash, schedule) and within the ceiling. Checked by the security port before every step (`principal_active`) and by the run's coordinator at every step and tool call (a second, independent check). With unattended runs switched off, no delegated principal is ever fresh. | `server/composition/agents.py`, `server/composition/security_port.py`, `server/agents/service.py` |
+| AF-P5-6 | **Ending.** Owner pause, operator pause, delete, a new version, re-approval and a tampered spec end the delegation (revoked or invalidated). Resume never restores it. Every end — by any path — is audited (`agent.delegation.revoked/expired/invalidated`, the reason code) and the owner gets a notice (except on delete, whose inbox goes with the agent). | `server/agents/service.py` (`delegation_ended` hook), `server/composition/agents.py` |
+| AF-P5-7 | **The trigger loop** is the Agent Factory's own (`AgentTriggerLoop`, a lifespan service only when unattended runs are on), never the scheduler (which still imports no runtime, tool or factory). Per active delegation, in its own transaction: expiry (notice 3 days before, once; `expired` at expiry), freshness (`invalidated` otherwise), then the latest occurrence since the last claimed one. | `server/composition/agent_triggers.py`, `server/agents/triggers.py` |
+| AF-P5-8 | **Misfires and admission.** Of the occurrences since the last claim, only the latest runs, and only within `misfire_grace_minutes` (15); earlier ones are one `misfire_coalesced` notice, or `run_missed` past the grace. The claim is a compare-and-set on `last_occurrence_at`; `(delegation_id, occurrence_at)` is unique, so concurrent passes run an occurrence once. Skipped with a notice: the global latch (`breaker_stopped`), the day's limit in the delegation's zone (`run_limit_reached`), the month's spend ≥ `min(spec, delegation)` (`budget_exhausted`). | `server/composition/agent_triggers.py` |
+| AF-P5-9 | **The run** is an ordinary task of the delegated principal through the native provider, the Agent Gateway (tokens, nonces), the envelope gate and the engine. In addition, before the engine: a capability that is device-, app-, break-glass- or `agent.*`-shaped is never activated; an unattended run activates **only** the owner's existing standing grants and never asks; every tool call must pass `unattended_refusal` (≤ `low_write`, server only, `net.request` `get` only). It never pauses (a pause fails it closed); its per-run budget is `min(delegation, spec, month remaining)`, its month `min(spec, delegation)`. Results and notices go to the owner's inbox only, as data. | `server/agent/runtime.py`, `server/agent/envelope.py`, `shared/schemas/agent_factory.py` |
+| AF-P5-10 | **Restart.** At the loop's start, an unattended run that never got its task is closed `failed: interrupted` with its tokens revoked; one whose task ended is closed from it. Nothing is replayed: its occurrence stays claimed. | `server/composition/agent_triggers.py` |
+| AF-P5-11 | **No `CapabilityScopeType.agent`** (§2K deviation): no activation record is ever scoped to an agent or delegation. **`agent.delegate` is not a registered capability**: as AF-P2-1 did for run/control, it is an owner HTTP path, so no task can grant standing authority. | — |
+
+Phase 5 mutants M-AG123–M-AG164 are in `tests/tools/guard_mutations.py`
+(M41, M-AG19 and M-AG118 were re-anchored onto the same guards). The BR-T2
+re-run is `docs/OD_A1_BR_T2.md` §3f (rows 42–45).
 
 
 ## 2K. Agent Factory owner decisions (2026-10-02)
