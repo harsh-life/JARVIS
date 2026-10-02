@@ -71,6 +71,9 @@ async def test_the_runtime_persists_no_transcript(h):
         "mode",
         # 18 §4/§7: a counter, like `iterations`.
         "worker_switches",
+        # docs/29 §15.2 (Phase 5): the standing delegation an unattended run's
+        # task runs under, instead of a device and session — an id, not content.
+        "delegation_id",
     }
 
     alice = await h.user("alice")

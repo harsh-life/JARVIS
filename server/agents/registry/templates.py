@@ -23,7 +23,14 @@ from pydantic import ValidationError
 
 from server.agents import abilities
 from server.agents.errors import AgentRegistryError
-from shared.schemas.agent_factory import AbilityName, AgentTemplate, NotebookAccess, risk_severity
+from shared.schemas.agent_factory import (
+    UNATTENDED_RISK_CEILING,
+    AbilityName,
+    AgentTemplate,
+    NotebookAccess,
+    TriggerKind,
+    risk_severity,
+)
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 
@@ -52,6 +59,16 @@ def _check_consistency(template: AgentTemplate) -> None:
             )
     if len(set(template.abilities)) != len(template.abilities):
         raise AgentRegistryError(f"template {template.template_id}: duplicate abilities")
+    # docs/29 §15.6–§15.7 (OD-AF-4): a template supports unattended runs only
+    # if it says so in both places and its ceiling is within the unattended
+    # one — never a template the compiler would have to narrow later.
+    unattended = TriggerKind.UNATTENDED in template.trigger_support
+    if unattended != template.unattended_supported:
+        raise AgentRegistryError(
+            f"template {template.template_id}: unattended_supported and trigger_support disagree")
+    if unattended and risk_severity(template.risk_ceiling) > risk_severity(UNATTENDED_RISK_CEILING):
+        raise AgentRegistryError(
+            f"template {template.template_id}: unattended runs are capped at {UNATTENDED_RISK_CEILING.value}")
 
 
 def parse_template(path: Path) -> AgentTemplate:

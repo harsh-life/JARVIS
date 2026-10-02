@@ -287,6 +287,7 @@ def build_application(
             service=AgentDefinitionService(
                 agent_registries, preview_ttl_minutes=config.agents.compile_preview_ttl_minutes,
                 max_agents_per_user=config.agents.max_agents_per_user,
+                unattended_available=config.agents.unattended_enabled,
             ),
         )
         core.resource_loader.register(ResourceType.AGENTDEFINITION, AgentDefinitionLoader())

@@ -121,9 +121,12 @@ class AgentDefinitionService:
         *,
         preview_ttl_minutes: int,
         max_agents_per_user: int = 5,
+        unattended_available: bool = False,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._registries = registries
+        # docs/29 §15 (OD-AF-2): `agents.unattended_enabled`, read once.
+        self._unattended = unattended_available
         self._ttl = timedelta(minutes=preview_ttl_minutes)
         self._max_agents = max_agents_per_user
         self._clock = clock
@@ -162,7 +165,8 @@ class AgentDefinitionService:
             created_at=now,
         )
         result = compile_draft(draft, owner=owner, target=target, registries=self._registries,
-                               runtime_health=runtime_health, trigger_preview=trigger_preview)
+                               runtime_health=runtime_health, trigger_preview=trigger_preview,
+                               unattended_available=self._unattended)
         if result.kind != "compiled" or result.spec is None:
             return CompileOutcome(kind=result.kind, questions=result.questions, reason_codes=result.reason_codes)
         spec = result.spec
@@ -417,8 +421,8 @@ class AgentDefinitionService:
         return AgentInboxItemView(
             item_id=item.item_id, agent_id=item.agent_id,
             agent_name=definition.name if definition is not None else None, run_id=item.run_id,
-            status=item.status, failure_code=item.failure_code, body=item.body, withheld=item.withheld,
-            truncated=item.truncated, created_at=_as_utc(item.created_at),
+            status=item.status, kind=item.kind, notice=item.notice, failure_code=item.failure_code,
+            body=item.body, withheld=item.withheld, truncated=item.truncated, created_at=_as_utc(item.created_at),
             read_at=_as_utc(item.read_at) if item.read_at else None,
         )
 

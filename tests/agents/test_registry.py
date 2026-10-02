@@ -231,7 +231,7 @@ def test_the_feature_is_off_by_default():
 
 @pytest.mark.parametrize("agents", [
     {"unattended_enabled": True},
-    {"unattended_enabled": True, "standing_delegation_ratified": True},   # Phase 5 is not built
+    {"unattended_enabled": True, "standing_delegation_ratified": True},   # the factory is off
     {"max_agents_per_user": 0},
     {"compile_preview_ttl_minutes": 0},
     {"default_budget_per_run": -1},

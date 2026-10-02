@@ -30,6 +30,7 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from server.agents import abilities
+from server.agents.delegation import unattended_spec_refusal
 from server.agents.hashing import spec_hash_of
 from server.agents.registry import AgentRegistries
 from server.agents.selector import SelectionInput, SelectionResult, model_calls_bound, select
@@ -204,8 +205,10 @@ def compile_draft(
     # §9.6 rule 6: v1 outputs are the owner's inbox (the schema allows nothing else).
     if draft.output_request is not OutputKind.INBOX:
         return _rejected("output_unavailable")
-    # §9.6 rule 4 / §15: unattended runs need the PRD §22 amendment and Phase 5.
-    if draft.trigger_request.kind is TriggerKind.UNATTENDED and not unattended_available:
+    # §9.6 rule 4 / §15: unattended runs exist only where the operator has
+    # switched them on (OD-AF-2; `agents.unattended_enabled`).
+    unattended = draft.trigger_request.kind is TriggerKind.UNATTENDED
+    if unattended and not unattended_available:
         return _rejected("unattended_unavailable")
 
     selection = select(SelectionInput(
@@ -232,6 +235,8 @@ def compile_draft(
         return _rejected(*selection.reason_codes, selection=selection)
     template = selection.template
     assert template is not None and selection.selection is not None
+    if unattended and not template.unattended_supported:
+        return _rejected("unattended_not_supported", template=template, selection=selection)
 
     envelope, codes = _envelope(template, draft)
     if envelope is None:
@@ -308,6 +313,12 @@ def compile_draft(
     spec = CompiledAgentSpec.model_validate(
         {**fields, "spec_hash": spec_hash_of(unsigned.model_dump(mode="json"))}
     )
+    if unattended:
+        # docs/29 §15.6–§15.7 (OD-AF-4): an unattended agent that could reach
+        # anything above the unattended ceiling is refused, not narrowed.
+        refused = unattended_spec_refusal(spec)
+        if refused is not None:
+            return _rejected(refused, template=template, selection=selection)
     return CompileResult(kind="compiled", spec=spec, template=template, selection=selection)
 
 

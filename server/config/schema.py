@@ -796,8 +796,14 @@ class AgentsConfig(StrictModel):
       adds them;
     * budgets default to `0.0`, which refuses every paid model call (OD-02) —
       an agent whose only eligible model is paid cannot be compiled;
-    * unattended execution cannot be switched on: docs/29 §15 needs the PRD §22
-      amendment (OD-AF-2) *and* an implementation this build does not have.
+    * unattended execution (docs/29 §15, Phase 5) is off: PRD §22 now allows
+      it under a StandingDelegation (OD-AF-2, ratified 2026-10-02, register
+      §2K), and the operator switches it on only explicitly —
+      `unattended_enabled: true` loads only with `enabled: true` and
+      `standing_delegation_ratified: true`. Delegations last at most
+      `delegation_max_days` (OD-AF-5); a missed schedule occurrence runs at
+      most once, within `misfire_grace_minutes`; the trigger loop looks for
+      due agents every `trigger_interval_seconds`.
 
     Cross-references (template ids, `model_ref` targets, implemented
     providers, cost classes, runtime providers) are checked when the registries
@@ -813,6 +819,9 @@ class AgentsConfig(StrictModel):
     delegation_max_days: int = Field(default=30, ge=1, le=365)
     unattended_enabled: bool = False
     standing_delegation_ratified: bool = False
+    # `[IMPL]` docs/29 §15.5 names the grace without fixing a value.
+    misfire_grace_minutes: int = Field(default=15, ge=1, le=1440)
+    trigger_interval_seconds: int = Field(default=60, ge=5, le=3600)
     model_profiles: list[AgentModelProfile] = Field(default_factory=list)
     model_profiles_open_to_all: list[str] = Field(default_factory=list)
     runtimes: dict[str, AgentRuntimeToggle] = Field(
@@ -826,11 +835,8 @@ class AgentsConfig(StrictModel):
                 "agents.unattended_enabled requires agents.standing_delegation_ratified "
                 "(docs/29 §15.8: the PRD §22 amendment must land first)"
             )
-        if self.unattended_enabled:
-            raise ValueError(
-                "agents.unattended_enabled: unattended agent execution (docs/29 §15, Phase 5) is not "
-                "implemented in this build"
-            )
+        if self.unattended_enabled and not self.enabled:
+            raise ValueError("agents.unattended_enabled requires agents.enabled")
         if len(set(self.enabled_templates)) != len(self.enabled_templates):
             raise ValueError("agents.enabled_templates lists a template twice")
         ids = [p.profile_id for p in self.model_profiles]

@@ -124,8 +124,10 @@ class ModelPreference(str, Enum):
 class TriggerKind(str, Enum):
     ON_DEMAND = "on_demand"
     REMINDER = "reminder"
-    # docs/29 §15: blocked on OD-AF-2 (PRD §22 amendment). The compiler rejects
-    # it (`unattended_unavailable`) until then.
+    # docs/29 §15 (Phase 5; OD-AF-2 ratified 2026-10-02, register §2K): runs
+    # only under an active StandingDelegation, and only when the operator has
+    # switched `agents.unattended_enabled` on. Otherwise the compiler rejects
+    # it (`unattended_unavailable`).
     UNATTENDED = "unattended"
 
 
@@ -719,12 +721,13 @@ class RunAgentRequest(_Strict):
 
 class AgentRunView(_Strict):
     """docs/29 §23.3. `task` is the ordinary task the run is: a paused run is
-    confirmed through `/agent/tasks/{task_id}/confirm` like any task."""
+    confirmed through `/agent/tasks/{task_id}/confirm` like any task. An
+    `unattended` run (Phase 5) never pauses: it has nobody to confirm."""
 
     run_id: UUID
     agent_id: UUID
     version: int
-    kind: Literal["on_demand", "reminder_tap"] = "on_demand"
+    kind: Literal["on_demand", "reminder_tap", "unattended"] = "on_demand"
     status: AgentRunStatus
     failure_code: str | None = None
     task_id: UUID | None = None
@@ -743,13 +746,20 @@ class AgentInboxItemView(_Strict):
     """docs/29 §19 / §23.3: one run's result for its owner. `body` is plain
     text written by the agent — data to show, never instructions to follow.
     `withheld` says the result looked like it carried a credential and was
-    not stored; `truncated` that it was cut to the inbox bound."""
+    not stored; `truncated` that it was cut to the inbox bound.
+
+    Phase 5 (OD-AF-8): a `notice` is the owner's notification about the
+    agent's standing delegation (a skipped, missed or coalesced occurrence, an
+    expiry, a revocation, a spent budget, the breaker). It names no run and
+    carries a closed `notice` code; like a result it is data only."""
 
     item_id: UUID
     agent_id: UUID
     agent_name: str | None
-    run_id: UUID
-    status: Literal["completed", "failed", "cancelled"]
+    run_id: UUID | None
+    status: Literal["completed", "failed", "cancelled", "notice"]
+    kind: Literal["result", "notice"] = "result"
+    notice: "AgentNotice | None" = None
     failure_code: str | None = None
     body: str
     withheld: bool = False
@@ -932,6 +942,106 @@ class ProviderHealth(_Strict):
     detail: str = ""
 
 
+# ── standing delegation (docs/29 §15; Phase 5) ─────────────────────────────
+
+# docs/29 §15.7, OD-AF-4 (register §2K): the most an unattended run may ever
+# reach. Consequential and high_irreversible are refused, never paused.
+UNATTENDED_RISK_CEILING = RiskCategory.LOW_WRITE
+
+# Capabilities an unattended run can never use, whatever a spec or a grant
+# says: anything that acts on a device or an app (no device principal exists),
+# the break-glass family, and the Agent Factory itself (no agent creation,
+# no self-delegation).
+_NEVER_UNATTENDED = ("device.", "app.", "system.restricted", "agent.")
+# `net.request` reaches outside: only reads (`get`) are in the ceiling — no
+# POST or other side-effecting method (docs/29 §15.7).
+_NET_READ_ONLY = {"net.request": frozenset({"get"})}
+
+
+def unattended_refusal(capability: str, operation: str, tier: RiskCategory | None, *,
+                       platform: str = "server") -> str | None:
+    """docs/29 §15.7: `None` when (capability, operation) at `tier` on
+    `platform` is inside the unattended ceiling; otherwise why not.
+
+    Pure and fail-closed: an unknown tier is outside. It only removes — a
+    `None` means nothing more than "the ordinary path may now decide", where
+    the owner's live grants, the envelope and the engine still apply."""
+
+    name = (capability or "").strip().lower()
+    if (platform or "").strip().lower() != "server":
+        return "device_execution"
+    if name.startswith(("device.", "app.")):
+        return "device_execution"
+    if any(name == n or name.startswith(n) for n in _NEVER_UNATTENDED):
+        return "never_unattended"
+    allowed = _NET_READ_ONLY.get(name)
+    if allowed is not None and operation not in allowed:
+        return "external_side_effect"
+    if tier is None:
+        return "tier_unknown"
+    if risk_severity(tier) > risk_severity(UNATTENDED_RISK_CEILING):
+        return "above_unattended_ceiling"
+    return None
+
+
+class DelegationStatus(str, Enum):
+    """docs/29 §15.3 — only `active` authorizes anything (as a ceiling)."""
+
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    EXPIRED = "expired"
+    INVALIDATED = "invalidated"
+
+
+class DelegationRequest(_Strict):
+    """`POST /agents/{id}/delegation` (docs/29 §23.2): the terms the owner
+    chooses — how often at most, how much, for how long. Everything else (the
+    agent, the owner, the graph, the spec version and hash, the envelope, the
+    schedule) comes from the stored spec and the session; the request can
+    name none of it. Budgets are explicit and non-zero (OD-AF-7) and bounded
+    by the spec's; the expiry is bounded by `agents.delegation_max_days`
+    (OD-AF-5) and defaults to it."""
+
+    max_runs_per_day: int = Field(ge=1, le=24)
+    budget_per_run: float = Field(gt=0.0)
+    budget_per_month: float = Field(gt=0.0)
+    expires_in_days: int | None = Field(default=None, ge=1, le=365)
+
+
+class StandingDelegationView(_Strict):
+    delegation_id: UUID
+    agent_id: UUID
+    status: DelegationStatus
+    status_reason: str | None = None
+    spec_version: int
+    schedule: str
+    timezone: str
+    max_runs_per_day: int
+    budget_per_run: float
+    budget_per_month: float
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    last_occurrence_at: datetime | None = None
+
+
+class AgentNotice(str, Enum):
+    """OD-AF-8: what the owner is told about a standing delegation, as an
+    inbox notice. A closed vocabulary — a notice carries no free text from the
+    agent or a model."""
+
+    DELEGATION_EXPIRING = "delegation_expiring"
+    DELEGATION_EXPIRED = "delegation_expired"
+    DELEGATION_REVOKED = "delegation_revoked"
+    DELEGATION_INVALIDATED = "delegation_invalidated"
+    RUN_MISSED = "run_missed"
+    MISFIRE_COALESCED = "misfire_coalesced"
+    RUN_LIMIT_REACHED = "run_limit_reached"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    BREAKER_STOPPED = "breaker_stopped"
+    RUN_NOT_STARTED = "run_not_started"
+
+
 class CancelReason(str, Enum):
     OWNER_STOP = "owner_stop"
     EMERGENCY_STOP = "emergency_stop"
@@ -977,6 +1087,12 @@ class ModelCallRequest(_Strict):
 
 
 __all__ = [
+    "AgentNotice",
+    "DelegationRequest",
+    "DelegationStatus",
+    "StandingDelegationView",
+    "UNATTENDED_RISK_CEILING",
+    "unattended_refusal",
     "AbilityName",
     "AgentConfirmationCard",
     "AgentDetail",
