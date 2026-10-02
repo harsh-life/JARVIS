@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import AsyncIterator
 
 from server.agent.ports import UsageLimitReached
-from shared.schemas.authorization import Principal
+from shared.schemas.authorization import AnyPrincipal, is_delegated, session_of
 
 
 @dataclass(frozen=True)
@@ -59,8 +59,11 @@ class ConcurrencyGate:
         self._global = 0
 
     @asynccontextmanager
-    async def slot(self, principal: Principal) -> AsyncIterator[None]:
-        session_count = self._by_session.get(principal.session_id, 0)
+    async def slot(self, principal: AnyPrincipal) -> AsyncIterator[None]:
+        # An unattended run (docs/29 §15.2) has no session: its delegation is
+        # its "session" here — one running task per delegation at a time.
+        key = session_of(principal) if not is_delegated(principal) else principal.delegation_id
+        session_count = self._by_session.get(key, 0)
         user_count = self._by_user.get(principal.user_id, 0)
         if session_count >= self._limits.per_session:
             raise UsageLimitReached("per_session_concurrency", retry_after_seconds=5)
@@ -69,15 +72,15 @@ class ConcurrencyGate:
         if self._global >= self._limits.global_:
             raise UsageLimitReached("global_concurrency", retry_after_seconds=5)
 
-        self._by_session[principal.session_id] = session_count + 1
+        self._by_session[key] = session_count + 1
         self._by_user[principal.user_id] = user_count + 1
         self._global += 1
         try:
             yield
         finally:
-            self._by_session[principal.session_id] -= 1
-            if self._by_session[principal.session_id] <= 0:
-                del self._by_session[principal.session_id]
+            self._by_session[key] -= 1
+            if self._by_session[key] <= 0:
+                del self._by_session[key]
             self._by_user[principal.user_id] -= 1
             if self._by_user[principal.user_id] <= 0:
                 del self._by_user[principal.user_id]

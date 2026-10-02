@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Mapping
+from typing import Awaitable, Callable, Mapping
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,8 +50,12 @@ from shared.schemas.authorization import (
     CapabilityCheckContext,
     DenialSurface,
     Operation,
+    AnyPrincipal,
+    DelegatedPrincipal,
     Principal,
     ResourceType,
+    device_of,
+    session_of,
 )
 from shared.schemas.enums import (
     AuditActor,
@@ -105,6 +109,10 @@ _SYSTEM_EVENTS = frozenset({
 _MAX_RESOURCE = 128
 
 
+# (session, delegated principal) → is it fresh *now*? Read from the store.
+DelegationCheck = Callable[[AsyncSession, DelegatedPrincipal], Awaitable[bool]]
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -119,11 +127,15 @@ class RuntimeSecurityAdapter:
     def __init__(
         self, *, core: SecurityCore, session: AsyncSession, audit: AuditLogger,
         break_glass: BreakGlassRegistry | None = None,
+        delegations: "DelegationCheck | None" = None,
     ) -> None:
         self._core = core
         self._session = session
         self._audit = audit
         self._break_glass = break_glass
+        # docs/29 §15.2: the Agent Factory's freshness check for an unattended
+        # run's principal; `None` (agents or unattended runs off) = never fresh.
+        self._delegations = delegations
 
     # ── authorization ───────────────────────────────────────────────────
 
@@ -281,8 +293,8 @@ class RuntimeSecurityAdapter:
             resource=f"capability_grant:{grant.grant_id}",
             result=AuditResult.SUCCESS,
             user_id=principal.user_id,
-            device_id=principal.device_id,
-            session_id=principal.session_id,
+            device_id=device_of(principal),
+            session_id=session_of(principal),
         )
 
     async def deactivate_task(self, *, principal: Principal, task_id: uuid.UUID) -> int:
@@ -308,10 +320,19 @@ class RuntimeSecurityAdapter:
 
     # ── identity freshness ──────────────────────────────────────────────
 
-    async def principal_active(self, principal: Principal) -> bool:
+    async def principal_active(self, principal: AnyPrincipal) -> bool:
         """The task's own device and session are still valid (SESSION-002:
-        revocation is immediate — checked before every step)."""
+        revocation is immediate — checked before every step).
 
+        An unattended run's `DelegatedPrincipal` (docs/29 §15.2) has neither:
+        it is fresh only while its owner, graph, delegation, spec and run all
+        still hold — the Agent Factory's own check, read from the store every
+        time. With no such check wired (agents or unattended runs switched
+        off), no delegated principal is ever active."""
+
+        if isinstance(principal, DelegatedPrincipal):
+            check = self._delegations
+            return check is not None and await check(self._session, principal)
         device = await self._session.get(Device, principal.device_id)
         if device is None or device.revoked or device.user_id != principal.user_id:
             return False
@@ -351,8 +372,8 @@ class RuntimeSecurityAdapter:
             result=result,
             decision=decision,
             user_id=principal.user_id,
-            device_id=principal.device_id,
-            session_id=principal.session_id,
+            device_id=device_of(principal),
+            session_id=session_of(principal),
             graph_id=graph_id,
         )
 
@@ -400,8 +421,8 @@ async def record_break_glass_events(
             resource=event.resource[:_MAX_RESOURCE],
             result=AuditResult.SUCCESS,
             user_id=event.user_id,
-            device_id=principal.device_id if principal is not None else None,
-            session_id=principal.session_id if principal is not None else None,
+            device_id=device_of(principal) if principal is not None else None,
+            session_id=session_of(principal) if principal is not None else None,
             graph_id=graph_id,
             flush=flush,
         )

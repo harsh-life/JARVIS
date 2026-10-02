@@ -50,10 +50,13 @@ from server.security.events import AuditAction
 from shared.schemas.authorization import (
     ActionBinding,
     CapabilityCheckContext,
+    AnyPrincipal,
     DenialSurface,
     Operation,
-    Principal,
     ResourceType,
+    device_of,
+    is_delegated,
+    session_of,
 )
 from shared.schemas.enums import (
     AuditActor,
@@ -78,7 +81,9 @@ class AccessRequest:
     (D1) and never treats it as permission.
     """
 
-    principal: Principal
+    # A present user (`Principal`) or an unattended agent run
+    # (`DelegatedPrincipal`, 03 §8 / 04 §1 as amended by OD-AF-2).
+    principal: AnyPrincipal
     operation: Operation
     resource_type: ResourceType
     resource_ref: str | None = None
@@ -362,6 +367,21 @@ class AuthorizationEngine:
             resource_scope=request.resource_scope,
         )
 
+        if is_delegated(principal) and (
+            tier not in _UNATTENDED_TIERS or self._risk.requires_confirmation(tier)
+        ):
+            # 04 §1 as amended (OD-AF-4, docs/29 §15.6): an unattended run has
+            # nobody to confirm. Anything above low_write, and anything that
+            # would need the owner's confirmation, is a refusal, never a pause:
+            # no binding is built and no token can be issued for it.
+            return AuthorizationOutcome(
+                decision=PermissionDecisionValue.DENY,
+                risk_category=tier,
+                reason="unattended_never_confirms",
+                surface=DenialSurface.FORBIDDEN,
+                resource=resource,
+            )
+
         if self._risk.requires_confirmation(tier):
             binding = _binding_for(request)
             if request.confirmation_token and await self._confirmations.consume(
@@ -428,10 +448,14 @@ class AuthorizationEngine:
             ),
             decision=outcome.decision,
             user_id=request.principal.user_id,
-            device_id=request.principal.device_id,
-            session_id=request.principal.session_id,
+            device_id=device_of(request.principal),
+            session_id=session_of(request.principal),
             graph_id=request.graph_id,
         )
+
+
+# OD-AF-4 (docs/29 §15.6–§15.7): the most an unattended run may be allowed.
+_UNATTENDED_TIERS = frozenset({RiskCategory.LOW_READ, RiskCategory.LOW_WRITE})
 
 
 def _deny(reason: str, surface: DenialSurface) -> AuthorizationOutcome:
@@ -481,7 +505,7 @@ def _binding_for(request: AccessRequest) -> ActionBinding:
 
     return ActionBinding(
         principal_user_id=request.principal.user_id,
-        session_id=request.principal.session_id,
+        session_id=session_of(request.principal),
         task_id=request.task_id or f"{request.resource_type.value}:{request.resource_ref}",
         capability=request.required_capability,
         operation=request.operation,

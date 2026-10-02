@@ -60,6 +60,7 @@ from server.composition.latch import LATCH_ID, InProcessLatch
 from server.storage.models import AgentDefinitionRow, AgentTask, SupervisorLatch
 from shared.schemas.agent import AgentTaskStatus, TERMINAL_STATUSES
 from shared.schemas.agent_factory import AgentStatus
+from shared.schemas.authorization import device_of
 
 if TYPE_CHECKING:
     from server.composition.agents import AgentFactory
@@ -413,7 +414,8 @@ def _matches(state, scope: ControlScope, target_id: uuid.UUID) -> bool:
         return state.task_id == target_id
     if scope is ControlScope.USER:
         return state.principal.user_id == target_id
-    return state.principal.device_id == target_id
+    device_id = device_of(state.principal)
+    return device_id is not None and device_id == target_id
 
 
 async def _non_terminal(session: AsyncSession, *where) -> list[uuid.UUID]:

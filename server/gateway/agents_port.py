@@ -34,6 +34,7 @@ from shared.schemas.agent_factory import (
     CompileOutcome,
     CreateAgentRequest,
     NotebookResponse,
+    StandingDelegationView,
 )
 from shared.schemas.authorization import Principal
 
@@ -139,5 +140,20 @@ class AgentFactoryPort(Protocol):
         self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, candidate_id: uuid.UUID,
         audit: AuditLogger,
     ) -> AgentPurposeCandidateView: ...
+
+    # docs/29 §15.3–§15.4 (Phase 5): the owner's standing delegation.
+    async def delegation(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+    ) -> StandingDelegationView: ...
+
+    async def grant_delegation(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, body: Any,
+        confirmation_token: str | None, step_up_fresh: bool, audit: AuditLogger,
+    ) -> StandingDelegationView: ...
+
+    async def revoke_delegation(
+        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
+    ) -> StandingDelegationView: ...
+
 
 __all__ = ["AgentFactoryPort"]

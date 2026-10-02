@@ -27,7 +27,7 @@ from server.composition.memory import MemoryFacade, VaultFacade
 from server.composition.models import ConfiguredModelResolver, ProviderFactory
 from server.composition.scheduler import reminder_scope
 from server.composition.secret_context import CURRENT_SECRET_RESOLVER, SecretUnavailable
-from server.composition.security_port import RuntimeSecurityAdapter
+from server.composition.security_port import DelegationCheck, RuntimeSecurityAdapter
 from server.composition.usage_port import RuntimeUsageAdapter
 from server.config.schema import AppConfig
 from server.gateway.errors import AppError
@@ -88,8 +88,11 @@ class AgentTaskFacade:
         vault: VaultFacade | None = None,
         tuning: TuningCache | None = None,
         agent_runs: "Callable[[AsyncSession, AuditLogger], AgentRunPort] | None" = None,
+        delegations: "DelegationCheck | None" = None,
     ) -> None:
         self._agent_runs = agent_runs
+        # docs/29 §15.2: is an unattended run's principal fresh? (Phase 5.)
+        self._delegations = delegations
         self._tuning = tuning
         self._memory = memory
         self._vault = vault
@@ -121,7 +124,7 @@ class AgentTaskFacade:
             session=session,
             release_store=release_store,
             security=RuntimeSecurityAdapter(core=self._core, session=session, audit=audit,
-                                            break_glass=self._break_glass),
+                                            break_glass=self._break_glass, delegations=self._delegations),
             usage=usage,
             models=ConfiguredModelResolver(
                 config=self._config,
