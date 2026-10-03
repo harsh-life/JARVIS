@@ -514,6 +514,24 @@ of a container.
 6B mutants M-AG190–M-AG202 (13/13 killed). The kernel-level half of the
 boundary — that the container has no other route — is 6C's.
 
+### Phase 6, slice 6C — container and namespace isolation (implementation facts)
+
+Built under OD-AF-11/12/14 (§2L), **off by default**
+(`agents.containers.enabled: false`; it loads as true only with
+`agents.enabled` and a `run_dir`).
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P6-11 | **The launch is fixed in code, not configurable.** Podman `--runtime=runsc` with gVisor's own `network=none` (loopback only) and `host-uds=open` (a host socket only if mounted); `--network=none`; `--read-only --read-only-tmpfs=false` plus a read-only empty `/tmp` (gVisor would otherwise add a writable in-memory one — found by the live test); `--cap-drop=ALL`; `no-new-privileges`; `--userns=keep-id` with the server's own non-zero uid; `--pull=never`; `--http-proxy=false`; `--log-driver=none`; pids/memory/CPU limits; exactly two bind mounts (the run's sockets at `/run/jarvis`, its scratch at `/scratch`); only `JARVIS_*` values in the environment; only `name@sha256:<64 hex>` images; labels and a run-derived name. `ignore_cgroups` is the operator's explicit choice where cgroups are not delegated (then the limits are not enforced — a BR-T2 residual). | `server/execution/containers.py` |
+| AF-P6-12 | **The engine** is driven by argv only, with a **from-scratch environment** (PATH, HOME, XDG_RUNTIME_DIR, LANG — nothing of the server's: no provider key, KEK source, proxy or session can reach Podman or the container). `verify` refuses root, a Podman that is not rootless, and one that cannot use `runsc` (`podman --runtime=runsc info`). The kill path is `stop --time=<grace>` (SIGTERM, then SIGKILL) and `rm --force`, always both. A run's workspace is `<run_dir>/<run_id>/{sockets,scratch}`, `0700`, refused if it exists. | `server/execution/containers.py` |
+| AF-P6-13 | **Reconciliation** (docs/29 §25.2) at startup and every `reconcile_interval_seconds` (≤ 600): every managed container whose run is not live — finished, missing, or a forged label — is stopped and removed **by the engine's own container id**, and audited `agent.orphan.deprovisioned`. The reconciler verifies the engine before anything else: a weaker engine is a startup failure. | `server/composition/containers.py` |
+| AF-P6-14 | **Proven for real** (`tests/execution/test_containers_live.py`, rootless Podman 4.9 + runsc release-20260928.0, run as an unprivileged user; CI job `containers` with `HYPERMIND_REQUIRE_CONTAINER_STACK=1`): AGENT-T12 — every direct address (public, private, metadata, the host, loopback) unreachable, DNS fails, only `lo`; through the run's proxy the allowed host is reached and others refused. Confinement — non-root, `CapEff` 0, `NoNewPrivs` 1, root and `/tmp` not writable, scratch writable, host paths invisible. AGENT-T13 — a provider key, the KEK source and a proxy setting in the server's environment are absent from the container's environment, its inspect record and its scratch. A runtime ignoring SIGTERM is killed after the grace; an orphan is reconciled away. | `tests/execution/test_containers_live.py`, `.github/workflows/ci.yml` |
+
+6C mutants M-AG203–M-AG223 (21/21 killed). M-AG224 (the workspace's
+post-create symlink check) was dropped: creating the directory already fails
+on a planted symlink, so a single mutant of the second guard cannot be
+observed; the check stays for the race it closes.
+
 
 ## 2K. Agent Factory owner decisions (2026-10-02)
 

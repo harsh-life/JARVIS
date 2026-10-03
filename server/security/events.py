@@ -196,6 +196,8 @@ class AuditAction(str, Enum):
     AGENT_DELEGATION_INVALIDATED = "agent.delegation.invalidated"
     AGENT_DELEGATION_REFUSED = "agent.delegation.refused"
     AGENT_UNATTENDED_SKIPPED = "agent.unattended.skipped"
+    # docs/29 §25.2 (Phase 6): a container that was no live run's, removed.
+    AGENT_ORPHAN_DEPROVISIONED = "agent.orphan.deprovisioned"
     AGENT_TOKEN_ISSUED = "agent.token.issued"
     AGENT_TOKEN_REVOKED = "agent.token.revoked"
     AGENT_GATEWAY_DENIED = "agent.gateway.denied"

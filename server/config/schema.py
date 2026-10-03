@@ -832,6 +832,49 @@ class AgentModelGatewayConfig(StrictModel):
     max_completion_chars: int = Field(default=16_000, ge=1_000, le=200_000)
 
 
+def _run_dir(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not value.startswith("/") or os.path.normpath(value) != value.rstrip("/") or value.rstrip("/") in ("", "/"):
+        raise ValueError("agents.containers.run_dir must be an absolute, normalized directory other than /")
+    return value.rstrip("/")
+
+
+class AgentContainersConfig(StrictModel):
+    """docs/29 §21 (Phase 6, slice 6C; OD-AF-11/12, ratified 2026-10-02): the
+    external runtime's container. Off by default. The launch itself — gVisor
+    `runsc`, no network interface, read-only, no capabilities,
+    `no-new-privileges`, non-root, digest-pinned image — is fixed in
+    `server/execution/containers.py` and not configurable here.
+
+    * `podman` — the rootless Podman binary (absolute path);
+    * `run_dir` — where each run's private workspace (sockets, scratch) is
+      made; required when enabled;
+    * `ignore_cgroups` — only where the host does not delegate cgroups to the
+      server's user: the memory, CPU and process limits are then not enforced
+      (recorded as a residual in BR-T2);
+    * `reconcile_interval_seconds` — at most 600 (docs/29 §25.2: every 10
+      minutes)."""
+
+    enabled: bool = False
+    podman: str = "/usr/bin/podman"
+    run_dir: Annotated[str, AfterValidator(_run_dir)] | None = None
+    ignore_cgroups: bool = False
+    memory_mb: int = Field(default=2048, ge=256, le=16384)
+    cpus: float = Field(default=2.0, ge=0.25, le=16.0)
+    pids_limit: int = Field(default=512, ge=64, le=4096)
+    kill_grace_seconds: int = Field(default=10, ge=1, le=60)
+    reconcile_interval_seconds: int = Field(default=600, ge=30, le=600)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "AgentContainersConfig":
+        if not self.podman.startswith("/"):
+            raise ValueError("agents.containers.podman must be an absolute path")
+        if self.enabled and self.run_dir is None:
+            raise ValueError("agents.containers.enabled requires agents.containers.run_dir")
+        return self
+
+
 class AgentsConfig(StrictModel):
     """The Agent Factory (docs/29 §24). `[PROPOSAL — NOT CANONICAL UNTIL
     RATIFIED]` — additive to `15` §2, and every default is the safe reading:
@@ -875,6 +918,7 @@ class AgentsConfig(StrictModel):
         default_factory=lambda: {"native": AgentRuntimeToggle(enabled=True)}
     )
     model_gateway: AgentModelGatewayConfig = Field(default_factory=AgentModelGatewayConfig)
+    containers: AgentContainersConfig = Field(default_factory=AgentContainersConfig)
 
     @model_validator(mode="after")
     def _consistent(self) -> "AgentsConfig":
@@ -889,6 +933,8 @@ class AgentsConfig(StrictModel):
             raise ValueError("agents.model_gateway.enabled requires agents.enabled")
         if self.model_gateway.enabled and self.model_gateway.listen is None:
             raise ValueError("agents.model_gateway.enabled requires agents.model_gateway.listen")
+        if self.containers.enabled and not self.enabled:
+            raise ValueError("agents.containers.enabled requires agents.enabled")
         if len(set(self.enabled_templates)) != len(self.enabled_templates):
             raise ValueError("agents.enabled_templates lists a template twice")
         ids = [p.profile_id for p in self.model_profiles]

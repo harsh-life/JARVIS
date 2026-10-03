@@ -28,6 +28,8 @@ from server.agent.recovery import RecoveryPolicy
 from server.agents.service import AgentDefinitionService
 from server.composition.agent_triggers import AgentTriggerLoop
 from server.composition.model_gateway import HttpModelGateway, ModelGatewayListener
+from server.composition.containers import ContainerReconciler
+from server.execution.containers import ContainerEngine, EngineSettings
 from server.composition.agents import (
     AgentDefinitionLoader,
     AgentFactory,
@@ -416,6 +418,20 @@ def build_application(
         model_gateway_listener = ModelGatewayListener(app=model_gateway_app,
                                                       binding=config.agents.model_gateway.listen)
         background.append(model_gateway_listener)
+    # docs/29 §21/§25.2 (Phase 6, slice 6C): the external runtime's container
+    # engine — rootless Podman with gVisor, verified at startup — and the
+    # reconciler that removes any container that is no live run's, at
+    # startup and every 10 minutes. Nothing at all unless switched on.
+    container_reconciler: ContainerReconciler | None = None
+    if agent_factory is not None and config.agents.containers.enabled:
+        containers = config.agents.containers
+        container_reconciler = ContainerReconciler(
+            engine=ContainerEngine(EngineSettings(
+                podman=containers.podman, ignore_cgroups=containers.ignore_cgroups, memory_mb=containers.memory_mb,
+                cpus=containers.cpus, pids_limit=containers.pids_limit,
+                kill_grace_seconds=containers.kill_grace_seconds)),
+            storage=storage, interval_seconds=containers.reconcile_interval_seconds)
+        background.append(container_reconciler)
     # 19: the Judge — nothing at all unless `evaluation.enabled`.
     evaluation = build_evaluation(
         config, runtime=runtime, storage=storage, factory=factory, tuning=tuning, switches=switchboard,
@@ -467,6 +483,7 @@ def build_application(
     app.state.model_gateway = model_gateway
     app.state.model_gateway_app = model_gateway_app
     app.state.model_gateway_listener = model_gateway_listener
+    app.state.container_reconciler = container_reconciler
     # docs/23 §4: the optional push wake — nothing at all unless configured.
     attach_push_wake(config, app, device_hub)
     return app
