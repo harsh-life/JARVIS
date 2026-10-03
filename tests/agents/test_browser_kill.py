@@ -103,7 +103,7 @@ async def _admits_nothing(h, fake_runtime, spec) -> None:
     calls = len(h.model.seen)
     try:
         reply = await fake_runtime.model_call(spec)
-    except httpx.ConnectError:
+    except httpx.TransportError:   # the socket already gone, before or during the call
         pass
     else:
         assert reply.status_code in (401, 409), reply.text
