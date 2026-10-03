@@ -5,6 +5,8 @@ something narrower-than-intended or wider-than-reviewed."""
 
 from __future__ import annotations
 
+import re
+import uuid
 from pathlib import Path
 
 import pytest
@@ -12,7 +14,7 @@ from pydantic import ValidationError
 
 from server.agents import abilities
 from server.agents.registry import AgentRegistryError, ModelEntryFacts, load_templates
-from server.agents.registry.runtimes import NATIVE_RUNTIME
+from server.agents.registry.runtimes import BROWSER_USE_IMAGE, NATIVE_RUNTIME
 from server.agents.registry.templates import TEMPLATE_DIR
 from server.capabilities.registry import CAPABILITY_REGISTRY
 from server.config.schema import AgentsConfig, AppConfig
@@ -111,6 +113,23 @@ def test_the_four_v1_templates_load():
     for t in templates.values():
         if t.run_mode is not TaskMode.EXECUTE:
             assert t.risk_ceiling is RiskCategory.LOW_READ
+
+
+def test_the_pinned_browser_use_image_is_an_immutable_digest():
+    """OD-AF-14: once a reviewed PR pins `BROWSER_USE_IMAGE`, it is never a
+    floating tag — the exact registry path CI's `runtime-image.yml` builds
+    and publishes, `@sha256:<64 hex>` and nothing else. The real launch-time
+    validator (`ContainerSpec`) decides, so this fails the same way a run
+    would, not by a second, drifting regex."""
+
+    from server.execution.containers import ContainerSpec
+
+    if BROWSER_USE_IMAGE is None:
+        pytest.skip("not yet pinned (OD-AF-14): the runtime refuses to load")
+    assert BROWSER_USE_IMAGE.startswith("ghcr.io/harsh-life/jarvis-browser-use@sha256:")
+    assert re.fullmatch(r"ghcr\.io/harsh-life/jarvis-browser-use@sha256:[0-9a-f]{64}", BROWSER_USE_IMAGE)
+    ContainerSpec(run_id=uuid.uuid4(), agent_id=uuid.uuid4(), image=BROWSER_USE_IMAGE,
+                 socket_dir="/tmp/x/sockets", scratch_dir="/tmp/x/scratch")
 
 
 def test_templates_live_in_the_repository_with_a_review_checklist():

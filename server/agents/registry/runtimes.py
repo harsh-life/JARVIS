@@ -95,7 +95,16 @@ BROWSER_USE_RUNTIME = AgentRuntimeProfile(
 # OD-AF-14: the image CI builds and publishes (.github/workflows/runtime-image.yml),
 # pinned here by its immutable digest. None until the first publish is pinned
 # by a reviewed PR: until then the runtime cannot be enabled.
-BROWSER_USE_IMAGE: str | None = None
+#
+# Pinned by this PR. Built, smoke-tested and published by `runtime-image.yml`
+# on the push-to-main run triggered by PR #42's merge (commit
+# f482fdb903beef4ea7fa11cd66246e355530c85a):
+# https://github.com/harsh-life/JARVIS/actions/runs/37094303417/job/111120955670
+# — the digest printed to that job's own step summary, which GitHub's API
+# does not expose to this session; copied here from that summary.
+BROWSER_USE_IMAGE: str | None = (
+    "ghcr.io/harsh-life/jarvis-browser-use@sha256:0d1d6c18d48a21e28ca180a309e655e1f80fada301911322285a5e48c1a7cb18"
+)
 
 REGISTERED_RUNTIMES: Mapping[str, AgentRuntimeProfile] = MappingProxyType({
     NATIVE_RUNTIME_ID: NATIVE_RUNTIME,
