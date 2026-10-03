@@ -32,6 +32,7 @@ from urllib.parse import urljoin, urlsplit
 
 from server.net import policy
 from server.net.destinations import hostname_allowed
+from server.net.resolve import checked_address, system_resolver
 from shared.schemas.execution import EgressPolicy, ExecutionError, ExecutionErrorCode, ExecutionResult
 
 _MAX_HEADER_BYTES = 65_536
@@ -143,27 +144,20 @@ class EgressClient:
             )
 
         try:
-            candidates = socket.getaddrinfo(parts.hostname, port, proto=socket.IPPROTO_TCP)
+            # 10 §4/§5, the rule shared with the external runtime's proxy:
+            # the first resolved address that passes `policy.classify`.
+            chosen_ip = checked_address(parts.hostname, port, allow_private_net=egress_policy.private_net,
+                                        resolve=system_resolver, strict=False)
         except socket.gaierror as exc:
             raise ExecutionError(
                 ExecutionErrorCode.DESTINATION_UNRESOLVED, f"DNS resolution failed: {exc}"
             ) from exc
-
-        chosen_ip: str | None = None
-        for _family, _type, _proto, _canon, sockaddr in candidates:
-            candidate_ip = sockaddr[0]
-            try:
-                policy.classify(candidate_ip, allow_private_net=egress_policy.private_net)
-            except policy.DestinationBlocked:
-                continue
-            chosen_ip = candidate_ip
-            break
-        if chosen_ip is None:
+        except policy.DestinationBlocked:
             raise ExecutionError(
                 ExecutionErrorCode.EGRESS_DENIED,
                 f"no resolved address for {parts.hostname!r} passes the egress policy "
                 "(SSRF/metadata/private-range defense)",
-            )
+            ) from None
 
         path_and_query = parts.path or "/"
         if parts.query:

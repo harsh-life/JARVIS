@@ -500,6 +500,20 @@ adapter exists. Nothing calls it yet but tests; 6D's adapter will.
 killed). No data class changes (no new table or column), so BR-T2 is not
 re-measured for 6A; the container rows come with 6C/6E.
 
+### Phase 6, slice 6B — the egress boundary (implementation facts)
+
+Built under OD-AF-12/13 (§2L). Nothing starts it yet; 6C/6D put it in front
+of a container.
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P6-8 | **One resolution rule.** `checked_address` resolves a name with an injected resolver and classifies the answers with `policy.classify`. The egress client keeps its rule (`strict=False`: the first passing answer); the proxy uses `strict=True`: **every** answer must pass, so a name answering a public and a private address is refused (the shape of a rebinding attempt — stricter than the client because the caller is untrusted). | `server/net/resolve.py`, `server/net/client.py` |
+| AF-P6-9 | **The CONNECT proxy**, one per run on its own `0600` Unix socket. It understands exactly `CONNECT host:port HTTP/1.1` (8 KiB head, on time); refuses any other method or form, IP literals in every spelling (dotted, integer, octal, hex — the URL standard's last-label rule), single-label names, any port but 443 and any host not exactly in the run's list — before resolving. It then resolves once, classifies every answer, connects to the checked address and **refuses a connection whose peer is another address** (`ip_mismatch`). No TLS interception: bytes are relayed and counted. Per-run limits: connections, concurrency, bytes, idle time. A refusal is a bare status with no echo of the request; every decision goes to the audit callback with a reason code. | `server/net/egress_proxy.py` |
+| AF-P6-10 | **A run's hosts** come from JARVIS only: `policy_for_run` takes the exact hosts the spec names and refuses the whole run if any is outside the operator's `EgressPolicy` (its destinations, or `internet`) — never a silently narrower list. Private networks are never reachable from a run. | `server/net/egress_proxy.py` |
+
+6B mutants M-AG190–M-AG202 (13/13 killed). The kernel-level half of the
+boundary — that the container has no other route — is 6C's.
+
 
 ## 2K. Agent Factory owner decisions (2026-10-02)
 
