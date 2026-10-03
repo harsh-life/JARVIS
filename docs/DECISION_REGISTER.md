@@ -551,6 +551,20 @@ repository — any one missing is a startup failure, never a weaker run.
 6D mutants M-AG224–M-AG238 (15/15 killed; M-AG48 re-anchored for the
 browser kill path in owner stop).
 
+### Phase 6, slices 6E/6F — every way a contained run ends; BR-T2 (implementation facts)
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P6-21 | **One kill path** (`BrowserRuns.cancel`) for every stop that comes through a request — the owner's stop, pause and delete (`cancelled`: `owner_stop`, `deleted`) and every operator stop: task, user, device, agent pause, global (`failed: emergency_stop`, exactly as a native run). In the caller's own transaction: the run's tokens revoked **first** (AGENT-T23; audited `agent.token.revoked`), the run and task closed, the task's activation removed; only then is the container told to stop — without waiting, so a slow container never holds a request (or a SQLite write lock). The supervisor finishes (sockets, usage, egress summary, inbox, workspace). The operator's stops reach contained runs before their database sweep and report them as stopped. | `server/composition/browser_runs.py`, `server/composition/agents.py`, `server/composition/supervisor.py` |
+| AF-P6-22 | **Supervision backstops**, every `poll_seconds` (1 s): the deadline (`wall_clock_timeout`); the global latch however tripped (`emergency_stop`); the run's task closed by any other path (the task's own code); the model token re-authenticated (`token_revoked`, `spec_changed`, `agent_unavailable`). A gateway refusal for a ceiling the run hit — `budget_exceeded`, `agent_budget_exhausted`, `max_model_calls` — ends the run at once (`run_ending_refusal`); a rate limit or a provider failure does not. A supervisor failure is `runtime_crashed`, the container still stopped. | `server/composition/browser_runs.py` |
+| AF-P6-23 | **Failure codes are JARVIS's**: a result JARVIS could not read is `result_unreadable`; a readable `failed` result is `runtime_failed` whatever the runtime wrote as its error (found by BR-T2 row 49: a runtime could otherwise name any stop). | `server/composition/browser_runs.py` |
+| AF-P6-24 | **Restart**: an unfinished browser run is closed `failed: interrupted` — tokens revoked, task closed, **activation removed**, audited, workspace deleted — and the reconciler removes its container. | `server/composition/browser_runs.py` |
+| AF-P6-25 | **BR-T2 re-run** (docs/OD_A1_BR_T2.md §3g rows 46–53, new attacker model *compromised runtime*): no compromised-runtime or cross-user row reachable; row 52 (form submission on a granted host) reachable by design (OD-AF-15); row 53 (in-process reach to a live run's token) inside OD-A1 (a). Residuals: `ignore_cgroups` (limits unenforced) and row 52, both in §5. | `tests/integration/test_br_t2_container_rows.py` |
+
+6E/6F mutants M-AG239–M-AG250 (12/12 killed). A Phase 5 test that failed
+between 01:30 and 04:30 UTC (a delegation expiring before the miss it waits
+for) was fixed alongside (`test_a_delegations_whole_life_is_audited`).
+
 
 ## 2K. Agent Factory owner decisions (2026-10-02)
 

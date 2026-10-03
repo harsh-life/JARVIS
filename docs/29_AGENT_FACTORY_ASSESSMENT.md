@@ -1458,7 +1458,7 @@ Also `[FUTURE]`:
 | **3** — Agent Gateway (in-process), tokens, Judge/console integration | **READY TO IMPLEMENT** | in-process only; the network surface is Phase 6 |
 | **4** — reminder-tap | **READY TO IMPLEMENT** | scheduler contract unchanged (reminder carries data); needs one nullable `01` field (behind the flag) and an Android screen |
 | **5** — unattended recurring agents | **BUILT** (off by default) | OD-AF-2/4/5 ratified, PRD §22 amended, DelegatedPrincipal in `03`/`04` (register §2K); implementation facts AF-P5-1…11 (register §2J) |
-| **6** — first external provider | **6A BUILT**; **6B–6F READY TO IMPLEMENT** | OD-AF-6 (`browser_use`, P2), OD-TOOL-3 (no MCP) and OD-AF-11…15 (rootless engine + gVisor, per-run sockets, CONNECT proxy, digest pinning, `browser.session`) ratified 2026-10-02 (register §2L) |
+| **6** — first external provider | **6A–6F BUILT** (off by default; register §2J AF-P6-1…25; BR-T2 §3g); the runtime image's digest is pinned by a reviewed PR once CI publishes it | OD-AF-6 (`browser_use`, P2), OD-TOOL-3 (no MCP) and OD-AF-11…15 (rootless engine + gVisor, per-run sockets, CONNECT proxy, digest pinning, `browser.session`) ratified 2026-10-02 (register §2L) |
 | **7+** — additional providers | **FUTURE** | one per concrete task class, after Phase 6 |
 | Darwin | **FUTURE** | separate subsystem, not started |
 

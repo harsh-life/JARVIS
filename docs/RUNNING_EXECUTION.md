@@ -224,3 +224,61 @@ lint-imports --config pyproject.toml                     # 14 boundary contracts
 
 All of these run in CI on every pull request, with no secrets and no
 real device, host firewall, or mount-namespace privilege required.
+
+## 7. Phase 6: contained Browser Use runs (docs/29 §21; OD-AF-6, OD-AF-11…15)
+
+Off by default, and all-or-nothing: the `browser_use` runtime loads only
+with every piece below, and refuses to start otherwise — never a weaker
+boundary.
+
+1. **Host.** Linux, rootless Podman (4.x) and gVisor's `runsc` from its
+   signed apt repository, both run by the JARVIS server's own **non-root**
+   user (with `/etc/subuid`/`subgid` ranges). On Ubuntu 24.04 also
+   `sysctl kernel.apparmor_restrict_unprivileged_userns=0`. Check:
+   `podman --runtime=runsc info` reports `rootless: true`. Delegate cgroups
+   to that user (a systemd user slice) so memory/CPU/pids limits hold; on a
+   host where you cannot, `ignore_cgroups: true` runs without them — a
+   documented residual (docs/OD_A1_BR_T2.md §3g, §5).
+2. **Image.** CI builds, smoke-tests and publishes the runtime image
+   (`.github/workflows/runtime-image.yml`) and prints its digest; a reviewed
+   PR pins it in `server/agents/registry/runtimes.py` (`BROWSER_USE_IMAGE`).
+   Pull it once (`podman pull ghcr.io/…@sha256:…`): runs use
+   `--pull=never` and only `name@sha256:<digest>` references.
+3. **Config.**
+
+   ```yaml
+   agents:
+     enabled: true
+     enabled_templates: [..., browser_monitor]
+     runtimes: {native: {enabled: true}, browser_use: {enabled: true}}
+     model_gateway: {enabled: true, listen: "unix:/var/lib/jarvis/mg.sock"}
+     containers:
+       enabled: true
+       podman: /usr/bin/podman
+       run_dir: /var/lib/jarvis/runs     # ≤ 50 characters: socket paths must fit
+       kill_grace_seconds: 10
+       reconcile_interval_seconds: 600   # ≤ 600
+   execution:
+     network:
+       default_destinations: [status.example.org]   # every host an agent may browse
+   ```
+
+   The model profile used must list `browser_use` in `supported_runtimes`.
+4. **The owner.** A `browser_monitor` agent browses only the exact hosts of
+   its `https` URL sources. It runs only on demand, never unattended, and
+   only if its owner holds a standing `browser.session` grant (`low_write`:
+   it can submit forms on those hosts; it never signs in).
+
+What each run gets: its own container (no network interface, read-only root,
+no capabilities, `no-new-privileges`, its own scratch), its own Model
+Gateway socket (its model token only works there), its own egress proxy (the
+spec's hosts ∩ your `EgressPolicy`). Every stop — the owner's stop, pause or
+delete, any operator stop, the global stop, the deadline, a budget or
+model-call ceiling — revokes the run's tokens first, then stops and removes
+the container. At startup and every 10 minutes, containers without a live
+run are removed and audited (`agent.orphan.deprovisioned`).
+
+Tests: `HYPERMIND_REQUIRE_CONTAINER_STACK=1 python -m pytest
+tests/execution/test_containers_live.py tests/agents/test_browser_live.py`
+as that unprivileged user, with `HYPERMIND_TEST_BROWSER_IMAGE` set to a
+local image digest (CI job `containers`).

@@ -87,6 +87,8 @@ class FakeRuntime:
         self.tasks: dict[str, asyncio.Task] = {}
         self.behaviour = self.well_behaved
         self.exit_code = 0
+        self.stop_delay = 0.0           # a runtime slow to die (SIGTERM ignored for a while)
+        self.orphans: list[str] = []    # containers a dead process left behind
 
     # the engine's interface
     async def verify(self) -> None:
@@ -109,6 +111,8 @@ class FakeRuntime:
 
     async def stop(self, name: str) -> None:
         self.stopped.append(name)
+        if self.stop_delay:
+            await asyncio.sleep(self.stop_delay)
         task = self.tasks.get(name)
         if task is not None and not task.done():
             task.cancel()
@@ -118,7 +122,9 @@ class FakeRuntime:
         return []
 
     async def reconcile(self, live):
-        return []
+        removed = [n for n in self.orphans if not any(n == f"jarvis-run-{r}" for r in live)]
+        self.orphans = [n for n in self.orphans if n not in removed]
+        return removed
 
     # what a container does
     @staticmethod
@@ -155,12 +161,19 @@ class FakeRuntime:
         return self.exit_code
 
 
-@pytest.fixture
-def fake_runtime(monkeypatch):
+def install_fake_runtime(monkeypatch) -> "FakeRuntime":
+    """The fake engine in place of Podman + gVisor (other modules' fixtures
+    call this)."""
+
     runtime = FakeRuntime()
     monkeypatch.setattr(runtime_registry, "BROWSER_USE_IMAGE", IMAGE)
     monkeypatch.setattr("server.composition.browser_runs.engine_for", lambda settings: runtime)
     return runtime
+
+
+@pytest.fixture
+def fake_runtime(monkeypatch):
+    return install_fake_runtime(monkeypatch)
 
 
 async def _browser_harness(make_harness, tmp_path, fake_runtime, **agents):

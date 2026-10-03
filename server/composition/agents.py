@@ -1611,9 +1611,11 @@ class AgentFactoryFacade:
             if run.owner_user_id != principal.user_id:
                 continue
             if browser is not None and run.run_id in browser.live:
-                # Phase 6: the contained run's own kill path, through its provider.
-                await browser.provider.cancel_run(RunHandle(runtime_id=BROWSER_USE_RUNTIME_ID, run_id=run.run_id),
-                                                  reason)
+                # Phase 6: the contained run's kill path — tokens first, in
+                # this transaction; the container is told after.
+                await browser.cancel(session, audit, run_id=run.run_id, reason=reason.value,
+                                     status=AgentTaskStatus.CANCELLED, actor=AuditActor.USER,
+                                     actor_user=principal.user_id)
             else:
                 await provider.cancel_run(RunHandle(runtime_id=NATIVE_RUNTIME_ID, run_id=run.run_id), reason)
             await self._audit(audit, principal, AuditAction.AGENT_RUN_CANCELLED,
@@ -1625,8 +1627,9 @@ class AgentFactoryFacade:
         service = self._factory.service
         browser = self._factory.browser_runs
         if run.finished_at is None and browser is not None and run_id in browser.live:
-            await browser.provider.cancel_run(RunHandle(runtime_id=BROWSER_USE_RUNTIME_ID, run_id=run_id),
-                                              CancelReason.OWNER_STOP)
+            await browser.cancel(session, audit, run_id=run_id, reason=CancelReason.OWNER_STOP.value,
+                                 status=AgentTaskStatus.CANCELLED, actor=AuditActor.USER,
+                                 actor_user=principal.user_id)
             await self._audit(audit, principal, AuditAction.AGENT_RUN_CANCELLED,
                               f"agentrun:{run_id}:{CancelReason.OWNER_STOP.value}")
         elif run.finished_at is None:

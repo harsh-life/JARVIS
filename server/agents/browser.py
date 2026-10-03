@@ -97,7 +97,9 @@ class BrowserResult:
     error: str | None
 
 
-_UNREADABLE = BrowserResult(status="failed", final=None, steps=0, error="result_unreadable")
+# JARVIS's own verdict on a result it could not read — never the runtime's.
+UNREADABLE = BrowserResult(status="failed", final=None, steps=0, error="result_unreadable")
+_UNREADABLE = UNREADABLE
 
 
 def read_result(raw: bytes) -> BrowserResult:
@@ -123,6 +125,7 @@ __all__ = [
     "BROWSE",
     "BROWSER_CAPABILITY",
     "MAX_RESULT_BYTES",
+    "UNREADABLE",
     "BrowserResult",
     "browse_hosts",
     "hosts_from_urls",

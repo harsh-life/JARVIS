@@ -58,7 +58,7 @@ from server.security.audit import AuditLogger
 from server.security.events import AuditAction
 from server.composition.latch import LATCH_ID, InProcessLatch
 from server.storage.models import AgentDefinitionRow, AgentTask, SupervisorLatch
-from shared.schemas.agent import AgentTaskStatus, TERMINAL_STATUSES
+from shared.schemas.agent import AgentFailureCode, AgentTaskStatus, TERMINAL_STATUSES
 from shared.schemas.agent_factory import AgentStatus
 from shared.schemas.authorization import device_of
 
@@ -75,6 +75,13 @@ _NON_TERMINAL = [s.value for s in AgentTaskStatus if s not in TERMINAL_STATUSES]
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _merge(report: StopReport, contained: list[uuid.UUID]) -> None:
+    """Contained runs this stop ended count as stopped, not as found ended."""
+
+    report.already_terminal[:] = [t for t in report.already_terminal if t not in contained]
+    report.stopped.extend(t for t in contained if t not in report.stopped)
 
 
 class SupervisorControl:
@@ -106,6 +113,9 @@ class SupervisorControl:
             [s for s in self._runtime.states.live() if _matches(s, scope, target_id)],
             reason=reason, source=source,
         )
+        contained = await self._stop_contained(session, audit, **{
+            ControlScope.TASK: {"task_id": target_id}, ControlScope.USER: {"user_id": target_id},
+            ControlScope.DEVICE: {"device_id": target_id}}[scope])
 
         # 2. Database: enforce what nobody else is driving, and close orphans.
         if scope is ControlScope.TASK:
@@ -115,6 +125,7 @@ class SupervisorControl:
             targets = _ordered(to_enforce, await _non_terminal(session, column == target_id), skip=signalled)
         report = await self._enforce(session, audit, targets, reason=reason, source=source)
         report.signalled[:0] = signalled
+        _merge(report, contained)
 
         resource = f"control:stop:{scope.value}:{target_id}:{reason}"
         if scope is ControlScope.TASK and not (report.stopped or report.signalled or report.already_terminal):
@@ -152,12 +163,14 @@ class SupervisorControl:
         if self._agents is None or definition is None or definition.status == AgentStatus.DELETED.value:
             await _control_audit(audit, AuditAction.CONTROL_AGENT_PAUSED, resource, AuditResult.FAILURE)
             raise ControlTargetNotFound()
+        contained = await self._stop_contained(session, audit, agent_id=agent_id)
         revoked = await self._agents.service.operator_pause(session, definition)
         if self._agents.reminders is not None:
             await self._agents.reminders.cancel(session, audit, agent_id=agent_id,
                                                 owner_user_id=definition.owner_user_id, actor=AuditActor.SUPERUSER)
         report = await self._enforce(session, audit, to_enforce, reason=reason, source=source)
         report.signalled[:0] = signalled
+        _merge(report, contained)
         await _control_audit(audit, AuditAction.CONTROL_AGENT_PAUSED, resource, AuditResult.SUCCESS)
         return AgentControlReport(agent_id=agent_id, status=definition.status, tokens_revoked=revoked,
                                   tasks=report)
@@ -195,6 +208,7 @@ class SupervisorControl:
         #    here or stopped there.
         self._latch.latched = True
         signalled, to_enforce = self._trip_live(self._runtime.states.live(), reason=reason, source=source)
+        contained = await self._stop_contained(session, audit)
 
         # 2. Persist the latch, then stop everything the sweep could not reach.
         row = await session.get(SupervisorLatch, LATCH_ID)
@@ -210,6 +224,7 @@ class SupervisorControl:
         targets = _ordered(to_enforce, await _non_terminal(session), skip=signalled)
         report = await self._enforce(session, audit, targets, reason=reason, source=source)
         report.signalled[:0] = signalled
+        _merge(report, contained)
 
         if not was_latched:
             await _control_audit(audit, AuditAction.BREAKER_GLOBAL_LATCHED, f"breaker:global:{reason}",
@@ -262,6 +277,24 @@ class SupervisorControl:
             paused = state.pending is not None or state.platform_wait is not None
             (to_enforce if paused else signalled).append(state.task_id)
         return signalled, to_enforce
+
+    async def _stop_contained(self, session: AsyncSession, audit: AuditLogger, **match: uuid.UUID) -> list[uuid.UUID]:
+        """Phase 6: the contained (Browser Use) runs this stop names, through
+        their own kill path — tokens revoked in this transaction, run and
+        task closed `failed: emergency_stop` exactly as a native run's, the
+        container told to stop. Returns their task ids. Before the database
+        sweep, so the sweep finds them already ended."""
+
+        browser = self._agents.browser_runs if self._agents is not None else None
+        if browser is None:
+            return []
+        stopped = []
+        for run_id in browser.matching(**match):
+            task_id = browser.live[run_id].task_id
+            if await browser.cancel(session, audit, run_id=run_id, reason=AgentFailureCode.EMERGENCY_STOP.value,
+                                    status=AgentTaskStatus.FAILED, actor=AuditActor.SUPERUSER):
+                stopped.append(task_id)
+        return stopped
 
     async def _enforce(
         self, session: AsyncSession, audit: AuditLogger, targets: list[uuid.UUID], *, reason: str, source: str,
