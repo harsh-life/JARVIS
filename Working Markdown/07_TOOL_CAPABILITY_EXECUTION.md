@@ -123,7 +123,7 @@ flowchart TB
 |---|---|---|
 | OD-TOOL-1 | exact tier assignment per operation | `[IMPL]`; formal-deterministic-table constraint locked; **owner signs the tier table** |
 | OD-TOOL-2 | provisional/untrusted-tool enablement gate specifics | `[IMPL]` |
-| OD-TOOL-3 | which MCP servers (if any) are enabled at pilot | `[OPEN — OWNER]`; default none |
+| OD-TOOL-3 | which MCP servers (if any) are enabled at pilot | **DECIDED** (owner, 2026-10-02): none, inbound or outbound, for the first external agent runtime (`docs/DECISION_REGISTER.md` §2L); §6 still governs any future MCP |
 
 ---
 

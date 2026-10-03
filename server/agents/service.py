@@ -683,6 +683,29 @@ class AgentDefinitionService:
         )).scalar_one()
         return await self.month_spend(session, agent_id, now) + float(live or 0.0)
 
+    async def run_usage(self, session: AsyncSession, run_id: uuid.UUID) -> float:
+        """What one live run has spent so far: its attributed usage, read
+        live (its `cost_total` is written only when it ends)."""
+
+        total = (await session.execute(
+            select(func.coalesce(func.sum(UsageEvent.estimated_cost), 0.0))
+            .select_from(AgentRunUsageRow)
+            .join(UsageEvent, UsageEvent.usage_id == AgentRunUsageRow.usage_id)
+            .where(AgentRunUsageRow.run_id == run_id)
+        )).scalar_one()
+        return float(total or 0.0)
+
+    async def count_model_call(self, session: AsyncSession, task_id: uuid.UUID, *, limit: int) -> bool:
+        """Take one of a run's model calls, atomically: `False` when its task
+        has already made `limit` of them (concurrent requests cannot overrun
+        it — the condition and the increment are one statement)."""
+
+        result = await session.execute(
+            update(AgentTask).where(AgentTask.task_id == task_id, AgentTask.model_calls < limit)
+            .values(model_calls=AgentTask.model_calls + 1).execution_options(synchronize_session=False)
+        )
+        return bool(result.rowcount)
+
     async def run_cancelled(self, session: AsyncSession, run_id: uuid.UUID, *, reason: str) -> AgentRunRow | None:
         run = await session.get(AgentRunRow, run_id, populate_existing=True)
         if run is None or run.finished_at is not None:

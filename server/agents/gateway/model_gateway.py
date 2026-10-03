@@ -34,9 +34,11 @@ and the engine on the ordinary tool path (Phase 2).
 
 from __future__ import annotations
 
+import re
+
 from server.agents.registry import AgentRegistries
 from server.agents.registry.models import ResolvedModelProfile
-from shared.schemas.agent_factory import CompiledAgentSpec
+from shared.schemas.agent_factory import AgentGatewayErrorCode, ChatCompletionRequest, CompiledAgentSpec
 
 AGENT_MODEL_ALIAS = "agent-model"
 _MODEL_TOOL_ALIAS = "model-tool:"
@@ -102,4 +104,84 @@ def budget_refusal(*, projected_cost: float, month_spent: float, month_budget: f
     return None
 
 
-__all__ = ["AGENT_MODEL_ALIAS", "budget_refusal", "model_refusal", "model_tool_alias"]
+# ── the HTTP face (Phase 6, slice 6A; docs/29 §12.2–§12.3) ─────────────────
+#
+# An external runtime reaches the Model Gateway over HTTP. These rules are what
+# that surface decides on its own — the token's shape, the request's shape, the
+# answer's bound and each refusal's status — before and after the same
+# in-process checks the native runtime's calls pass.
+
+_BEARER = re.compile(r"^[Bb]earer ([^\s]+)$")
+TRUNCATION_MARKER = "\n[truncated by the JARVIS model gateway]"
+
+# docs/29 §12.3. A refusal's HTTP status and its code on the wire. Every code
+# the gateway core can answer is here; one it should never answer on this
+# surface (a replay or staleness belongs to the Tool Gateway's nonces) is
+# still a refusal, never a pass.
+_STATUS: dict[AgentGatewayErrorCode, tuple[int, str]] = {
+    AgentGatewayErrorCode.INVALID_RUN_TOKEN: (401, "invalid_run_token"),
+    AgentGatewayErrorCode.SCHEMA_INVALID: (400, "schema_invalid"),
+    AgentGatewayErrorCode.STALE_REQUEST: (400, "schema_invalid"),
+    AgentGatewayErrorCode.REPLAY: (400, "schema_invalid"),
+    AgentGatewayErrorCode.MODEL_NOT_ALLOWED: (403, "model_not_allowed"),
+    # "run paused, cancelled or finished" — and an agent that is paused,
+    # deleted, out of its graph or changed is exactly that for its run.
+    AgentGatewayErrorCode.RUN_NOT_RUNNING: (409, "run_not_running"),
+    AgentGatewayErrorCode.AGENT_UNAVAILABLE: (409, "run_not_running"),
+    AgentGatewayErrorCode.SPEC_CHANGED: (409, "run_not_running"),
+    AgentGatewayErrorCode.BUDGET_EXCEEDED: (429, "budget_exceeded"),
+    AgentGatewayErrorCode.AGENT_BUDGET_EXHAUSTED: (429, "agent_budget_exhausted"),
+    AgentGatewayErrorCode.RATE_LIMITED: (429, "rate_limited"),
+    AgentGatewayErrorCode.MAX_MODEL_CALLS: (429, "max_model_calls"),
+    AgentGatewayErrorCode.DEPENDENCY_UNAVAILABLE: (503, "dependency_unavailable"),
+}
+
+
+def http_status(code: AgentGatewayErrorCode) -> tuple[int, str]:
+    """(HTTP status, wire code) of a refusal. Unknown: a refused token."""
+
+    return _STATUS.get(code, (401, "invalid_run_token"))
+
+
+def bearer_token(header: str | None) -> str | None:
+    """The token of an `Authorization: Bearer <token>` header, or `None`.
+    Whether it is a well-formed run token is the core's question."""
+
+    if not header:
+        return None
+    match = _BEARER.fullmatch(header.strip())
+    return match.group(1) if match else None
+
+
+def chat_request_refusal(request: ChatCompletionRequest) -> str | None:
+    """`None`, or why a well-shaped request is still not served:
+    `stream_unsupported` (docs/29 §12.2 — exact metering needs the whole
+    answer) or `n_unsupported` (one answer per metered call)."""
+
+    if request.stream:
+        return "stream_unsupported"
+    if request.n != 1:
+        return "n_unsupported"
+    return None
+
+
+def bounded_completion(content: str, *, max_chars: int) -> tuple[str, bool]:
+    """The answer as it leaves the gateway: at most `max_chars` of it, with a
+    marker when cut (05 §6). Returns (text, truncated)."""
+
+    if len(content) <= max_chars:
+        return content, False
+    return content[:max_chars] + TRUNCATION_MARKER, True
+
+
+__all__ = [
+    "AGENT_MODEL_ALIAS",
+    "TRUNCATION_MARKER",
+    "bearer_token",
+    "bounded_completion",
+    "budget_refusal",
+    "chat_request_refusal",
+    "http_status",
+    "model_refusal",
+    "model_tool_alias",
+]

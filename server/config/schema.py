@@ -15,6 +15,7 @@ loader.py for the rationale.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 from pathlib import PurePath
@@ -784,6 +785,52 @@ class AgentRuntimeToggle(StrictModel):
 
 _RUNTIME_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{2,40}$")
 
+_LISTEN_TCP_RE = re.compile(r"^(?:\[(?P<v6>[0-9A-Fa-f:]+)\]|(?P<v4>[0-9.]+)):(?P<port>[0-9]{1,5})$")
+
+
+def _internal_listen(value: str) -> str:
+    """docs/29 §21 item 8: the Model Gateway listens on an internal binding
+    only — a Unix socket at an absolute, normalized path, or a loopback
+    address with an explicit port. Never a wildcard, a routable or private
+    address (a container network's address is OD-AF-12's to decide, not this
+    setting's), a hostname (its resolution is not this setting's to trust),
+    or a URL."""
+
+    if value.startswith("unix:"):
+        path = value[len("unix:"):]
+        if not path.startswith("/") or path.endswith("/") or any(p in ("", ".", "..") for p in path.split("/")[1:]):
+            raise ValueError("agents.model_gateway.listen: a unix: binding needs an absolute, normalized path")
+        return value
+    match = _LISTEN_TCP_RE.fullmatch(value)
+    if match is None:
+        raise ValueError("agents.model_gateway.listen must be unix:/abs/path or a loopback address:port")
+    try:
+        address = ipaddress.ip_address(match.group("v6") or match.group("v4"))
+    except ValueError:
+        raise ValueError("agents.model_gateway.listen: not an IP address") from None
+    if not address.is_loopback:
+        raise ValueError("agents.model_gateway.listen: only a loopback address is internal")
+    if not 1 <= int(match.group("port")) <= 65535:
+        raise ValueError("agents.model_gateway.listen: the port must be 1-65535")
+    return value
+
+
+class AgentModelGatewayConfig(StrictModel):
+    """docs/29 §12 (Phase 6, slice 6A): the HTTP Model Gateway an external
+    runtime calls instead of holding a provider key. `[PROPOSAL]` — off by
+    default; a separate listener, never mounted on the public API.
+
+    * `listen` — the internal binding (`unix:/abs/path`, or a loopback
+      `address:port`); required when enabled;
+    * `max_request_bytes` — a body larger than this is refused unread;
+    * `max_completion_chars` — an answer longer than this is cut, with a
+      marker (05 §6; `[IMPL]`, register §2J)."""
+
+    enabled: bool = False
+    listen: Annotated[str, AfterValidator(_internal_listen)] | None = None
+    max_request_bytes: int = Field(default=1_048_576, ge=1024, le=16_777_216)
+    max_completion_chars: int = Field(default=16_000, ge=1_000, le=200_000)
+
 
 class AgentsConfig(StrictModel):
     """The Agent Factory (docs/29 §24). `[PROPOSAL — NOT CANONICAL UNTIL
@@ -827,6 +874,7 @@ class AgentsConfig(StrictModel):
     runtimes: dict[str, AgentRuntimeToggle] = Field(
         default_factory=lambda: {"native": AgentRuntimeToggle(enabled=True)}
     )
+    model_gateway: AgentModelGatewayConfig = Field(default_factory=AgentModelGatewayConfig)
 
     @model_validator(mode="after")
     def _consistent(self) -> "AgentsConfig":
@@ -837,6 +885,10 @@ class AgentsConfig(StrictModel):
             )
         if self.unattended_enabled and not self.enabled:
             raise ValueError("agents.unattended_enabled requires agents.enabled")
+        if self.model_gateway.enabled and not self.enabled:
+            raise ValueError("agents.model_gateway.enabled requires agents.enabled")
+        if self.model_gateway.enabled and self.model_gateway.listen is None:
+            raise ValueError("agents.model_gateway.enabled requires agents.model_gateway.listen")
         if len(set(self.enabled_templates)) != len(self.enabled_templates):
             raise ValueError("agents.enabled_templates lists a template twice")
         ids = [p.profile_id for p in self.model_profiles]

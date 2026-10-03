@@ -27,6 +27,7 @@ from server.agent.breaker import BreakerLimits
 from server.agent.recovery import RecoveryPolicy
 from server.agents.service import AgentDefinitionService
 from server.composition.agent_triggers import AgentTriggerLoop
+from server.composition.model_gateway import HttpModelGateway, ModelGatewayListener
 from server.composition.agents import (
     AgentDefinitionLoader,
     AgentFactory,
@@ -397,6 +398,24 @@ def build_application(
             interval_seconds=config.agents.trigger_interval_seconds,
         )
         background.append(agent_triggers)
+    # docs/29 §12 (Phase 6, slice 6A): the HTTP Model Gateway an external
+    # runtime calls — a separate app on an internal binding, served by its own
+    # listener, never mounted on the public API; nothing at all unless the
+    # operator switched it on.
+    model_gateway: HttpModelGateway | None = None
+    model_gateway_app = None
+    model_gateway_listener: ModelGatewayListener | None = None
+    if agent_factory is not None and config.agents.model_gateway.enabled:
+        from server.gateway.routers.model_gateway import build_model_gateway_app
+
+        model_gateway = HttpModelGateway(factory=agent_factory, storage=storage, core=core, usage=usage_policy,
+                                         latch=latch, config=config, provider_factory=factory)
+        model_gateway_app = build_model_gateway_app(
+            model_gateway, max_request_bytes=config.agents.model_gateway.max_request_bytes)
+        assert config.agents.model_gateway.listen is not None
+        model_gateway_listener = ModelGatewayListener(app=model_gateway_app,
+                                                      binding=config.agents.model_gateway.listen)
+        background.append(model_gateway_listener)
     # 19: the Judge — nothing at all unless `evaluation.enabled`.
     evaluation = build_evaluation(
         config, runtime=runtime, storage=storage, factory=factory, tuning=tuning, switches=switchboard,
@@ -445,6 +464,9 @@ def build_application(
     )
     app.state.evaluation = evaluation_jobs
     app.state.agent_triggers = agent_triggers
+    app.state.model_gateway = model_gateway
+    app.state.model_gateway_app = model_gateway_app
+    app.state.model_gateway_listener = model_gateway_listener
     # docs/23 §4: the optional push wake — nothing at all unless configured.
     attach_push_wake(config, app, device_hub)
     return app

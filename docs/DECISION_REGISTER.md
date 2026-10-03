@@ -358,7 +358,7 @@ recorded after the Phase 1 tables; Phase 5 (unattended runs, under §2K) after P
 | OD-AF-3 | The `agent.*` tier table | **RATIFIED 2026-10-02 (§2K).** Before that: Registered as proposed: `agent.define` {`compile`, `compile_update` → low_read; `create`, `update` → consequential}, `agent.inspect` {`list`, `get` → low_read}, `agent.delete` {`delete` → consequential}; `agentdefinition` create/write are consequential in the resource axis too, so the HTTP path confirms as well. `agent.run`/`agent.control`/`agent.delegate` and `agent.inspect` {`runs`, `inbox`} are **still not registered** after Phase 2 (AF-P2-1). | `server/capabilities/registry.py`, `server/capabilities/risk.py` |
 | OD-AF-4 | Consequential actions in unattended runs | **RATIFIED 2026-10-02 (§2K).** Before that: Moot until Phase 5; no unattended run exists. | — |
 | OD-AF-5 | Default delegation lifetime | **RATIFIED 2026-10-02 (§2K).** Before that: Only the config field exists (`agents.delegation_max_days`, 30); nothing reads it. | `server/config/schema.py` |
-| OD-AF-6 | First external provider | **`[OPEN — OWNER]`.** None. Every docs/29 §30 runtime id is reserved; enabling one fails startup (no container/netns, MCP transport or egress proxy exists). | `server/agents/registry/runtimes.py` |
+| OD-AF-6 | First external provider | **RATIFIED 2026-10-02 (§2L): `browser_use`, P2.** Before its infrastructure exists (OD-AF-11…15, open) it stays a reserved id with no profile: enabling it fails startup. | `server/agents/registry/runtimes.py` |
 | OD-AF-7 | Per-user quota and default budgets | **RATIFIED 2026-10-02 (§2K).** Before that: `agents.max_agents_per_user: 5`; `default_budget_per_run`/`per_month: 0.0`, so only local models can be selected until an operator raises them (`no_model:budget` otherwise). | `server/config/schema.py`, `server/agents/selector.py` |
 | OD-AF-8 | Outputs beyond the owner's inbox | **RATIFIED 2026-10-02 (§2K).** Before that: Inbox only (`OutputKind` has one value). Phase 2 builds the inbox (AF-P2-6); there is no recipient field and no other output. | `shared/schemas/agent_factory.py`, `server/agents/service.py` |
 | OD-AF-9 | Attribution: join table vs extending `UsageEvent` | **`[OPEN — OWNER]`.** Phase 2 builds the join table, as docs/29 recommends: `agent_run_usage` (run_id, usage_id). `usage_events` is unchanged; the ledger's `record` now returns the row's `usage_id`. | `server/storage/models.py`, `server/security/usage.py` |
@@ -477,6 +477,29 @@ Phase 5 mutants M-AG123–M-AG164 are in `tests/tools/guard_mutations.py`
 (M41, M-AG19 and M-AG118 were re-anchored onto the same guards). The BR-T2
 re-run is `docs/OD_A1_BR_T2.md` §3f (rows 42–45).
 
+### Phase 6, slice 6A — the HTTP Model Gateway (implementation facts)
+
+Built under §2L (OD-AF-6: Browser Use, P2; OD-TOOL-3: no MCP), **off by
+default** (`agents.model_gateway.enabled: false`), and it loads as true only
+with `agents.enabled` and an internal `listen`. It needs none of the open
+infrastructure decisions OD-AF-11…15, and it builds none of them: no
+container, namespace, egress proxy, image, browser capability or Browser Use
+adapter exists. Nothing calls it yet but tests; 6D's adapter will.
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P6-1 | **A separate internal listener.** Its own FastAPI app with one route, `POST /v1/chat/completions`, and no docs, schema or other route; **never included in the public app**. Served by its own background service on `agents.model_gateway.listen`: a Unix socket created `0600` before it accepts anything (a non-socket file at that path is refused, never replaced), or a loopback `address:port`. Wildcard, private, routable and hostname bindings are refused at load: a container network's address is OD-AF-12's to decide. | `server/gateway/routers/model_gateway.py`, `server/composition/model_gateway.py`, `server/net/listen.py` (the only module besides egress that opens a raw socket), `server/config/schema.py` |
+| AF-P6-2 | **One core.** The token is checked by `AgentGateway.authenticate` (the native runtime's core; model purpose only), the profile by `AgentFactory.model_screen` and the month by `AgentFactory.agent_budget` — both moved from the native coordinator unchanged, so one implementation serves native and external runs. Order: token → request shape → alias → global stop → run and task running and the owner's → profile permitted now → deadline → model-call bound → the run's budget, the owner's budget and rates, the agent's month → provider. Authentication comes first: an unauthenticated caller learns nothing else. | `server/composition/model_gateway.py`, `server/composition/agents.py` |
+| AF-P6-3 | **A closed request.** `model` must be exactly `agent-model` (a `model-tool:` alias is refused here too); text messages with roles system/user/assistant only; no tools, functions, response format, images or unknown fields. `stream: true` and `n ≠ 1` are refused with `400`. Sampling hints (`temperature`, `top_p`, `max_tokens`) are accepted and **not** forwarded: the configured entry decides. A body over `max_request_bytes` (1 MiB) is refused unread (`413`). | `shared/schemas/agent_factory.py`, `server/agents/gateway/model_gateway.py` |
+| AF-P6-4 | **Errors** (docs/29 §12.3): `401 invalid_run_token`, `400 schema_invalid`, `403 model_not_allowed`, `409 run_not_running` (the run not running, its task ended, the agent paused/changed/unavailable, the deadline passed, or the global stop), `429 budget_exceeded \| agent_budget_exhausted \| rate_limited \| max_model_calls`, `503 dependency_unavailable`. **`max_model_calls`** is a code docs/29 does not name: the run's model-call bound (`min(runtime, spec)`) needed one, and none of the three it lists is accurate. Messages are fixed text; no provider error, endpoint, model name, key or token ever appears in a response. Every refusal is audited (`agent.gateway.denied`). | `server/agents/gateway/model_gateway.py`, `server/composition/model_gateway.py` |
+| AF-P6-5 | **Bounds without a race.** The run's model-call bound is taken by one conditional `UPDATE` on its task (`model_calls < limit`), so concurrent requests cannot overrun it. The run's budget is `min(runtime per-task budget, spec per-run, delegation per-run)` against its live attributed usage (its `cost_total` is written only when it ends). | `server/agents/service.py` |
+| AF-P6-6 | **Metering.** Every provider attempt is a `UsageEvent(model_call)` as the run's owner (a delegated run's has no device or session), joined to the run in `agent_run_usage`; a failed, timed-out or abandoned attempt is metered at zero units. No transaction is open while the provider answers (H-1). A caller that disconnects cancels the provider call. | `server/composition/model_gateway.py` |
+| AF-P6-7 | **The answer** names only the alias; its text is scrubbed of anything secret-shaped and cut at `max_completion_chars` (16 000) with a marker and `finish_reason: length`. docs/29 §12.2 points at `05` §6's observation bound; that bound (4 000) is too small for a browser runtime's structured answers, so the gateway has its own. | `server/composition/model_gateway.py` |
+
+6A mutants M-AG166–M-AG189 are in `tests/tools/guard_mutations.py` (24/24
+killed). No data class changes (no new table or column), so BR-T2 is not
+re-measured for 6A; the container rows come with 6C/6E.
+
 
 ## 2K. Agent Factory owner decisions (2026-10-02)
 
@@ -530,12 +553,79 @@ Implementation facts for Phase 5 are recorded in §2J ("Phase 5").
 
 ---
 
+## 2L. Agent Factory Phase 6 — owner decisions and open infrastructure decisions (2026-10-02)
+
+**Owner instruction, 2026-10-02:** OD-AF-6 and OD-TOOL-3 are decided as
+below, with the owner's own rationale. Nothing else is ratified by this:
+the infrastructure choices Browser Use needs (OD-AF-11…15) are recorded as
+**open** rows with a recommendation each, and no Phase 6 slice that depends
+on one of them is built until the owner decides it. OD-AF-1, 9 and 10 stay
+open (§3).
+
+| ID | Decision (ratified) | Exact scope | Rationale (owner's) |
+|---|---|---|---|
+| **OD-AF-6** | **Browser Use (`browser_use`) is the first external runtime**, under docs/29 §21.1's **P2 contained-workspace** pattern. | Browser Use is **untrusted execution infrastructure**: it never authorizes anything. Its own `allowed_domains`, its safety settings and any framework approval feature are **advisory only, never authorization** (docs/29 §30.3). JARVIS stays the sole authority for task, graph, capability, risk, budget, confirmation and network policy: the JARVIS egress boundary is authoritative for every host it reaches (allowed hosts, checked-IP = connected-IP, `10` §4–§5). **No stored credentials in v1** (`sensitive_data` unused; no browser profile persists between runs). Its model calls go only through the JARVIS Model Gateway, with a run token and no provider key. Results return to the owner's inbox as data (OD-AF-8). No other external runtime is enabled: `letta`, `openhands`, `openclaw` and the SDK frameworks stay reserved ids. | It is a capability the native Agent Factory genuinely lacks (browser-based monitoring and interaction), and P2 keeps the authority boundary at the workspace: what enters, what it can reach, what leaves. |
+| **OD-TOOL-3** | **T0 — no MCP, in either direction, for the first Phase 6 provider.** | No inbound MCP (JARVIS consuming third-party MCP servers, `07` §6 / TOOL-004) and no outbound MCP (a JARVIS MCP server as the Tool Gateway's transport). No MCP transport is built for future-proofing. docs/29 §21 item 8's "JARVIS MCP server" is **not required** for a P2 provider: Browser Use's effects are browser actions inside its disposable workspace, bounded by the egress boundary, and its results come back as inbox data — it makes no Tool Gateway calls in v1. PRD §17 (TOOL-004) is unchanged and still governs any future MCP. | The first provider uses the P2 path, which needs no tool transport; an unused transport would only be attack surface. |
+
+### Infrastructure decisions that Browser Use requires
+
+Each row is the owner's. "Requirements" are what the canonical documents
+already fix; the options are the realistic ways to meet them. **All five
+recommendations were ratified on 2026-10-02** (below the table); the table
+is kept as the record of what was weighed.
+
+| ID | Question | Requirements already fixed | Options | Recommendation (ratified 2026-10-02) | Blocks |
+|---|---|---|---|---|---|
+| **OD-AF-11** | **Container mechanism** for the per-run Browser Use workspace | docs/29 §21 items 1, 4, 5: one disposable container per run; non-root; read-only root filesystem; no host mount except a per-run scratch volume; all capabilities dropped; `no-new-privileges`; deterministic kill (token revocation → `cancel_run` → kill after 10 s); a listing for reconciliation (§25.2). `14` §2: a container escape is a shared-kernel residual, `[FUTURE]` stronger sandbox. JARVIS must not gain root-equivalent authority by driving it. | **(A)** OCI container through a **rootless** Docker-API-compatible engine (rootless Podman or rootless Docker), driven by a launcher in `server/execution` over the engine's local API socket, OCI runtime `runc`. **(B)** As (A), with **gVisor `runsc`** as the OCI runtime (a user-space kernel between Chromium and the host kernel). **(C)** JARVIS-managed OCI bundles run directly by rootless `runc`/`crun`, no daemon (JARVIS owns lifecycle and listing itself). A rootful engine socket is not an option: it is root-equivalent for whoever holds it. | **(B)**, with (A) acceptable only for a disposable-data pilot when `runsc` is unavailable, recorded in BR-T2. A browser parses hostile content, so the kernel is the main residual; rootless means an escape lands as an unprivileged user. | 6C, 6D |
+| **OD-AF-12** | **Network namespace design** for the workspace | `10` §3 NET-005 (enforced at the network boundary, not by a proxy variable the tool can ignore; `[REC]` netns + filtered egress, ratified in `14`); docs/29 §21 item 2: the only routes are the Agent Gateway and the egress proxy; item 8: the gateway listeners bound to the container network only; AGENT-T12 (egress probe). | **(A)** **No network interface**: the container has only loopback in its own namespace (`--network none`); the Model Gateway and the egress proxy are reached through **per-run Unix sockets** in a host directory mounted into the container, and a forwarder in the pinned image maps an in-container loopback port to each socket. **(B)** An internal bridge network (no masquerade) plus host nftables rules admitting the container subnet only to the two listener ports on the bridge address. **(C)** A JARVIS-created namespace per run with a veth pair and nftables rules. | **(A)**. There is no route at all, so nothing else on the host (even a service bound to `0.0.0.0`) is reachable; each run gets its own listener in addition to its token; DNS is impossible inside, so the proxy resolves (`10` §5); it needs no privileged firewall rules and is testable unprivileged. (B) and (C) depend on correct host firewall state. | 6B, 6C, the 6A listener's container binding |
+| **OD-AF-13** | **Egress proxy architecture** | `10` §2 (exactly the declared destinations), §4 (metadata, loopback and private ranges blocked on the **resolved** IP), §5 (the boundary resolves DNS; **checked IP = connected IP**), §6 (no credential exfiltration); docs/29 §21 item 2 (the operator `EgressPolicy`), §29.2 (allowlist from operator policy, no stored credentials). The JARVIS egress policy is authoritative; Browser Use's `allowed_domains` is advisory. | **(A)** A JARVIS-owned **HTTP CONNECT proxy**, one per run on its socket, **no TLS interception**: the CONNECT host must be in the run's allowed hosts (operator `EgressPolicy` ∩ the spec's declared destinations; no wildcard internet); resolution and IP classification reuse `server/net`, and the proxy connects to exactly the checked IP; port 443 only; per-run connection, byte and rate limits; every decision audited and metered. **(B)** A TLS-intercepting proxy (a JARVIS CA in the container's trust store) enforcing per-request methods (GET/HEAD only) and paths. **(C)** An off-the-shelf proxy (Squid, Envoy) configured from JARVIS policy. | **(A)**. It reuses the one implementation of `10` §4–§5 already tested in `server/net`; (C) would duplicate it and could not prove checked-IP = connected-IP for JARVIS's own classification; (B) puts decrypted page content and a CA into the boundary. **Consequence the owner should accept explicitly:** under (A) the boundary decides *hosts*, not *methods* — a browser can submit a form (POST over TLS) on an allowed host. v1 limits this by explicit hosts only, no credentials and a disposable profile, and OD-AF-15 tiers the capability accordingly; (B) is the path if protocol-level read-only is required. | 6B |
+| **OD-AF-14** | **Image and runtime pinning** | docs/29 §21 item 4 (exact version pin per runtime image; the image digest recorded in the runtime profile; upgrades by PR), §29.1 items 6–7 (the adapter refuses other versions; telemetry disabled and blocked anyway); §30 ("re-verify at implementation time": `browser-use` 0.13.10 as assessed 2026-09-30); the offline-after-provisioning precedent (`docs/RUNNING_MEMORY.md`: one sanctioned network step). | **(A)** A Dockerfile in this repository (base image pinned by digest; `browser-use` and every dependency from a hash-locked requirements file installed with `--require-hashes`; the pinned Playwright Chromium build; `ANONYMIZED_TELEMETRY=false`), **built and published by CI** to the repository's container registry; the profile pins the **published digest**; an explicit provisioning command pulls by digest only and the launcher refuses any other. **(B)** As (A), but built locally by the provisioning command, pinning only the base digest and the lock hash (the built digest is not reproducible, so it cannot be pinned in the repo). **(C)** The upstream Browser Use image, pinned by digest. | **(A)**. It is the only option where the repository records the exact digest that runs, and every upgrade is a reviewed PR. (B) cannot satisfy §21 item 4 literally; (C) ships code and defaults (telemetry, extra tools) JARVIS has not reviewed. Publishing uses CI's own token, not a stored secret. | 6C, 6D |
+| **OD-AF-15** | **Capability and tier for browsing**, and the `browser_monitor` template | The capability registry is closed (`07`); tiers are the owner's (OD-TOOL-1, as OD-AF-3 was); the unattended ceiling is ≤ `low_write` (OD-AF-4); docs/29 §29.2: no stored credentials, `use_vision` only for non-sensitive domains. Nothing in the registry today authorizes "browse these hosts". | **(A)** A new capability `browser.session` with one operation `browse` at **`low_write`**, scope = an explicit host list (required, no wildcard), mapped to the template's single browsing ability. **(B)** The same at `low_read`. **(C)** Reuse `net.request` `get` with a browser platform. | **(A)**. Under OD-AF-13 (A) the boundary cannot prove read-only, so `low_read` would overstate it; `low_write` is still inside the unattended ceiling. (C) would let the browser's tier be read as a single GET, which it is not. `use_vision`: off in v1. | 6D |
+
+**What stays as it is.** The agent proposes; deterministic JARVIS code
+authorizes; tools execute; a person confirms where required. The external
+runtime is never an authority: a compromised Browser Use container holds a
+run token (bound to one run, revocable, no identity), reaches only its two
+sockets, and has no path to a principal, a session, a device credential, a
+secret or a provider key. Unattended runs keep the Phase 5 ceiling, and
+consequential actions stay impossible in them (OD-AF-4).
+
+**Phase 6 slices and their decision boundaries.** 6A (the HTTP Model
+Gateway, docs/29 §12) needs none of OD-AF-11…15 and is built now, with its
+listener restricted to the internal-only bindings every OD-AF-12 option can
+use (a Unix socket, or loopback). 6B (the egress boundary) waits on OD-AF-12
+and OD-AF-13; 6C (container and namespace) on OD-AF-11, 12 and 14; 6D (the
+Browser Use adapter) on OD-AF-14 and 15; 6E/6F (integration, kill path,
+reconciliation, BR-T2 container rows) on all of them.
+
+### OD-AF-11…15 — ratified (owner, 2026-10-02)
+
+**Owner instruction, 2026-10-02:** the recommended answers in the table
+above are ratified for the Phase 6 implementation, as stated here. Nothing
+else is decided by this; OD-AF-1, 9 and 10 stay open.
+
+| ID | Decision (ratified) | Exact scope |
+|---|---|---|
+| **OD-AF-11** | **A rootless container engine with gVisor** is the external runtime's boundary. | One disposable container per run, started by the JARVIS server's own unprivileged user through a rootless OCI engine (Podman, driven by argv from `server/execution`), with **gVisor `runsc`** as the OCI runtime. Non-root inside; read-only root filesystem; all capabilities dropped; `no-new-privileges`; one per-run scratch directory as the only writable mount; deterministic kill (token revocation → `cancel_run` → stop, killed after 10 s); a label on every container for reconciliation (every 10 minutes, and at startup). A rootful engine socket is never used. Verified feasible on 2026-10-02: rootless Podman 4.9 + `runsc` release-20260928.0 runs a container with no capabilities, `NoNewPrivs`, a read-only root, a non-root uid and the host's home directories invisible. |
+| **OD-AF-12** | **No general-purpose network interface.** | The container's only paths out are **per-run Unix sockets** — the Model Gateway's and the egress proxy's — in one host directory mounted into it. Podman `--network=none` plus gVisor's own `network=none` (loopback only, so an in-image forwarder can expose each socket on an in-container loopback port) and `host-uds=open` (the sandbox may open a host socket only if it was mounted in). Verified: every external, private, metadata and host address is unreachable (`ENETUNREACH`), DNS fails, and the mounted socket answers. |
+| **OD-AF-13** | **JARVIS's own CONNECT proxy, reusing `server/net`; no TLS interception.** | One proxy per run, on its socket. **It is authoritative** for outbound hosts and IPs: the CONNECT host must be in the run's explicit host list ∩ the operator's `EgressPolicy`; the host is resolved by the proxy (never by the runtime), every resolved address is classified by `server/net/policy.py`, and the proxy connects to exactly the checked address (**checked IP = connected IP**). Port 443 only; default deny. Browser Use's `allowed_domains` and any similar runtime or library control are **advisory only**. |
+| **OD-AF-14** | **Images built and published by CI, pinned by immutable digest.** | The Browser Use image is built from this repository (base image pinned by digest, dependencies hash-locked, telemetry off) by CI and published to the repository's registry; the runtime refuses any image reference that is not `name@sha256:<digest>` — **no floating tag is ever executed** — and the digest it runs is the one recorded in the repository. |
+| **OD-AF-15** | **`browser.session`, one operation `browse`, at `low_write`, constrained to an explicit host allowlist.** | The scope is a required, non-empty list of exact host names (no wildcard, no IP literal). The capability is the closed registry's; the tier is the owner's. `use_vision` is off in v1; no stored credentials. |
+
+**The accepted trade-off (OD-AF-13 → OD-AF-15).** Without TLS
+interception the proxy decides **which allowed hosts** the browser may
+reach, but it **cannot see HTTP methods or form submissions inside TLS**: a
+browser can POST to a host it may reach. That is why `browse` is `low_write`,
+not `low_read`. v1 limits it further with an explicit host list (no
+wildcard), no stored credentials, and a fresh browser profile per run.
+
+---
+
 ## 3. Genuinely unresolved owner decisions
 
 | ID | Question | Why it is the owner's |
 |---|---|---|
 | (matrix §5.1) | Sensitive-app classification for UI primitives | A tap can complete a payment. Which apps are "sensitive" and how far their tiers rise is a product-risk call. Needed before `08` ships device control. *(Phase H: the mechanism is implemented (`android.app_classification`, server gate + device guard) and the lists ship **empty**, so no app is UI-controllable until the owner classifies one. The lists themselves are still the owner's.)* |
-| OD-TOOL-3 | Which MCP servers (if any) are enabled at pilot | Default none; unchanged. |
 | OD-DP-9 | Ratify DecisionProvider at all | Unchanged; nothing in the runtime depends on it. |
 | OD-MT-2 | Any cloud primary by default | Default local (ollama); unchanged. |
 | OD-SCH-1 | Ratify `scheduler.create` / `low_write` | Implemented as proposed (§2D); the owner signs the tier table. |
@@ -549,7 +639,7 @@ Implementation facts for Phase 5 are recorded in §2J ("Phase 5").
 | OD-DASH-1 | Dashboard/control split vs amending DASH-002 | Split built as recommended; DASH-002 unchanged; not ratified. |
 | OD-DASH-2 | Console UI | Not built; JSON API only (§2G). |
 | OD-JDG-5 | How approved Judge guidance may carry user content (§2H) | Global guidance with secret screening only reaches every user with one user's content (BR-T2 row 38); which control fits is a product and privacy call. |
-| OD-AF-1, 6, 9, 10 | The Agent Factory's abstractions, first external provider, attribution form and `01` entities (§2J) | Still open. OD-AF-2, 3, 4, 5, 7 and 8 were ratified on 2026-10-02 (§2K). OD-AF-6's recommendation is conditional on the owner's priority (`browser_use` if browser monitoring matters most, else `letta`), so it is not derivable and stays the owner's; Phase 6 waits on it, on OD-TOOL-3 and on container/netns infrastructure. |
+| OD-AF-1, 9, 10 | The Agent Factory's abstractions, attribution form and `01` entities (§2J) | Still open. OD-AF-2, 3, 4, 5, 7 and 8 were ratified on 2026-10-02 (§2K); OD-AF-6 (`browser_use`, P2), OD-TOOL-3 (no MCP) and OD-AF-11…15 (Browser Use's infrastructure) on 2026-10-02 (§2L). |
 
 ---
 

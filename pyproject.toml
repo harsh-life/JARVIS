@@ -662,6 +662,26 @@ type = "forbidden"
 source_modules = ["server.evaluation"]
 forbidden_modules = ["server.agents"]
 
+# AF-C7 (Phase 6, slice 6A): the HTTP Model Gateway's listener decides
+# nothing. Its route reads a bounded body and hands it, with the Authorization
+# header, to the port the composition root supplies; it cannot reach the store,
+# a model adapter, the SecretStore, the engine or a grant (docs/29 §12).
+[[tool.importlinter.contracts]]
+name = "AF-C7: the Model Gateway listener decides nothing (docs/29 §12)"
+type = "forbidden"
+source_modules = ["server.gateway.routers.model_gateway", "server.gateway.model_gateway_port"]
+forbidden_modules = [
+    "sqlalchemy",
+    "server.storage",
+    "server.models",
+    "server.secrets",
+    "server.graph",
+    "server.capabilities",
+    "server.agent",
+    "server.agents",
+    "server.composition",
+]
+
 # AF-C6: agent state and notebooks are never read by authorization code.
 [[tool.importlinter.contracts]]
 name = "AF-C6: authorization never imports the Agent Factory (docs/29 §20.1)"
