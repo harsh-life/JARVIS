@@ -122,6 +122,13 @@ The "Engine" line is shown for transparency. Changing it is never required.
 
 ## 3. Architecture
 
+*(This component tree predates Phases 5–6; it is still accurate for what it
+shows but is a parts list, not a flow or a trust-boundary diagram, and its
+"External Runtime Providers [FUTURE / infrastructure-blocked]" line is
+stale now that Browser Use is built — `docs/ARCHITECTURE.md` §7 reviews
+this diagram explicitly and §1–§4 there give the lifecycle, trust-boundary
+and external-runtime diagrams this one does not.)*
+
 ```
 JARVIS Agent Factory
 ├── AgentDefinition store            (owner-private, versioned, immutable compiled specs)

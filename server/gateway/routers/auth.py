@@ -39,6 +39,7 @@ from server.gateway.deps import (
 )
 from server.gateway.errors import AppError
 from server.gateway.security import SecurityCore
+from server.auth.errors import StepUpRequired
 from server.auth.sessions import ResolvedSession
 from server.config.schema import AndroidConfig
 from shared.schemas.device_channel import DeviceCloseCode
@@ -331,7 +332,19 @@ async def rotate_device_credential(
     existing endpoint.
     """
 
-    core.sessions.require_step_up(resolved)
+    try:
+        core.sessions.require_step_up(resolved)
+    except StepUpRequired as exc:
+        # `server/auth/errors.py`'s own [LOCKED] contract: an AuthError is an
+        # AuditEvent too, not only a 401 — `server.auth` cannot write this
+        # itself (16 §2 layering), so the one caller today keeps that half of
+        # the promise. Any future `require_step_up`/`require_reattestation`
+        # call site must do the same.
+        await audit.record(actor=AuditActor.USER, action=AuditAction.STEP_UP_REQUIRED,
+                           resource=f"auth:step_up:{exc.reason}"[:128], result=AuditResult.BLOCKED,
+                           user_id=resolved.principal.user_id, device_id=resolved.principal.device_id,
+                           session_id=resolved.principal.session_id)
+        raise
 
     device = await core.auth_repository.get_device(session, device_id)
     if device is None or device.user_id != resolved.principal.user_id:

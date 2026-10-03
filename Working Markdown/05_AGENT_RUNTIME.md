@@ -19,6 +19,11 @@ The runtime is the loop that *hosts* a primary agent model, but it is built so t
 
 ## 1. The loop (canonical)
 
+*(This is the native runtime's own loop, one iteration. For how a run gets
+here — `AgentDraft` → compiler → selector → envelope → approval/delegation
+→ Agent Gateway → native-or-external runtime — see the Agent Factory
+lifecycle diagram in `docs/ARCHITECTURE.md` §3.)*
+
 ```mermaid
 flowchart TB
     IN["User request (02 /agent/tasks)"] --> CTX["Build context (04-authorized hydration)"]
