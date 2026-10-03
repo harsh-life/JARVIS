@@ -3,7 +3,10 @@
 A configurable, self-hostable personal-agent runtime. See
 `Working Markdown/00_CANONICAL_PRD.md` for the full product and architecture
 specification, and `Working Markdown/TRACK_B_ARCHITECTURE_INDEX.md` for how
-the 17 subsystem documents relate to it.
+the 17 subsystem documents relate to it. New to the codebase? Start with
+`docs/HOW_JARVIS_WORKS.md` (a narrative walkthrough), then
+`docs/ARCHITECTURE.md` (the system/trust-boundary/Agent-Factory/external-runtime
+diagrams and the repository/module map).
 
 The central invariant every branch of this codebase is built to preserve:
 
