@@ -432,6 +432,21 @@ def build_application(
                 kill_grace_seconds=containers.kill_grace_seconds)),
             storage=storage, interval_seconds=containers.reconcile_interval_seconds)
         background.append(container_reconciler)
+    # docs/29 §21 (Phase 6, OD-AF-6): Browser Use runs — only with the
+    # runtime enabled, which the registries allow only with containers, the
+    # HTTP Model Gateway and a pinned image. A lifespan service: it verifies
+    # the engine and closes what a previous process left running.
+    runtimes_cfg = config.agents.runtimes
+    if (agent_factory is not None and model_gateway is not None and "browser_use" in runtimes_cfg
+            and runtimes_cfg["browser_use"].enabled):
+        from server.agents.registry import runtimes as runtime_registry
+        from server.composition.browser_runs import BrowserRuns
+
+        assert runtime_registry.BROWSER_USE_IMAGE is not None
+        agent_factory.browser_runs = BrowserRuns(
+            factory=agent_factory, storage=storage, core=core, gateway=model_gateway, config=config, latch=latch,
+            image=runtime_registry.BROWSER_USE_IMAGE)
+        background.append(agent_factory.browser_runs)
     # 19: the Judge — nothing at all unless `evaluation.enabled`.
     evaluation = build_evaluation(
         config, runtime=runtime, storage=storage, factory=factory, tuning=tuning, switches=switchboard,

@@ -527,10 +527,29 @@ Built under OD-AF-11/12/14 (§2L), **off by default**
 | AF-P6-13 | **Reconciliation** (docs/29 §25.2) at startup and every `reconcile_interval_seconds` (≤ 600): every managed container whose run is not live — finished, missing, or a forged label — is stopped and removed **by the engine's own container id**, and audited `agent.orphan.deprovisioned`. The reconciler verifies the engine before anything else: a weaker engine is a startup failure. | `server/composition/containers.py` |
 | AF-P6-14 | **Proven for real** (`tests/execution/test_containers_live.py`, rootless Podman 4.9 + runsc release-20260928.0, run as an unprivileged user; CI job `containers` with `HYPERMIND_REQUIRE_CONTAINER_STACK=1`): AGENT-T12 — every direct address (public, private, metadata, the host, loopback) unreachable, DNS fails, only `lo`; through the run's proxy the allowed host is reached and others refused. Confinement — non-root, `CapEff` 0, `NoNewPrivs` 1, root and `/tmp` not writable, scratch writable, host paths invisible. AGENT-T13 — a provider key, the KEK source and a proxy setting in the server's environment are absent from the container's environment, its inspect record and its scratch. A runtime ignoring SIGTERM is killed after the grace; an orphan is reconciled away. | `tests/execution/test_containers_live.py`, `.github/workflows/ci.yml` |
 
-6C mutants M-AG203–M-AG223 (21/21 killed). M-AG224 (the workspace's
-post-create symlink check) was dropped: creating the directory already fails
-on a planted symlink, so a single mutant of the second guard cannot be
-observed; the check stays for the race it closes.
+6C mutants M-AG203–M-AG223 (21/21 killed). A mutant of the workspace's
+post-create symlink check was dropped (never numbered): creating the
+directory already fails on a planted symlink, so a single mutant of the
+second guard cannot be observed; the check stays for the race it closes.
+
+### Phase 6, slice 6D — the Browser Use adapter (implementation facts)
+
+Built under OD-AF-6 (P2) and OD-AF-11…15 (§2L), **off by default**: the
+`browser_use` runtime loads only with `agents.runtimes.browser_use.enabled`,
+the HTTP Model Gateway, containers, and a pinned image digest in the
+repository — any one missing is a startup failure, never a weaker run.
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P6-15 | **`browser.session` / `browse` = `low_write`** (OD-AF-15), scope key `hosts`, required. The compiler takes the hosts from the draft's `url` sources only — plain `https` URLs, exact host names (no IP literal in any spelling, no userinfo, no port but 443, no single label), 1–32 — and writes them into the envelope entry's scope; no URL source is a clarification (`browser_hosts_needed`), a malformed one a refusal. A run reads the hosts back from the stored, hash-verified spec; the runtime never supplies them. The owner's card says it plainly: these sites, forms included, never signing in. | `server/agents/browser.py`, `server/agents/compiler.py`, `server/capabilities/registry.py`, `server/agents/rendering.py` |
+| AF-P6-16 | **A run is the present owner's ordinary task**, decided by JARVIS alone, in this order: the spec's hosts ⊆ the operator's `EgressPolicy` *now* (`egress_not_permitted` otherwise — a policy narrowed after approval wins); the owner holds a standing `browser.session` grant (`capability_not_granted`); the run and its `AgentTask` are created, the activation is made from that grant for this task only and never past the deadline, and the engine must return `allow` for `browse` on exactly those hosts (`not_authorized` otherwise; the run is abandoned, no token issued). Browser Use's `allowed_domains`, judge and any approval of its own are never consulted. | `server/composition/browser_runs.py` |
+| AF-P6-17 | **What the container gets** (docs/29 §11.2): the digest-pinned image, the run's own `sockets/` (its own Model Gateway listener, bound to this run — another run's valid token is refused, `socket_binding` — and its own egress proxy) and `scratch/` (the task file JARVIS writes), and an environment of exactly the **model** run token and the two socket paths. No tool token (P2 makes no tool call), no principal, session, device credential, provider key or secret; no stored browser credentials, a fresh profile per run. | `server/agents/providers/browser_use.py`, `server/composition/browser_runs.py` |
+| AF-P6-18 | **The image** (`runtime/browser_use/`): base pinned by digest, Chromium from Debian, Browser Use 0.13.10 installed `--require-hashes` from a lock; telemetry and cloud sync off; any inherited proxy setting dropped (found by the live test: one baked in at build time sent Browser Use's own loopback CDP websocket to a proxy that does not exist there). Built, smoke-tested and published by CI (`runtime-image.yml`); the digest it prints is what a reviewed PR pins. | `runtime/browser_use/`, `.github/workflows/runtime-image.yml` |
+| AF-P6-19 | **The result is untrusted data**: ≤ 64 KiB, exactly `{status, final, steps, error}`, `completed` only with a final answer; anything else is a failed run (`result_unreadable`). What survives goes through the ordinary inbox path (scrubbed, bounded) to the owner's inbox only — no external notification path — and changes no authority. At the end, always: tokens revoked, listener and proxy closed, the container stopped **and removed** (even when it exited on its own — found by the live test), workspace removed, task closed, egress summary audited (`agent.egress.summary`). | `server/agents/browser.py`, `server/composition/browser_runs.py` |
+| AF-P6-20 | **Proven for real** (`tests/agents/test_browser_live.py`, the real image in rootless gVisor through the production composition root): Browser Use completes a run whose every model call went through the run's gateway socket (metered), whose allowed host was attempted through JARVIS's proxy and whose other host was refused by it (`host_not_allowed`), whatever `allowed_domains` said; the result reached the owner's inbox; nothing was left behind. | `tests/agents/test_browser_live.py`, `.github/workflows/ci.yml` |
+
+6D mutants M-AG224–M-AG238 (15/15 killed; M-AG48 re-anchored for the
+browser kill path in owner stop).
 
 
 ## 2K. Agent Factory owner decisions (2026-10-02)

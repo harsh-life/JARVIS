@@ -82,6 +82,7 @@ def _table() -> Mapping[AbilityName, AbilityMapping]:
         AbilityMapping(AbilityName.WRITE_AGENT_NOTEBOOK, None, runtime_owned="notebook_write"),
         AbilityMapping(AbilityName.CREATE_REMINDER, "scheduler.create", ("create_reminder",)),
         AbilityMapping(AbilityName.INVOKE_MODEL_TOOL, "model.invoke", ("invoke",)),
+        AbilityMapping(AbilityName.BROWSE_ALLOWLISTED, "browser.session", ("browse",)),
     )
     return MappingProxyType({row.ability: row for row in rows})
 

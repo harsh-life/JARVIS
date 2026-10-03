@@ -1,0 +1,53 @@
+# The Browser Use runtime image — OD-AF-14 (owner, 2026-10-02; register §2L).
+#
+# CI builds the image from runtime/browser_use (base image pinned by digest,
+# every Python dependency hash-locked) and, on main, publishes it to this
+# repository's container registry. What runs is never a tag: the server runs
+# only `name@sha256:<digest>`, and the digest is recorded in the repository
+# (server/agents/registry/runtimes.py, BROWSER_USE_IMAGE) by a reviewed PR —
+# this job prints the line to pin. Until a digest is pinned, the runtime
+# cannot be enabled.
+#
+# No stored secret: publishing uses the workflow's own GITHUB_TOKEN with
+# `packages: write`, granted to this workflow only.
+
+name: Runtime image
+
+on:
+  push:
+    branches: ["main"]
+    paths: ["runtime/browser_use/**", ".github/workflows/runtime-image.yml"]
+  pull_request:
+    paths: ["runtime/browser_use/**", ".github/workflows/runtime-image.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  browser-use:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (base pinned by digest, dependencies --require-hashes)
+        run: podman build --pull=missing -t "jarvis-browser-use:${GITHUB_SHA}" runtime/browser_use
+
+      - name: Smoke test (imports, Chromium, telemetry off)
+        run: >-
+          podman run --rm --network=none --entrypoint=python "jarvis-browser-use:${GITHUB_SHA}" -c
+          "import sys; sys.path.insert(0, '/opt/jarvis'); import browser_use, jarvis_llm, protocol, forwarder;
+          from browser_use.config import CONFIG; assert not CONFIG.ANONYMIZED_TELEMETRY;
+          assert not CONFIG.BROWSER_USE_CLOUD_SYNC"
+
+      - name: Publish and report the digest to pin
+        if: github.event_name != 'pull_request'
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/jarvis-browser-use"
+          echo "$REGISTRY_TOKEN" | podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          podman push --digestfile digest "jarvis-browser-use:${GITHUB_SHA}" "${image}:${GITHUB_SHA}"
+          echo "Pin in server/agents/registry/runtimes.py: BROWSER_USE_IMAGE = \"${image}@$(cat digest)\"" >> "$GITHUB_STEP_SUMMARY"

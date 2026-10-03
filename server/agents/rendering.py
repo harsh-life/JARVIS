@@ -25,6 +25,10 @@ _CAN = {
     ("file.write", "write_file"): "create and change files in your sandbox {scope}",
     ("scheduler.create", "create_reminder"): "set reminders for you",
     ("model.invoke", "invoke"): "ask JARVIS for help from another configured model",
+    # OD-AF-15: said as it is — the egress proxy decides hosts, not what is
+    # sent inside TLS (OD-AF-13), so a browser can submit a form on them.
+    ("browser.session", "browse"): ("open and use only these sites in a contained browser, including filling in "
+                                    "and submitting forms there (it never signs in with your accounts): {scope}"),
 }
 
 # Fixed: things no v1 agent can do. A line is dropped only when the envelope
@@ -32,7 +36,7 @@ _CAN = {
 _CANNOT = (
     ("write files", "file.write"),
     ("send messages", None),
-    ("post data to the web", None),
+    ("post data to the web", "browser.session"),
     ("control devices", None),
     ("create agents", None),
     ("run shell commands", None),
@@ -51,7 +55,9 @@ def can_lines(spec: CompiledAgentSpec) -> tuple[str, ...]:
         for (capability, operation), text in _CAN.items():
             if entry.capability == capability and operation in entry.operations:
                 label = entry.scope.get("sandbox_root")
-                lines.append(text.format(scope=f"“{label}”" if label else "").strip())
+                hosts = entry.scope.get("hosts")
+                scope = f"“{label}”" if label else (hosts.replace(",", ", ") if hosts else "")
+                lines.append(text.format(scope=scope).strip())
     if spec.hydration.user_memory:
         lines.append("read your JARVIS memory")
     if spec.hydration.vault:

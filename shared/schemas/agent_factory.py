@@ -85,6 +85,9 @@ class AbilityName(str, Enum):
     WRITE_AGENT_NOTEBOOK = "write_agent_notebook"
     CREATE_REMINDER = "create_reminder"
     INVOKE_MODEL_TOOL = "invoke_model_tool"
+    # docs/29 §29.2, OD-AF-15 (Phase 6): browse an explicit list of hosts in a
+    # contained browser (the Browser Use runtime) — `browser.session`/`browse`.
+    BROWSE_ALLOWLISTED = "browse_allowlisted"
 
 
 class ModelFeature(str, Enum):

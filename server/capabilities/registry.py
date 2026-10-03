@@ -62,6 +62,7 @@ from shared.schemas.enums import RiskCategory
 SCHEDULER_CREATE_CAPABILITY = "scheduler.create"
 CREATE_REMINDER_OPERATION = "create_reminder"
 AGENT_DEFINE_CAPABILITY = "agent.define"
+BROWSER_SESSION_CAPABILITY = "browser.session"
 AGENT_INSPECT_CAPABILITY = "agent.inspect"
 AGENT_DELETE_CAPABILITY = "agent.delete"
 
@@ -262,6 +263,22 @@ def _registry() -> Mapping[str, CapabilityDefinition]:
             ),
             operations=MappingProxyType({CREATE_REMINDER_OPERATION: RiskCategory.LOW_WRITE}),
             scope_keys=frozenset(),
+        ),
+        # OD-AF-15 (owner, 2026-10-02; register §2L): a contained browser
+        # session (the Browser Use runtime, OD-AF-6) on an explicit list of
+        # exact hosts — the `hosts` scope, required. `low_write`, not
+        # `low_read`: the egress proxy decides which hosts the browser reaches
+        # but cannot see methods or forms inside TLS (OD-AF-13, no TLS
+        # interception), so a browser can submit a form on a host it may reach.
+        CapabilityDefinition(
+            name=BROWSER_SESSION_CAPABILITY,
+            description=(
+                "Browse an explicit list of hosts in a disposable, contained browser "
+                "(docs/29 §21.1 P2). Its only network is JARVIS's egress proxy for "
+                "exactly those hosts; no stored credentials; results return as data."
+            ),
+            operations=MappingProxyType({"browse": RiskCategory.LOW_WRITE}),
+            scope_keys=frozenset({"hosts"}),
         ),
         CapabilityDefinition(
             name="model.invoke",

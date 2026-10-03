@@ -198,6 +198,8 @@ class AuditAction(str, Enum):
     AGENT_UNATTENDED_SKIPPED = "agent.unattended.skipped"
     # docs/29 §25.2 (Phase 6): a container that was no live run's, removed.
     AGENT_ORPHAN_DEPROVISIONED = "agent.orphan.deprovisioned"
+    # Phase 6: one row per external run — its egress decisions and bytes.
+    AGENT_EGRESS_SUMMARY = "agent.egress.summary"
     AGENT_TOKEN_ISSUED = "agent.token.issued"
     AGENT_TOKEN_REVOKED = "agent.token.revoked"
     AGENT_GATEWAY_DENIED = "agent.gateway.denied"

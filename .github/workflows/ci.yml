@@ -208,7 +208,7 @@ jobs:
     # from gVisor's signed apt repository, the probe image is public and
     # pulled by digest.
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -234,6 +234,11 @@ jobs:
           podman info --format '{{.Host.Security.Rootless}}' | grep -qx true
           podman --runtime=runsc info --format '{{.Host.OCIRuntime.Name}}' | grep -qx runsc
 
+      - name: Build the Browser Use image (runtime/browser_use; pinned base, hash-locked)
+        run: |
+          podman build -t localhost/jarvis-browser-use:ci runtime/browser_use
+          echo "HYPERMIND_TEST_BROWSER_IMAGE=localhost/jarvis-browser-use@$(podman image inspect localhost/jarvis-browser-use:ci --format '{{.Digest}}')" >> "$GITHUB_ENV"
+
       - name: Container boundary (AGENT-T12, AGENT-T13; docs/29 §21)
         env:
           HYPERMIND_REQUIRE_CONTAINER_STACK: "1"
@@ -244,6 +249,7 @@ jobs:
           tests/execution/test_containers_live.py
           tests/execution/test_containers.py
           tests/execution/test_egress_proxy.py
+          tests/agents/test_browser_live.py
 
   android:
     # docs/23 §8: Kotlin lint and unit tests from the first commit. Like the job

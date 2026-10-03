@@ -837,6 +837,10 @@ def _run_dir(value: str | None) -> str | None:
         return None
     if not value.startswith("/") or os.path.normpath(value) != value.rstrip("/") or value.rstrip("/") in ("", "/"):
         raise ValueError("agents.containers.run_dir must be an absolute, normalized directory other than /")
+    if len(value.rstrip("/")) > 50:
+        # <run_dir>/<run uuid>/sockets/egress.sock must fit a Unix socket
+        # path (108 bytes on Linux).
+        raise ValueError("agents.containers.run_dir must be at most 50 characters (each run's Unix sockets live under it)")
     return value.rstrip("/")
 
 

@@ -53,7 +53,7 @@ def test_enabling_containers_needs_the_factory_an_absolute_engine_and_a_run_dire
     _config(enabled=True, podman="/usr/bin/podman", run_dir="/var/lib/jarvis/runs")
     for bad in ({"enabled": True, "run_dir": None}, {"enabled": True, "podman": "podman", "run_dir": "/x/runs"},
                 {"enabled": True, "run_dir": "relative/runs"}, {"enabled": True, "run_dir": "/"},
-                {"enabled": True, "run_dir": "/tmp/../etc"}):
+                {"enabled": True, "run_dir": "/tmp/../etc"}, {"enabled": True, "run_dir": "/" + "x" * 60}):
         with pytest.raises(ValidationError):
             _config(**bad)
     payload = base_config_payload()
@@ -120,6 +120,6 @@ async def test_the_composition_root_wires_the_reconciler_only_when_switched_on(m
     off = await make_harness(config=AGENTS_ON, agent_tools=True)
     assert off.app.state.container_reconciler is None
     on = await make_harness(config={**AGENTS_ON, "agents": {**AGENTS_ON["agents"], "containers": {
-        "enabled": True, "podman": "/usr/bin/podman", "run_dir": str(tmp_path / "runs")}}}, agent_tools=True)
+        "enabled": True, "podman": "/usr/bin/podman", "run_dir": "/var/lib/jarvis/runs"}}}, agent_tools=True)
     reconciler = on.app.state.container_reconciler
     assert reconciler is not None and reconciler.engine.settings.podman == "/usr/bin/podman"

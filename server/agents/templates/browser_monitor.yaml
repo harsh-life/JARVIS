@@ -1,0 +1,32 @@
+# docs/29 §29.2 — browser monitoring in a contained browser. [PROPOSAL — NOT CANONICAL]
+# OD-AF-6 (Browser Use, P2), OD-AF-15 (browser.session / browse at low_write,
+# on the exact hosts of the agent's URL sources). Runs only in the Browser Use
+# runtime: a rootless gVisor container per run with no network interface but
+# its Model Gateway socket and its egress proxy (OD-AF-11…13). On demand only
+# in v1; no memory, no notebook, no stored credentials; results to the inbox.
+template_id: browser_monitor
+version: 1
+description: >-
+  Opens the pages its owner named, in a disposable contained browser that can
+  reach only those hosts, and reports what it found to the owner's inbox. It
+  holds no credentials and keeps nothing between runs.
+task_tags: [browser_automation, monitoring, extraction]
+abilities: [browse_allowlisted]
+run_mode: execute
+risk_ceiling: low_write
+required_model_features: [structured_output]
+preferred_runtime: browser_use
+fallback_runtimes: []
+min_isolation: container_netns
+memory_policy: {user_memory_read: false, vault_read: false, vault_domains: [], notebook: none}
+trigger_support: [on_demand]
+output_support: [inbox]
+max_run_seconds: 300
+max_model_calls_per_run: 30
+max_tool_calls_per_run: 1
+default_budget_per_run: 0.10
+default_budget_per_month: 2.0
+unattended_supported: false
+supported_endpoints: [android, desktop]
+required_infrastructure: [container, netns, browser_sandbox]
+priority: 10
