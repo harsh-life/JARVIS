@@ -13,6 +13,8 @@ refused unread — then handed, with the `Authorization` header, to the
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -39,7 +41,11 @@ async def _bounded_body(request: Request, limit: int) -> bytes | None:
     return b"".join(chunks)
 
 
-def build_model_gateway_app(port: ModelGatewayPort, *, max_request_bytes: int) -> FastAPI:
+def build_model_gateway_app(port: ModelGatewayPort, *, max_request_bytes: int,
+                            run_id: "uuid.UUID | None" = None) -> FastAPI:
+    """`run_id`: a per-run listener (an external run's own socket) serves that
+    run's token only — another run's is refused even if valid."""
+
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.post(COMPLETIONS_PATH, include_in_schema=False)
@@ -48,7 +54,7 @@ def build_model_gateway_app(port: ModelGatewayPort, *, max_request_bytes: int) -
         if body is None:
             return _too_large()
         reply = await port.chat_completion(authorization=request.headers.get("authorization"), body=body,
-                                           disconnected=request.is_disconnected)
+                                           disconnected=request.is_disconnected, run_id=run_id)
         if reply.status == CLIENT_CLOSED:
             return Response(status_code=CLIENT_CLOSED)
         return JSONResponse(status_code=reply.status, content=dict(reply.payload),

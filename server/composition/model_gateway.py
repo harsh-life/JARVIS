@@ -148,15 +148,19 @@ class HttpModelGateway:
 
     # ── the request ─────────────────────────────────────────────────────
 
+    @property
+    def usage_policy(self) -> UsagePolicy:
+        return self._usage
+
     async def chat_completion(self, *, authorization: str | None, body: bytes,
-                              disconnected: Disconnected) -> ModelGatewayReply:
+                              disconnected: Disconnected, run_id: uuid.UUID | None = None) -> ModelGatewayReply:
         request_id = uuid.uuid4()
         async with self._storage.session() as session:
             audit = AuditLogger(session, request_id=request_id)
             usage = RuntimeUsageAdapter(policy=self._usage, session=session, request_id=request_id)
             context: GatewayContext | None = None
             try:
-                context = await self._authenticate(session, authorization)
+                context = await self._authenticate(session, authorization, run_id)
                 request = self._parse(body)
                 admitted = await self._admit(session, usage, context, request)
             except _Refused as refused:
@@ -172,7 +176,8 @@ class HttpModelGateway:
             return await self._invoke(session, audit, usage, context, provider, principal, graph_id, messages,
                                       deadline, disconnected)
 
-    async def _authenticate(self, session: AsyncSession, authorization: str | None) -> GatewayContext:
+    async def _authenticate(self, session: AsyncSession, authorization: str | None,
+                            bound_run: uuid.UUID | None = None) -> GatewayContext:
         token = bearer_token(authorization)
         invalid = AgentGatewayErrorCode.INVALID_RUN_TOKEN
         if token is None or not run_tokens.well_formed_token(token):
@@ -180,6 +185,9 @@ class HttpModelGateway:
         row = await self._factory.service.run_token(session, run_tokens.token_digest(token))
         if row is None:
             raise _Refused(invalid, "unknown")
+        if bound_run is not None and row.run_id != bound_run:
+            # A per-run socket serves its own run only (OD-AF-12).
+            raise _Refused(invalid, "socket_binding", hint=_ContextHint(row.run_id, row.agent_id))
         outcome = await self._factory.gateway.authenticate(
             session, run_id=row.run_id, agent_id=row.agent_id, purpose=RunTokenPurpose.MODEL, token=token,
             is_member=self._is_member(session))

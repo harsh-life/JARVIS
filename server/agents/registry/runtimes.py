@@ -59,11 +59,53 @@ NATIVE_RUNTIME = AgentRuntimeProfile(
     display_name="JARVIS built-in runtime",
 )
 
-REGISTERED_RUNTIMES: Mapping[str, AgentRuntimeProfile] = MappingProxyType({NATIVE_RUNTIME_ID: NATIVE_RUNTIME})
+BROWSER_USE_RUNTIME_ID = "browser_use"
+
+# OD-AF-6 (owner, 2026-10-02): Browser Use, P2 contained workspace — untrusted
+# execution infrastructure in a rootless gVisor container per run (OD-AF-11),
+# no network interface but its two sockets (OD-AF-12), JARVIS's egress proxy
+# (OD-AF-13). Disabled until the operator enables it, and it can be enabled
+# only with its infrastructure and a pinned image (registry checks below).
+BROWSER_USE_RUNTIME = AgentRuntimeProfile(
+    runtime_id=BROWSER_USE_RUNTIME_ID,
+    runtime_type=RuntimeType.SPECIALIZED_RUNTIME,
+    version_pin="browser-use==0.13.10",
+    supported_template_tags=frozenset({TaskTag.BROWSER_AUTOMATION, TaskTag.MONITORING, TaskTag.EXTRACTION}),
+    supported_model_features=frozenset({ModelFeature.AGENTIC_REASONING, ModelFeature.STRUCTURED_OUTPUT,
+                                        ModelFeature.LONG_CONTEXT, ModelFeature.BROWSER_SUITABLE}),
+    tool_interface=ToolInterface.CONTAINED_WORKSPACE,
+    lifecycle_interface=LifecycleInterface.SDK_IN_WORKER_PROCESS,
+    persistence_model=PersistenceModel.WORKSPACE_FILES,
+    isolation_mode=IsolationMode.CONTAINER_NETNS,
+    network_requirements=NetworkRequirement.JARVIS_GATEWAY_PLUS_EGRESS_PROXY,
+    observability=Observability.GATEWAY_TRACE_ONLY,
+    cancellation=CancellationMode.CONTAINER_KILL,
+    export_supported=False,
+    deprovision_supported=True,
+    human_approval_mode="jarvis_gateway",
+    known_limitations=(
+        "the egress proxy decides hosts, not methods: no TLS interception (OD-AF-13)",
+        "use_vision off and no stored credentials in v1",
+    ),
+    required_infrastructure=(InfraRequirement.CONTAINER, InfraRequirement.NETNS, InfraRequirement.BROWSER_SANDBOX),
+    enabled=False,
+    display_name="Browser Use (contained browser)",
+)
+
+# OD-AF-14: the image CI builds and publishes (.github/workflows/runtime-image.yml),
+# pinned here by its immutable digest. None until the first publish is pinned
+# by a reviewed PR: until then the runtime cannot be enabled.
+BROWSER_USE_IMAGE: str | None = None
+
+REGISTERED_RUNTIMES: Mapping[str, AgentRuntimeProfile] = MappingProxyType({
+    NATIVE_RUNTIME_ID: NATIVE_RUNTIME,
+    BROWSER_USE_RUNTIME_ID: BROWSER_USE_RUNTIME,
+})
 
 # docs/29 §7.2 / §30 — reserved, no provider in this build.
 RESERVED_RUNTIME_IDS = frozenset({
-    "letta", "openhands", "browser_use", "openai_agents", "google_adk", "langgraph", "pydantic_ai", "openclaw",
+    "letta", "openhands", "openai_agents", "google_adk", "langgraph", "pydantic_ai", "openclaw",
 })
 
-__all__ = ["NATIVE_RUNTIME", "NATIVE_RUNTIME_ID", "REGISTERED_RUNTIMES", "RESERVED_RUNTIME_IDS"]
+__all__ = ["BROWSER_USE_IMAGE", "BROWSER_USE_RUNTIME", "BROWSER_USE_RUNTIME_ID", "NATIVE_RUNTIME", "NATIVE_RUNTIME_ID",
+           "REGISTERED_RUNTIMES", "RESERVED_RUNTIME_IDS"]

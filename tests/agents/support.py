@@ -11,6 +11,10 @@ IMPLEMENTED = frozenset({"ollama", "openai", "deepseek", "groq", "openai_compati
 LOCAL = frozenset({"ollama"})
 
 ALL_TEMPLATES = ("research_digest", "web_monitor_basic", "knowledge_keeper", "file_organizer")
+# Phase 6 (OD-AF-6): in the repository, enabled only by an operator who also
+# switched the Browser Use runtime and its infrastructure on.
+PHASE6_TEMPLATES = ("browser_monitor",)
+REPOSITORY_TEMPLATES = ALL_TEMPLATES + PHASE6_TEMPLATES
 
 
 def profile(profile_id: str = "general-agentic", **overrides: Any) -> AgentModelProfile:

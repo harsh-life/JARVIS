@@ -52,7 +52,17 @@ class AgentRegistries:
         return tuple(p for p in self.model_profiles.values() if p.profile.enabled)
 
 
-def _runtimes(toggles: Mapping[str, bool]) -> dict[str, AgentRuntimeProfile]:
+def _runtimes(toggles: Mapping[str, bool],
+              infrastructure: frozenset[InfraRequirement] = frozenset({InfraRequirement.NONE}),
+              ) -> dict[str, AgentRuntimeProfile]:
+    for runtime_id, profile in REGISTERED_RUNTIMES.items():
+        # Phase 6: an external runtime is enabled only with its infrastructure
+        # (docs/29 §21) — never a weaker boundary than its profile names.
+        available = infrastructure | {InfraRequirement.NONE}
+        if toggles.get(runtime_id) and not set(profile.required_infrastructure) <= available:
+            raise AgentRegistryError(
+                f"agents.runtimes.{runtime_id}: needs {sorted(r.value for r in profile.required_infrastructure)}"
+                " — containers, the HTTP Model Gateway and a pinned image (docs/29 §21)")
     for runtime_id, enabled in toggles.items():
         if runtime_id in REGISTERED_RUNTIMES:
             continue
@@ -116,6 +126,7 @@ def build_registries(
     implemented_providers: frozenset[str],
     local_providers: frozenset[str],
     template_dir: Path | None = None,
+    infrastructure: frozenset[InfraRequirement] = frozenset({InfraRequirement.NONE}),
 ) -> AgentRegistries:
     templates = load_templates(template_dir)
 
@@ -127,7 +138,7 @@ def build_registries(
             raise AgentRegistryError(f"agents.enabled_templates: {template_id!r} listed twice")
         enabled[template_id] = templates[template_id]
 
-    runtimes = _runtimes(runtime_toggles)
+    runtimes = _runtimes(runtime_toggles, infrastructure)
     for template in templates.values():
         for runtime_id in (template.preferred_runtime, *template.fallback_runtimes):
             if not _known_runtime(runtime_id):
@@ -149,9 +160,9 @@ def build_registries(
         runtimes=MappingProxyType(runtimes),
         model_profiles=MappingProxyType(resolved),
         open_to_all=frozenset(open_to_all),
-        # No container, netns, MCP server or browser sandbox exists in this
-        # repository (docs/29 facts table), so only `none` is available.
-        available_infrastructure=frozenset({InfraRequirement.NONE}),
+        # Phase 6: the container, netns and browser sandbox exist only when
+        # the operator switched them on (composition root); no MCP server.
+        available_infrastructure=frozenset({InfraRequirement.NONE}) | infrastructure,
     )
 
 

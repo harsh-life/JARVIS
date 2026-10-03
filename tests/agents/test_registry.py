@@ -19,7 +19,7 @@ from server.config.schema import AgentsConfig, AppConfig
 from shared.schemas.agent import TaskMode
 from shared.schemas.agent_factory import AbilityName, CostClass
 from shared.schemas.enums import RiskCategory
-from tests.agents.support import ALL_TEMPLATES, entries, profile, registries
+from tests.agents.support import ALL_TEMPLATES, REPOSITORY_TEMPLATES, entries, profile, registries
 
 # ── the ability table (docs/29 §9.3) ─────────────────────────────────────
 
@@ -98,7 +98,12 @@ def test_agent_t32_a_widened_ability_table_fails_load(monkeypatch, capability, o
 
 def test_the_four_v1_templates_load():
     templates = load_templates()
-    assert set(templates) == set(ALL_TEMPLATES)
+    assert set(templates) == set(REPOSITORY_TEMPLATES)
+    # Phase 6: the browser template is execute/low_write, contained, never unattended.
+    browser = templates["browser_monitor"]
+    assert (browser.run_mode, browser.risk_ceiling, browser.unattended_supported) == (
+        TaskMode.EXECUTE, RiskCategory.LOW_WRITE, False)
+    assert browser.preferred_runtime == "browser_use" and browser.fallback_runtimes == ()
     assert templates["research_digest"].run_mode is TaskMode.OBSERVE
     assert templates["file_organizer"].run_mode is TaskMode.EXECUTE
     assert templates["file_organizer"].risk_ceiling is RiskCategory.LOW_WRITE
@@ -110,7 +115,7 @@ def test_the_four_v1_templates_load():
 
 def test_templates_live_in_the_repository_with_a_review_checklist():
     assert (TEMPLATE_DIR / "README.md").exists()
-    assert sorted(p.stem for p in TEMPLATE_DIR.glob("*.yaml")) == sorted(ALL_TEMPLATES)
+    assert sorted(p.stem for p in TEMPLATE_DIR.glob("*.yaml")) == sorted(REPOSITORY_TEMPLATES)
 
 
 def _write(dirpath: Path, name: str, text: str) -> None:

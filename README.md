@@ -353,7 +353,17 @@ unattended run:
 - reports only to the owner's inbox, with closed-code notices (missed,
   coalesced, skipped, expiring, expired, revoked, invalidated).
 
-Agent output never becomes memory. External runtimes (Phase 6), MCP, Letta,
+**Phase 6 (built, off by default)** adds one external runtime, Browser
+Use (OD-AF-6, P2): a `browser_monitor` agent browses an explicit list of
+hosts (`browser.session`/`browse`, `low_write`) in a rootless gVisor container
+with no network interface — its model calls go only to the run's own Model
+Gateway socket, its pages only through the run's own JARVIS egress proxy, and
+its result only to the owner's inbox. It needs `agents.runtimes.browser_use`,
+`agents.model_gateway`, `agents.containers` and a pinned image digest. Every stop — the owner's, the operator's, the deadline, a budget — revokes
+the run's tokens first, then kills the container. Operator setup:
+`docs/RUNNING_EXECUTION.md` §7; measured blast radius: `docs/OD_A1_BR_T2.md` §3g.
+
+Agent output never becomes memory. MCP, Letta, OpenHands, OpenClaw,
 child agents, external recipients and Darwin are not built. Decisions:
 `docs/DECISION_REGISTER.md` §2J, §2K and §2L (OD-AF-2/3/4/5/7/8 ratified
 2026-10-02; OD-AF-6 — Browser Use, P2 — and OD-TOOL-3 — no MCP — ratified

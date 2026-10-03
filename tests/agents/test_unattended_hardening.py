@@ -56,7 +56,10 @@ async def _actions(h) -> set[str]:
 
 async def test_a_delegations_whole_life_is_audited(h):
     alice = await h.user("alice")
-    agent, row = await _setup(h, alice, terms={**TERMS, "expires_in_days": 2})
+    # 3 days, not 2: the second occurrence + 3 h must fall before expiry at
+    # any time of day (with 2, a test started between 01:30 and 04:30 UTC
+    # saw the delegation expire instead of the miss).
+    agent, row = await _setup(h, alice, terms={**TERMS, "expires_in_days": 3})
     first, second = _occurrences(row, 2)
     h.model.push(final("ok"))
     await _tick(h, first + timedelta(minutes=1))          # a run

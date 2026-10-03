@@ -30,6 +30,7 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from server.agents import abilities
+from server.agents.browser import BROWSER_CAPABILITY, hosts_from_urls, hosts_scope
 from server.agents.delegation import unattended_spec_refusal
 from server.agents.hashing import spec_hash_of
 from server.agents.registry import AgentRegistries
@@ -180,7 +181,18 @@ def _envelope(template: AgentTemplate, draft: AgentDraft) -> tuple[tuple[Envelop
     entries: list[EnvelopeEntry] = []
     for capability in sorted(operations):
         ops = tuple(sorted(operations[capability]))
-        if capability in _SANDBOX_CAPABILITIES:
+        if capability == BROWSER_CAPABILITY:
+            # OD-AF-15: `browse` only on the exact hosts of the draft's URL
+            # sources; none yet is a clarification (below), a malformed one a
+            # refusal — never an unscoped browser.
+            urls = [s.value for s in draft.sources if s.kind is SourceKind.URL]
+            if urls:
+                try:
+                    entries.append(EnvelopeEntry(capability=capability, operations=ops,
+                                                 scope=hosts_scope(hosts_from_urls(urls))))
+                except ValueError:
+                    return None, ["browser_source_invalid"]
+        elif capability in _SANDBOX_CAPABILITIES:
             entries.extend(EnvelopeEntry(capability=capability, operations=ops, scope={"sandbox_root": label})
                            for label in labels)
         else:
@@ -249,6 +261,9 @@ def compile_draft(
     ):
         questions.append(ClarificationQuestion(
             code="sandbox_needed", prompt="Which of your sandboxes should this agent work in? Name its label."))
+    if AbilityName.BROWSE_ALLOWLISTED in requested and not any(s.kind is SourceKind.URL for s in draft.sources):
+        questions.append(ClarificationQuestion(
+            code="browser_hosts_needed", prompt="Which pages should this agent open? Give their https addresses."))
     blocked = sorted({s.value for s in draft.sources if s.kind is SourceKind.URL and not owner.url_allowed(s.value)})
     if blocked:
         questions.append(ClarificationQuestion(

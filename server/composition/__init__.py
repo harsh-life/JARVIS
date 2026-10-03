@@ -28,6 +28,8 @@ from server.agent.recovery import RecoveryPolicy
 from server.agents.service import AgentDefinitionService
 from server.composition.agent_triggers import AgentTriggerLoop
 from server.composition.model_gateway import HttpModelGateway, ModelGatewayListener
+from server.composition.containers import ContainerReconciler
+from server.execution.containers import ContainerEngine, EngineSettings
 from server.composition.agents import (
     AgentDefinitionLoader,
     AgentFactory,
@@ -416,6 +418,35 @@ def build_application(
         model_gateway_listener = ModelGatewayListener(app=model_gateway_app,
                                                       binding=config.agents.model_gateway.listen)
         background.append(model_gateway_listener)
+    # docs/29 §21/§25.2 (Phase 6, slice 6C): the external runtime's container
+    # engine — rootless Podman with gVisor, verified at startup — and the
+    # reconciler that removes any container that is no live run's, at
+    # startup and every 10 minutes. Nothing at all unless switched on.
+    container_reconciler: ContainerReconciler | None = None
+    if agent_factory is not None and config.agents.containers.enabled:
+        containers = config.agents.containers
+        container_reconciler = ContainerReconciler(
+            engine=ContainerEngine(EngineSettings(
+                podman=containers.podman, ignore_cgroups=containers.ignore_cgroups, memory_mb=containers.memory_mb,
+                cpus=containers.cpus, pids_limit=containers.pids_limit,
+                kill_grace_seconds=containers.kill_grace_seconds)),
+            storage=storage, interval_seconds=containers.reconcile_interval_seconds)
+        background.append(container_reconciler)
+    # docs/29 §21 (Phase 6, OD-AF-6): Browser Use runs — only with the
+    # runtime enabled, which the registries allow only with containers, the
+    # HTTP Model Gateway and a pinned image. A lifespan service: it verifies
+    # the engine and closes what a previous process left running.
+    runtimes_cfg = config.agents.runtimes
+    if (agent_factory is not None and model_gateway is not None and "browser_use" in runtimes_cfg
+            and runtimes_cfg["browser_use"].enabled):
+        from server.agents.registry import runtimes as runtime_registry
+        from server.composition.browser_runs import BrowserRuns
+
+        assert runtime_registry.BROWSER_USE_IMAGE is not None
+        agent_factory.browser_runs = BrowserRuns(
+            factory=agent_factory, storage=storage, core=core, gateway=model_gateway, config=config, latch=latch,
+            image=runtime_registry.BROWSER_USE_IMAGE)
+        background.append(agent_factory.browser_runs)
     # 19: the Judge — nothing at all unless `evaluation.enabled`.
     evaluation = build_evaluation(
         config, runtime=runtime, storage=storage, factory=factory, tuning=tuning, switches=switchboard,
@@ -467,6 +498,7 @@ def build_application(
     app.state.model_gateway = model_gateway
     app.state.model_gateway_app = model_gateway_app
     app.state.model_gateway_listener = model_gateway_listener
+    app.state.container_reconciler = container_reconciler
     # docs/23 §4: the optional push wake — nothing at all unless configured.
     attach_push_wake(config, app, device_hub)
     return app

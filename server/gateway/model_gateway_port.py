@@ -14,6 +14,7 @@ holds no session of its own.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Protocol
 
@@ -31,7 +32,7 @@ class ModelGatewayReply:
 
 class ModelGatewayPort(Protocol):
     async def chat_completion(self, *, authorization: str | None, body: bytes,
-                              disconnected: Disconnected) -> ModelGatewayReply: ...
+                              disconnected: Disconnected, run_id: "uuid.UUID | None" = None) -> ModelGatewayReply: ...
 
 
 __all__ = ["CLIENT_CLOSED", "Disconnected", "ModelGatewayPort", "ModelGatewayReply"]

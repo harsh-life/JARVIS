@@ -198,6 +198,59 @@ jobs:
         # to run on any store but PostgreSQL.
         run: python -m pytest tests/memory/test_prd32_service_measurement.py -q -s
 
+  containers:
+    # docs/29 §21, OD-AF-11/12 (Phase 6): the external runtime's boundary, for
+    # real — rootless Podman with gVisor runsc, driven as the runner's own
+    # unprivileged user, exactly as the server launches a run. AGENT-T12 (the
+    # runtime reaches only its sockets) and AGENT-T13 (no provider key or
+    # server secret reaches the container) are release-blocking, so a missing
+    # stack is a failure here, never a skip. No secret is needed: runsc comes
+    # from gVisor's signed apt repository, the probe image is public and
+    # pulled by digest.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+
+      - name: Install rootless Podman and gVisor runsc
+        run: |
+          curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" \
+            | sudo tee /etc/apt/sources.list.d/gvisor.list
+          sudo apt-get update
+          sudo apt-get install -y podman uidmap runsc
+          # Ubuntu 24.04 confines unprivileged user namespaces with AppArmor;
+          # rootless Podman needs them on this runner.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          podman info --format '{{.Host.Security.Rootless}}' | grep -qx true
+          podman --runtime=runsc info --format '{{.Host.OCIRuntime.Name}}' | grep -qx runsc
+
+      - name: Build the Browser Use image (runtime/browser_use; pinned base, hash-locked)
+        run: |
+          podman build -t localhost/jarvis-browser-use:ci runtime/browser_use
+          echo "HYPERMIND_TEST_BROWSER_IMAGE=localhost/jarvis-browser-use@$(podman image inspect localhost/jarvis-browser-use:ci --format '{{.Digest}}')" >> "$GITHUB_ENV"
+
+      - name: Container boundary (AGENT-T12, AGENT-T13; docs/29 §21)
+        env:
+          HYPERMIND_REQUIRE_CONTAINER_STACK: "1"
+          # GitHub's runner does not delegate cgroups to the runner user.
+          HYPERMIND_CONTAINER_IGNORE_CGROUPS: "1"
+        run: >-
+          python -m pytest -q
+          tests/execution/test_containers_live.py
+          tests/execution/test_containers.py
+          tests/execution/test_egress_proxy.py
+          tests/agents/test_browser_live.py
+
   android:
     # docs/23 §8: Kotlin lint and unit tests from the first commit. Like the job
     # above, it needs no secret: the client ships none (REPO-T2), and the last

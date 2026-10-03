@@ -54,7 +54,7 @@ from server.agents.gateway.model_routing import RouteRefused, route_model_call
 from server.agents.instructions import assemble_input
 from server.agents.revision import authority_of, redraft_with_purpose
 from server.agents.providers.native import NativeRuntimeProvider
-from server.agents.registry.runtimes import NATIVE_RUNTIME_ID
+from server.agents.registry.runtimes import BROWSER_USE_RUNTIME_ID, NATIVE_RUNTIME_ID
 from server.agents.registry import AgentRegistries, ModelEntryFacts, build_registries
 from server.agents.rendering import render_card, spec_view
 from server.agents.service import OPERATOR_PAUSED, AgentDefinitionService, PreviewRefused
@@ -99,7 +99,9 @@ from shared.schemas.agent import (
     ToolOutput,
 )
 from shared.schemas.agent_config import ToolContract
+from server.composition.browser_runs import BrowserRunRefused
 from shared.schemas.agent_factory import (
+    InfraRequirement,
     AgentDetail,
     AgentDraft,
     AgentListResponse,
@@ -156,6 +158,7 @@ from shared.schemas.scheduler import ReasonSource
 from shared.schemas.errors import ErrorCode
 
 if TYPE_CHECKING:
+    from server.composition.browser_runs import BrowserRuns
     from server.composition.facade import AgentTaskFacade
     from server.scheduler.service import SchedulerService
 
@@ -198,7 +201,21 @@ def registries_from_config(config: AppConfig) -> AgentRegistries:
         model_entries=model_entry_facts(config),
         implemented_providers=IMPLEMENTED_PROVIDERS,
         local_providers=frozenset(LOCAL_MODEL_PROVIDERS),
+        infrastructure=external_infrastructure(config),
     )
+
+
+def external_infrastructure(config: AppConfig) -> frozenset[InfraRequirement]:
+    """docs/29 §21 (Phase 6): what an external runtime may rely on — only
+    when the operator switched on containers (rootless gVisor, OD-AF-11/12)
+    and the HTTP Model Gateway, and the runtime image is pinned (OD-AF-14)."""
+
+    from server.agents.registry import runtimes as runtime_registry
+
+    agents = config.agents
+    if agents.containers.enabled and agents.model_gateway.enabled and runtime_registry.BROWSER_USE_IMAGE:
+        return frozenset({InfraRequirement.CONTAINER, InfraRequirement.NETNS, InfraRequirement.BROWSER_SANDBOX})
+    return frozenset()
 
 
 # ── the audit trail of standing delegations (docs/29 §26) ─────────────────
@@ -357,6 +374,8 @@ class AgentFactory:
         self._gateway = AgentGateway(service)
         # docs/29 §17 (Phase 4): set when the scheduler is enabled too.
         self.reminders: AgentReminders | None = None
+        # Phase 6: set when the Browser Use runtime is enabled.
+        self.browser_runs: "BrowserRuns | None" = None
 
     @property
     def service(self) -> AgentDefinitionService:
@@ -420,10 +439,10 @@ class AgentFactory:
             raise ValueError("schedule_invalid")
         return fire
 
-    @staticmethod
-    def runtime_health() -> dict[str, bool]:
-        # The native runtime is this process (docs/29 §7.4).
-        return {"native": True}
+    def runtime_health(self) -> dict[str, bool]:
+        # The native runtime is this process (docs/29 §7.4); Browser Use is
+        # healthy once its engine verified (Phase 6).
+        return {"native": True, BROWSER_USE_RUNTIME_ID: self.browser_runs is not None}
 
     async def owner_context(self, session: AsyncSession, *, user_id: uuid.UUID,
                             graph_id: uuid.UUID | None) -> OwnerContext:
@@ -1470,6 +1489,19 @@ class AgentFactoryFacade:
             raise await self._refuse_run(audit, principal, agent_id, AgentFailureCode.AGENT_BUDGET_EXHAUSTED.value,
                                          "this agent's monthly budget is spent", code=ErrorCode.RATE_LIMITED)
         run_budget = min(spec.budget.per_run, max(0.0, spec.budget.per_month - spent))
+        if spec.selection.runtime_id == BROWSER_USE_RUNTIME_ID:
+            # Phase 6 (OD-AF-6): an external, contained run — not a native task.
+            if reminder_delivery_id is not None or self._factory.browser_runs is None:
+                raise await self._refuse_run(audit, principal, agent_id, "runtime_unavailable",
+                                             "this agent's runtime is not available")
+            try:
+                run = await self._factory.browser_runs.start_run(session, principal=principal, audit=audit,
+                                                                 spec=spec, run_budget=run_budget)
+            except BrowserRunRefused as refused:
+                raise await self._refuse_run(
+                    audit, principal, agent_id, refused.code, refused.message,
+                    code=ErrorCode.UNAUTHORIZED if refused.forbidden else ErrorCode.DEPENDENCY_UNAVAILABLE) from None
+            return service.run_view(run)
         run_id = uuid.uuid4()
         try:
             async with session.begin_nested():
@@ -1552,7 +1584,8 @@ class AgentFactoryFacade:
             raise await self._refuse_run(audit, principal, agent_id, "model_profile_unavailable",
                                          "this agent's model profile is not available to you")
         runtime = registries.runtimes.get(selection.runtime_id)
-        if runtime is None or not runtime.enabled or selection.runtime_id != "native":
+        external_ok = selection.runtime_id == BROWSER_USE_RUNTIME_ID and self._factory.browser_runs is not None
+        if runtime is None or not runtime.enabled or (selection.runtime_id != "native" and not external_ok):
             raise await self._refuse_run(audit, principal, agent_id, "runtime_unavailable",
                                          "this agent's runtime is not available")
         return profile
@@ -1573,10 +1606,18 @@ class AgentFactoryFacade:
         port = _PresentUserRun(tasks=self._run_tasks(), factory=self._factory, session=session, principal=principal,
                                audit=audit)
         provider = NativeRuntimeProvider(port)
+        browser = self._factory.browser_runs
         for run in live:
             if run.owner_user_id != principal.user_id:
                 continue
-            await provider.cancel_run(RunHandle(runtime_id=NATIVE_RUNTIME_ID, run_id=run.run_id), reason)
+            if browser is not None and run.run_id in browser.live:
+                # Phase 6: the contained run's kill path — tokens first, in
+                # this transaction; the container is told after.
+                await browser.cancel(session, audit, run_id=run.run_id, reason=reason.value,
+                                     status=AgentTaskStatus.CANCELLED, actor=AuditActor.USER,
+                                     actor_user=principal.user_id)
+            else:
+                await provider.cancel_run(RunHandle(runtime_id=NATIVE_RUNTIME_ID, run_id=run.run_id), reason)
             await self._audit(audit, principal, AuditAction.AGENT_RUN_CANCELLED,
                               f"agentrun:{run.run_id}:{reason.value}")
 
@@ -1584,7 +1625,14 @@ class AgentFactoryFacade:
                          run_id: uuid.UUID, audit: AuditLogger) -> AgentRunView:
         run = await self._owned_run(session, audit, principal, agent_id, run_id)
         service = self._factory.service
-        if run.finished_at is None:
+        browser = self._factory.browser_runs
+        if run.finished_at is None and browser is not None and run_id in browser.live:
+            await browser.cancel(session, audit, run_id=run_id, reason=CancelReason.OWNER_STOP.value,
+                                 status=AgentTaskStatus.CANCELLED, actor=AuditActor.USER,
+                                 actor_user=principal.user_id)
+            await self._audit(audit, principal, AuditAction.AGENT_RUN_CANCELLED,
+                              f"agentrun:{run_id}:{CancelReason.OWNER_STOP.value}")
+        elif run.finished_at is None:
             port = _PresentUserRun(tasks=self._run_tasks(), factory=self._factory, session=session,
                                    principal=principal, audit=audit)
             await NativeRuntimeProvider(port).cancel_run(

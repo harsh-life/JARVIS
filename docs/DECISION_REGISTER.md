@@ -500,6 +500,71 @@ adapter exists. Nothing calls it yet but tests; 6D's adapter will.
 killed). No data class changes (no new table or column), so BR-T2 is not
 re-measured for 6A; the container rows come with 6C/6E.
 
+### Phase 6, slice 6B — the egress boundary (implementation facts)
+
+Built under OD-AF-12/13 (§2L). Nothing starts it yet; 6C/6D put it in front
+of a container.
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P6-8 | **One resolution rule.** `checked_address` resolves a name with an injected resolver and classifies the answers with `policy.classify`. The egress client keeps its rule (`strict=False`: the first passing answer); the proxy uses `strict=True`: **every** answer must pass, so a name answering a public and a private address is refused (the shape of a rebinding attempt — stricter than the client because the caller is untrusted). | `server/net/resolve.py`, `server/net/client.py` |
+| AF-P6-9 | **The CONNECT proxy**, one per run on its own `0600` Unix socket. It understands exactly `CONNECT host:port HTTP/1.1` (8 KiB head, on time); refuses any other method or form, IP literals in every spelling (dotted, integer, octal, hex — the URL standard's last-label rule), single-label names, any port but 443 and any host not exactly in the run's list — before resolving. It then resolves once, classifies every answer, connects to the checked address and **refuses a connection whose peer is another address** (`ip_mismatch`). No TLS interception: bytes are relayed and counted. Per-run limits: connections, concurrency, bytes, idle time. A refusal is a bare status with no echo of the request; every decision goes to the audit callback with a reason code. | `server/net/egress_proxy.py` |
+| AF-P6-10 | **A run's hosts** come from JARVIS only: `policy_for_run` takes the exact hosts the spec names and refuses the whole run if any is outside the operator's `EgressPolicy` (its destinations, or `internet`) — never a silently narrower list. Private networks are never reachable from a run. | `server/net/egress_proxy.py` |
+
+6B mutants M-AG190–M-AG202 (13/13 killed). The kernel-level half of the
+boundary — that the container has no other route — is 6C's.
+
+### Phase 6, slice 6C — container and namespace isolation (implementation facts)
+
+Built under OD-AF-11/12/14 (§2L), **off by default**
+(`agents.containers.enabled: false`; it loads as true only with
+`agents.enabled` and a `run_dir`).
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P6-11 | **The launch is fixed in code, not configurable.** Podman `--runtime=runsc` with gVisor's own `network=none` (loopback only) and `host-uds=open` (a host socket only if mounted); `--network=none`; `--read-only --read-only-tmpfs=false` plus a read-only empty `/tmp` (gVisor would otherwise add a writable in-memory one — found by the live test); `--cap-drop=ALL`; `no-new-privileges`; `--userns=keep-id` with the server's own non-zero uid; `--pull=never`; `--http-proxy=false`; `--log-driver=none`; pids/memory/CPU limits; exactly two bind mounts (the run's sockets at `/run/jarvis`, its scratch at `/scratch`); only `JARVIS_*` values in the environment; only `name@sha256:<64 hex>` images; labels and a run-derived name. `ignore_cgroups` is the operator's explicit choice where cgroups are not delegated (then the limits are not enforced — a BR-T2 residual). | `server/execution/containers.py` |
+| AF-P6-12 | **The engine** is driven by argv only, with a **from-scratch environment** (PATH, HOME, XDG_RUNTIME_DIR, LANG — nothing of the server's: no provider key, KEK source, proxy or session can reach Podman or the container). `verify` refuses root, a Podman that is not rootless, and one that cannot use `runsc` (`podman --runtime=runsc info`). The kill path is `stop --time=<grace>` (SIGTERM, then SIGKILL) and `rm --force`, always both. A run's workspace is `<run_dir>/<run_id>/{sockets,scratch}`, `0700`, refused if it exists. | `server/execution/containers.py` |
+| AF-P6-13 | **Reconciliation** (docs/29 §25.2) at startup and every `reconcile_interval_seconds` (≤ 600): every managed container whose run is not live — finished, missing, or a forged label — is stopped and removed **by the engine's own container id**, and audited `agent.orphan.deprovisioned`. The reconciler verifies the engine before anything else: a weaker engine is a startup failure. | `server/composition/containers.py` |
+| AF-P6-14 | **Proven for real** (`tests/execution/test_containers_live.py`, rootless Podman 4.9 + runsc release-20260928.0, run as an unprivileged user; CI job `containers` with `HYPERMIND_REQUIRE_CONTAINER_STACK=1`): AGENT-T12 — every direct address (public, private, metadata, the host, loopback) unreachable, DNS fails, only `lo`; through the run's proxy the allowed host is reached and others refused. Confinement — non-root, `CapEff` 0, `NoNewPrivs` 1, root and `/tmp` not writable, scratch writable, host paths invisible. AGENT-T13 — a provider key, the KEK source and a proxy setting in the server's environment are absent from the container's environment, its inspect record and its scratch. A runtime ignoring SIGTERM is killed after the grace; an orphan is reconciled away. | `tests/execution/test_containers_live.py`, `.github/workflows/ci.yml` |
+
+6C mutants M-AG203–M-AG223 (21/21 killed). A mutant of the workspace's
+post-create symlink check was dropped (never numbered): creating the
+directory already fails on a planted symlink, so a single mutant of the
+second guard cannot be observed; the check stays for the race it closes.
+
+### Phase 6, slice 6D — the Browser Use adapter (implementation facts)
+
+Built under OD-AF-6 (P2) and OD-AF-11…15 (§2L), **off by default**: the
+`browser_use` runtime loads only with `agents.runtimes.browser_use.enabled`,
+the HTTP Model Gateway, containers, and a pinned image digest in the
+repository — any one missing is a startup failure, never a weaker run.
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P6-15 | **`browser.session` / `browse` = `low_write`** (OD-AF-15), scope key `hosts`, required. The compiler takes the hosts from the draft's `url` sources only — plain `https` URLs, exact host names (no IP literal in any spelling, no userinfo, no port but 443, no single label), 1–32 — and writes them into the envelope entry's scope; no URL source is a clarification (`browser_hosts_needed`), a malformed one a refusal. A run reads the hosts back from the stored, hash-verified spec; the runtime never supplies them. The owner's card says it plainly: these sites, forms included, never signing in. | `server/agents/browser.py`, `server/agents/compiler.py`, `server/capabilities/registry.py`, `server/agents/rendering.py` |
+| AF-P6-16 | **A run is the present owner's ordinary task**, decided by JARVIS alone, in this order: the spec's hosts ⊆ the operator's `EgressPolicy` *now* (`egress_not_permitted` otherwise — a policy narrowed after approval wins); the owner holds a standing `browser.session` grant (`capability_not_granted`); the run and its `AgentTask` are created, the activation is made from that grant for this task only and never past the deadline, and the engine must return `allow` for `browse` on exactly those hosts (`not_authorized` otherwise; the run is abandoned, no token issued). Browser Use's `allowed_domains`, judge and any approval of its own are never consulted. | `server/composition/browser_runs.py` |
+| AF-P6-17 | **What the container gets** (docs/29 §11.2): the digest-pinned image, the run's own `sockets/` (its own Model Gateway listener, bound to this run — another run's valid token is refused, `socket_binding` — and its own egress proxy) and `scratch/` (the task file JARVIS writes), and an environment of exactly the **model** run token and the two socket paths. No tool token (P2 makes no tool call), no principal, session, device credential, provider key or secret; no stored browser credentials, a fresh profile per run. | `server/agents/providers/browser_use.py`, `server/composition/browser_runs.py` |
+| AF-P6-18 | **The image** (`runtime/browser_use/`): base pinned by digest, Chromium from Debian, Browser Use 0.13.10 installed `--require-hashes` from a lock; telemetry and cloud sync off; any inherited proxy setting dropped (found by the live test: one baked in at build time sent Browser Use's own loopback CDP websocket to a proxy that does not exist there). Built, smoke-tested and published by CI (`runtime-image.yml`); the digest it prints is what a reviewed PR pins. | `runtime/browser_use/`, `.github/workflows/runtime-image.yml` |
+| AF-P6-19 | **The result is untrusted data**: ≤ 64 KiB, exactly `{status, final, steps, error}`, `completed` only with a final answer; anything else is a failed run (`result_unreadable`). What survives goes through the ordinary inbox path (scrubbed, bounded) to the owner's inbox only — no external notification path — and changes no authority. At the end, always: tokens revoked, listener and proxy closed, the container stopped **and removed** (even when it exited on its own — found by the live test), workspace removed, task closed, egress summary audited (`agent.egress.summary`). | `server/agents/browser.py`, `server/composition/browser_runs.py` |
+| AF-P6-20 | **Proven for real** (`tests/agents/test_browser_live.py`, the real image in rootless gVisor through the production composition root): Browser Use completes a run whose every model call went through the run's gateway socket (metered), whose allowed host was attempted through JARVIS's proxy and whose other host was refused by it (`host_not_allowed`), whatever `allowed_domains` said; the result reached the owner's inbox; nothing was left behind. | `tests/agents/test_browser_live.py`, `.github/workflows/ci.yml` |
+
+6D mutants M-AG224–M-AG238 (15/15 killed; M-AG48 re-anchored for the
+browser kill path in owner stop).
+
+### Phase 6, slices 6E/6F — every way a contained run ends; BR-T2 (implementation facts)
+
+| ID | Fact (`[IMPL]` unless stated) | Where |
+|---|---|---|
+| AF-P6-21 | **One kill path** (`BrowserRuns.cancel`) for every stop that comes through a request — the owner's stop, pause and delete (`cancelled`: `owner_stop`, `deleted`) and every operator stop: task, user, device, agent pause, global (`failed: emergency_stop`, exactly as a native run). In the caller's own transaction: the run's tokens revoked **first** (AGENT-T23; audited `agent.token.revoked`), the run and task closed, the task's activation removed; only then is the container told to stop — without waiting, so a slow container never holds a request (or a SQLite write lock). The supervisor finishes (sockets, usage, egress summary, inbox, workspace). The operator's stops reach contained runs before their database sweep and report them as stopped. | `server/composition/browser_runs.py`, `server/composition/agents.py`, `server/composition/supervisor.py` |
+| AF-P6-22 | **Supervision backstops**, every `poll_seconds` (1 s): the deadline (`wall_clock_timeout`); the global latch however tripped (`emergency_stop`); the run's task closed by any other path (the task's own code); the model token re-authenticated (`token_revoked`, `spec_changed`, `agent_unavailable`). A gateway refusal for a ceiling the run hit — `budget_exceeded`, `agent_budget_exhausted`, `max_model_calls` — ends the run at once (`run_ending_refusal`); a rate limit or a provider failure does not. A supervisor failure is `runtime_crashed`, the container still stopped. | `server/composition/browser_runs.py` |
+| AF-P6-23 | **Failure codes are JARVIS's**: a result JARVIS could not read is `result_unreadable`; a readable `failed` result is `runtime_failed` whatever the runtime wrote as its error (found by BR-T2 row 49: a runtime could otherwise name any stop). | `server/composition/browser_runs.py` |
+| AF-P6-24 | **Restart**: an unfinished browser run is closed `failed: interrupted` — tokens revoked, task closed, **activation removed**, audited, workspace deleted — and the reconciler removes its container. | `server/composition/browser_runs.py` |
+| AF-P6-25 | **BR-T2 re-run** (docs/OD_A1_BR_T2.md §3g rows 46–53, new attacker model *compromised runtime*): no compromised-runtime or cross-user row reachable; row 52 (form submission on a granted host) reachable by design (OD-AF-15); row 53 (in-process reach to a live run's token) inside OD-A1 (a). Residuals: `ignore_cgroups` (limits unenforced) and row 52, both in §5. | `tests/integration/test_br_t2_container_rows.py` |
+
+6E/6F mutants M-AG239–M-AG250 (12/12 killed). A Phase 5 test that failed
+between 01:30 and 04:30 UTC (a delegation expiring before the miss it waits
+for) was fixed alongside (`test_a_delegations_whole_life_is_audited`).
+
 
 ## 2K. Agent Factory owner decisions (2026-10-02)
 

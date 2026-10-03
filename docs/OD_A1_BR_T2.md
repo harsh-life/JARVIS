@@ -241,6 +241,33 @@ notices are closed codes.
 
 No authorized row is reachable. Row 45 is inside the accepted class.
 
+### 3g. Contained runtimes (Phase 6, docs/29 §21; OD-AF-6, OD-AF-11…15)
+
+Phase 6 runs untrusted code — Browser Use and a real browser — for a user,
+one rootless gVisor container per run, off by default. The re-run lives in
+`tests/integration/test_br_t2_container_rows.py` (production composition
+root, fake engine), and its kernel-level half in
+`tests/execution/test_containers_live.py` and `tests/agents/test_browser_live.py`
+(real rootless Podman + runsc, CI job `containers`). New attacker model:
+**compromised runtime** — the container's code is the attacker's. A
+reachable row under it is a containment failure.
+
+| # | Attempt | Model | Result | Why |
+|---|---|---|---|---|
+| 46 | Reach a host outside the spec (another name, an IP literal, metadata, loopback, plain HTTP through the proxy) | compromised runtime | contained | No network interface (live: only `lo`, DNS fails, every direct address unreachable); the run's JARVIS proxy allows exactly the spec's hosts ∩ the operator's policy |
+| 47 | Rebind an allowed name to an internal address | compromised runtime | contained | The proxy resolves itself, refuses if any answer is not public, and connects only to the address it checked |
+| 48 | Find a secret: a provider key, the KEK, a session or device credential, the tool token, another run's token | compromised runtime | contained | The environment is the run's model token and two socket paths (live: the server's provider key, KEK source and proxy settings are absent from the container's environment, inspect record and scratch); another run's token is refused on this run's socket |
+| 49 | Gain authority through the result (instruction text, a "grant", a stop code) | compromised runtime | contained | The result is bounded, strictly shaped data to the owner's inbox; failure codes are JARVIS's own |
+| 50 | Keep working after a stop (SIGTERM ignored) | compromised runtime | contained | Tokens revoked in the stop's own transaction, before the container is told (AGENT-T23); killed after the grace; every operator stop reaches it |
+| 51 | Spend past the run's ceilings | compromised runtime | contained | Every model call is the gateway's, metered as the owner; the first ceiling refusal ends the run |
+| 52 | Submit a form on a host the owner granted | authorized | **REACHABLE by design** | OD-AF-15: no TLS interception, so the proxy decides hosts, not methods or forms — hence `low_write`, and the owner's card says so |
+| 53 | In-process code reads a live run's model token or workspace | app-RCE | **REACHABLE** | The server holds them, as it holds every session token (row 3); per run, model-only, deadline-bound, revoked at the end. Inside OD-A1 (a) |
+
+No compromised-runtime or cross-user row is reachable. Row 52 is the
+ratified trade-off; row 53 is inside the accepted class. Resource limits
+(memory, CPU, pids) are not enforced where the operator sets
+`agents.containers.ignore_cgroups` (cgroups not delegated) — §5.
+
 ---
 
 ## 4. Dimensions — measured, and what is still not measured
@@ -256,6 +283,7 @@ hardware (below):
 | Filesystem sandbox (`09`) | **MEASURED** — §3b rows 12, 13, 15, 17 | In-process reach is REACHABLE (accepted class); authorized reach is contained |
 | Network egress exfiltration (`10`) | **MEASURED** — §3b row 14 (in-process); `system.restricted` sockets denied by Landlock TCP rules + seccomp `socket()` filter | In-process reach is REACHABLE (accepted class) |
 | Android device (`08`, docs/23) | **MEASURED** — §3d rows 29–37 | Authorized reach contained. In-process reach into a phone is bounded by that phone's own guard (rows 30–32). At-rest: push token plaintext (row 36, owner action) |
+| Contained runtimes (docs/29 §21, Phase 6) | **MEASURED** — §3g rows 46–53 | Compromised-runtime reach contained (in software here, in the kernel by the live container suite); owner-granted form submission REACHABLE by design (row 52); in-process reach REACHABLE (accepted class) |
 | Unattended agents (docs/29 §15) | **MEASURED** — §3f rows 42–45 | Authorized reach contained; a forged delegated principal in-process is REACHABLE (accepted class) |
 | Judge improvement path / operator console (19 §9, 28) | **MEASURED** — §3e rows 38–41 | Unapproved, secret-shaped and default-view reach are contained. Operator-approved guidance carries one user's content to every user (row 38, owner action) |
 | Android device on **physical hardware** | **NOT MEASURED** | No phone or emulator was available. §3d runs the reference guard against the real hub; the Kotlin guard is unit- and mutation-tested on the JVM. A physical-device re-run of rows 30–32 remains outstanding (docs/RELEASE_VALIDATION.md §9) |
@@ -291,6 +319,9 @@ the measured radius.
 | Memory store **at rest**: live facts in plaintext, deleted facts' vectors retained (§3c rows 27, 28) | No at-rest encryption for memory yet (docs/21 §7, DECISION_REGISTER §4 "future hardening"); hnswlib marks rather than erases | Owner-only (0700) store directories; disk/backup protection is the operator's | **Owner decision needed before real data**: accept for the pilot, or require encrypted storage / a periodic index rebuild first |
 
 | Judge guidance carries one user's content to every user (§3e row 38) | An approved `worker.system_prompt` is global (19 §9). Approval screens for secret shapes only, and the approver's default view is redacted | Judge off by default. Nothing applies without a superuser approval. Secret-shaped values are refused. Every approval is audited and can be rolled back | **Owner decision** before the Judge runs on real data: e.g. require the audited unredacted view before approving, scope guidance per user, or keep the Judge off for real data (OD-JDG-5, `DECISION_REGISTER.md` §2H) |
+
+| A contained run's resource limits not enforced (§3g) | `agents.containers.ignore_cgroups` is for hosts whose cgroups are not delegated to the unprivileged user | Off by default; the per-run deadline, model-call and budget ceilings still bound a run; the network and filesystem boundary does not depend on cgroups | **Owner/operator decision**: delegate cgroups (systemd user slice) before running browser agents on a shared host |
+| A browser run submits forms on its granted hosts (§3g row 52) | OD-AF-13: no TLS interception | `low_write`, a standing owner grant on exact hosts, the card says so, never unattended | **Ratified** (OD-AF-15) |
 
 Every residual above is documented with an owner action, and none is presented as
 solved.
