@@ -1531,6 +1531,21 @@ MUTANTS: tuple[Mutant, ...] = (
            '    report.stopped.extend(t for t in contained if t not in report.stopped)',
            '    pass',
            (*PY, "tests/agents/test_browser_kill.py")),
+
+    # ── integration hardening: audit completeness (server/auth/errors.py's
+    # own [LOCKED] contract — every AuthError is an AuditEvent too) ─────────
+    Mutant('M-AG251', "A rejected access token reaches the client with no AuditEvent behind it",
+           'server/gateway/deps.py',
+           '    except AuthError as exc:\n        await audit.record(actor=AuditActor.SYSTEM, '
+           'action=AuditAction.ACCESS_TOKEN_REJECTED,',
+           '    except AuthError as exc:\n        if False: await audit.record(actor=AuditActor.SYSTEM, '
+           'action=AuditAction.ACCESS_TOKEN_REJECTED,',
+           (*PY, "tests/integration/test_hardening_regressions.py")),
+    Mutant('M-AG252', "A required step-up reaches the client with no AuditEvent behind it",
+           'server/gateway/routers/auth.py',
+           '        await audit.record(actor=AuditActor.USER, action=AuditAction.STEP_UP_REQUIRED,',
+           '        if False: await audit.record(actor=AuditActor.USER, action=AuditAction.STEP_UP_REQUIRED,',
+           (*PY, "tests/integration/test_hardening_regressions.py")),
 )
 
 

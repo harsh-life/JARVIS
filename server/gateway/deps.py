@@ -49,8 +49,10 @@ from server.gateway.errors import AppError
 from server.gateway.security import SecurityCore
 from server.graph.service import GraphOperationRefused
 from server.security.audit import AuditLogger
+from server.security.events import AuditAction
 from server.storage import StorageBackend
 from shared.schemas.authorization import Principal
+from shared.schemas.enums import AuditActor, AuditResult
 
 BEARER_PREFIX = "Bearer "
 
@@ -122,15 +124,29 @@ async def get_resolved_session(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
     core: SecurityCore = Depends(get_security_core),
+    audit: AuditLogger = Depends(get_audit_logger),
 ) -> ResolvedSession:
     """02 §1.1: validate the access token and resolve the principal from it.
 
     Every failure raises an `AuthError`, which
     `server/gateway/security_errors.py` maps to `401`. There is no path that
     returns an anonymous or partial principal.
+
+    `server/auth/errors.py`'s own `[LOCKED]` contract is "any validation
+    failure → 401, an AuditEvent, no session, no user mutation" — `server.auth`
+    cannot write that AuditEvent itself (16 §2: it sits below `server.security`
+    in the layering and never imports it), so this is where that half of the
+    promise is kept, for every reason `resolve_principal` can refuse, not only
+    the one case a handler happens to anticipate. No identifying fields before
+    a principal exists to name (02 §1.6: the detailed reason is internal only).
     """
 
-    return await core.sessions.resolve_principal(session, bearer_token(request))
+    try:
+        return await core.sessions.resolve_principal(session, bearer_token(request))
+    except AuthError as exc:
+        await audit.record(actor=AuditActor.SYSTEM, action=AuditAction.ACCESS_TOKEN_REJECTED,
+                           resource=f"auth:token:{exc.reason}"[:128], result=AuditResult.BLOCKED)
+        raise
 
 
 async def get_principal(

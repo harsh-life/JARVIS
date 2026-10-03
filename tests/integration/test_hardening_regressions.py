@@ -9,6 +9,7 @@ layers are composed — each test fails on the pre-hardening code.
 | device operations were not bound to the authorizing device | `test_tool_invocations_carry_the_principals_own_device` |
 | task temp roots were never removed | `test_a_finished_task_releases_its_temp_root` |
 | a paused response's confirmation token persisted in plaintext for replay | `test_the_idempotency_replay_copy_carries_no_confirmation_token` |
+| `server/auth/errors.py`'s own `[LOCKED]` contract ("any validation failure → 401, an AuditEvent, no session") was never wired for a rejected token or a required step-up | `test_a_rejected_access_token_is_audited`, `test_a_required_step_up_is_audited` |
 """
 
 from __future__ import annotations
@@ -16,16 +17,17 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
+from sqlalchemy import select
 
 from server.secrets.requester import SecretRequester
 from server.security.audit import AuditLogger
-from server.storage.models import AgentConfiguration, IdempotencyKey, User
+from server.storage.models import AccessToken, AgentConfiguration, AuditEvent, IdempotencyKey, User
 from shared.schemas.enums import AgentConfigScopeType, SecretClass, SecretOwnerScopeType, UserStatus
-from tests.runtime.conftest import ask, call, failure_of, final, pending_of
+from tests.runtime.conftest import API_V1_PREFIX, ask, call, failure_of, final, pending_of
 from tests.support import TEST_KEK_ENV_VAR
 
 pytestmark = pytest.mark.asyncio
@@ -208,3 +210,60 @@ async def test_the_idempotency_replay_copy_carries_no_confirmation_token(h):
 
     fetched = await h.get(alice, replay["task_id"])
     assert fetched.json()["pending"]["confirmation_token"] == token
+
+
+# ── audit completeness (server/auth/errors.py's own [LOCKED] contract) ─────
+
+
+@pytest.mark.parametrize("make_invalid", ["unknown_bearer", "revoked_token", "expired_token"])
+async def test_a_rejected_access_token_is_audited(h, make_invalid):
+    """`server/auth/errors.py`: '[LOCKED] any validation failure -> 401
+    unauthenticated, an AuditEvent, no session, no user mutation'. The
+    rejection logic lives in `server.auth` (no audit sink reaches it — 16
+    Sec2 layering); the audit half of that promise is `server.gateway`'s to
+    keep, for every reason `resolve_principal` can refuse, not only the one
+    a developer happened to test by hand."""
+
+    alice = await h.user("alice")
+    if make_invalid == "unknown_bearer":
+        headers = {"Authorization": "Bearer not-a-real-token"}
+    else:
+        async with h.storage.session() as s:
+            rows = (await s.execute(select(AccessToken))).scalars().all()
+            for row in rows:
+                if make_invalid == "revoked_token":
+                    row.revoked_at = datetime.now(timezone.utc)
+                else:
+                    row.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+            await s.commit()
+        headers = alice.auth
+
+    before = len(await h.rows(AuditEvent, AuditEvent.action == "session.token.rejected"))
+    resp = await h.client.get(f"{API_V1_PREFIX}/graphs", headers=headers)
+    assert resp.status_code == 401, resp.text
+
+    rejected = await h.rows(AuditEvent, AuditEvent.action == "session.token.rejected")
+    assert len(rejected) == before + 1, "an AuthError reached the client with no AuditEvent behind it"
+    assert rejected[-1].result == "blocked"
+
+
+async def test_a_required_step_up_is_audited(h):
+    """The same `[LOCKED]` contract, for `StepUpRequired` (03 Sec5.5): a
+    valid-but-stale token attempting a step-up-gated operation (device
+    rotation) must also leave an AuditEvent, naming the principal whose
+    session was too stale — not just a 401 with nothing behind it."""
+
+    alice = await h.user("alice")
+    async with h.storage.session() as s:
+        rows = (await s.execute(select(AccessToken))).scalars().all()
+        for row in rows:
+            row.issued_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+        await s.commit()
+
+    resp = await h.client.post(f"{API_V1_PREFIX}/devices/{alice.device_id}/rotate",
+                               json={}, headers=alice.auth)
+    assert resp.status_code == 401, resp.text
+    assert resp.json()["error"]["details"].get("step_up_required") is True
+
+    [event] = await h.rows(AuditEvent, AuditEvent.action == "session.step_up.required")
+    assert event.result == "blocked" and event.user_id == alice.user_id and event.device_id == alice.device_id
