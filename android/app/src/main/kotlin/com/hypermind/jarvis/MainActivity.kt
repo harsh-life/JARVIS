@@ -10,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -54,6 +55,8 @@ import com.hypermind.jarvis.overlay.OverlayController
 import com.hypermind.jarvis.permissions.GridSync
 import com.hypermind.jarvis.presentation.PresentationText
 import com.hypermind.jarvis.presentation.VoiceActivity
+import com.hypermind.jarvis.presentation.ui.Character
+import com.hypermind.jarvis.presentation.ui.CharacterGallery
 import com.hypermind.jarvis.push.PushRegistrar
 import com.hypermind.jarvis.reminders.RunOffer
 import com.hypermind.jarvis.tasks.TaskTracker
@@ -146,6 +149,7 @@ class MainActivity : FragmentActivity() {
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         Text("JARVIS", style = MaterialTheme.typography.headlineSmall)
+                        CharacterPortrait(app)
                         notice.value?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                         when (val mapping = app.mapping) {
                             is MappingState.Invalid ->
@@ -305,8 +309,33 @@ class MainActivity : FragmentActivity() {
                 if (graph.pushOffered) PushToggle(app)
                 OverlayToggle(app)
                 RemovePhone(app) { enrolled = false }
+                if (BuildConfig.DEBUG) CharacterPreview(app)
             }
         }
+    }
+
+    /**
+     * OD-CHAR-1: the character, above the status line. It shows only the
+     * expression it has been given (default until something selects another);
+     * the status line below stays the one account of what JARVIS is doing.
+     */
+    @Composable
+    private fun CharacterPortrait(app: JarvisApplication) {
+        val character = app.character
+        val expression by character.expression.collectAsState()
+        val settings by character.settings.collectAsState()
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Character(expression = expression, profile = character.profile, settings = settings)
+        }
+    }
+
+    /** Debug builds only: preview and select each of the character's states (nothing else changes). */
+    @Composable
+    private fun CharacterPreview(app: JarvisApplication) {
+        val character = app.character
+        val expression by character.expression.collectAsState()
+        CharacterGallery(profile = character.profile, selected = expression, onSelect = character::select)
+        OutlinedButton(onClick = { character.reset() }) { Text("Show the default character") }
     }
 
     /** docs/29 (Phase 4): the owner's agents; Run sends the owner's own request, then shows it on Tasks. */

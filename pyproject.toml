@@ -689,3 +689,34 @@ type = "forbidden"
 source_modules = ["server.graph", "server.capabilities", "server.auth", "server.security"]
 forbidden_modules = ["server.agents"]
 
+
+# OD-CHAR-1 (DECISION_REGISTER §2M, PRD §23 amendment): the character's
+# expression is presentation only. Nothing that authorizes, grants, decides
+# policy or risk, confirms, meters, runs the agent, executes, schedules,
+# remembers or speaks may read a presentation state — so no expression can
+# influence any of them, directly or through a chain. (Mirrored by
+# tests/presentation/test_character_profile.py.)
+[[tool.importlinter.contracts]]
+name = "Character presentation never reaches authority (OD-CHAR-1)"
+type = "forbidden"
+source_modules = [
+    "server.agent",
+    "server.agents",
+    "server.auth",
+    "server.capabilities",
+    "server.execution",
+    "server.fs",
+    "server.gateway",
+    "server.graph",
+    "server.memory",
+    "server.models",
+    "server.modeltools",
+    "server.net",
+    "server.scheduler",
+    "server.secrets",
+    "server.security",
+    "server.tools",
+    "server.vault",
+    "server.voice",
+]
+forbidden_modules = ["shared.schemas.presentation"]

@@ -6,10 +6,11 @@ import java.io.File
 
 /**
  * docs/23 §7 / Phase G boundary, checked on the source: the presentation layer
- * (and the overlay and the future-character indicator) can only *show* state.
- * It cannot reach anything that authorizes, executes, perceives, holds a
- * credential or persists screen data — so replacing the indicator with the
- * character later cannot widen authority, and no UI path bypasses the server.
+ * (the status indicator, the overlay and the character) can only *show*
+ * state. It cannot reach anything that authorizes, executes, perceives, holds
+ * a credential or persists screen data — so the character (OD-CHAR-1,
+ * presentation/character) cannot widen authority, and no UI path bypasses the
+ * server. The character's own boundary is CharacterBoundaryTest.
  */
 class PresentationBoundaryTest {
     private val root = File("src/main/kotlin/com/hypermind/jarvis")
@@ -54,8 +55,9 @@ class PresentationBoundaryTest {
     }
 
     @Test
-    fun `the future-character indicator reads signals only`() {
-        val indicator = sources("presentation/ui")
+    fun `the status indicator reads signals only`() {
+        val indicator = sources("presentation/ui").filter { it.name == "StatusIndicator.kt" }
+        assertTrue(indicator.isNotEmpty())
         for (file in indicator) {
             val app = imports(file).filter { it.startsWith("com.hypermind.jarvis") }
             val allowed =

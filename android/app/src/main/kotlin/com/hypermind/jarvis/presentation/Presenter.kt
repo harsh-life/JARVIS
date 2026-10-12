@@ -16,9 +16,9 @@ import java.time.format.DateTimeParseException
 
 /**
  * The one mapping: canonical server/device state → [PresentationState]
- * (docs/23 §7). Pure and deterministic — every screen, the overlay and any
- * future character read its output instead of interpreting server state
- * themselves, so no two surfaces can disagree about what is happening.
+ * (docs/23 §7). Pure and deterministic — every screen and the overlay read
+ * its output instead of interpreting server state themselves, so no two
+ * surfaces can disagree about what is happening.
  *
  * Precedence, highest first:
  * 1. a revoked device is blocked, whatever else is known;

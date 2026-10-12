@@ -38,7 +38,7 @@
 `[LOCKED]`
 - No public launch or real end-user onboarding before the Decision Gate (§38) is met.
 - No finance, health, or education domain content or logic in Track B itself — that is Phase 3, gated on Track A's research succeeding and replicating, and delivered only through the IntelligenceProvider socket (§25), never hard-coded into the base product.
-- No simulated agent emotions, mood, personality, relationship/trust scoring, or diary content anywhere in the vault, prompts, memory, or UI (§23) — a hard boundary, not a style preference.
+- No simulated agent emotions, mood, personality, relationship/trust scoring, or diary content anywhere in the vault, prompts, memory, or UI (§23) — a hard boundary, not a style preference. *(Amended by owner decision OD-CHAR-1, 2026-10-12: the default character's seven expressive presentation states may be shown in the UI, within the limits of the §23 amendment.)*
 - No investor pitching before Track A's 3-month consistent revenue trend exists (Track A's gate, governs Track B's PR/Comms timeline — §38).
 - No full per-user fine-tuning — LoRA adapters only (§21), for cost reasons.
 - No architecture, mechanism, or "temporary" shortcut that collapses the five-dimension authorization model (§11A) into a simpler membership-only check, however tempting under time pressure — this is Track B's one absolutely non-negotiable line.
@@ -244,6 +244,8 @@ Anti-enumeration `[LOCKED]`: a denial that would reveal the existence or visibil
 | `EMO-005` | Voice/speaker signals construed as relationship content or as an authorization signal | Speaker identity and detected affect are context only (ties `VOICE-002`, §27). |
 
 **The test to apply when unsure:** does this describe the assistant reading *the user's* state, or the assistant *having* a state of its own? Only the first is ever in scope.
+
+**Amendment (owner decision OD-CHAR-1, 2026-10-12; `docs/DECISION_REGISTER.md` §2M):** JARVIS may show its default character in one of seven expressive presentation states (`default`, `satisfied`, `happy`, `sleepy`, `surprised`, `angry`, `sad`), chosen from a closed, typed set; `default` is the initial and fallback state. The character is an expressive interface: its appearance does not establish, and must not be presented as establishing, that JARVIS experiences subjective emotions. This permits the images only. EMO-001 still excludes any mood state that persists or evolves; EMO-002/003 still exclude any personality or trait system and any character content in prompts, model configuration, memory or the vault; EMO-004 still excludes first-person statements of feeling and any expression gated on relationship/trust scoring or interaction history; EMO-005 is unchanged. A presentation state never influences authorization, graph membership, capabilities, security policy, risk classification, confirmation requirements, budgets or tool execution, and it is never a status: operational status stays truthful and separately shown.
 
 ## 24. Untrusted-Content & Prompt-Injection Doctrine
 
@@ -563,6 +565,7 @@ hypermind-track-b/
 | OD-AF-2…5, 7, 8 | Agent Factory: unattended runs (§22 amendment), `agent.*` tiers, no consequential unattended actions, delegation lifetime, quota/budgets, inbox-only outputs | docs/29 | **RATIFIED** (owner, 2026-10-02) at docs/29 §32's recommended values — exact scope in `docs/DECISION_REGISTER.md` §2K. OD-AF-1, 9, 10 stay open |
 | OD-AF-6 | Agent Factory: first external runtime | docs/29 | **RATIFIED** (owner, 2026-10-02): **Browser Use**, P2 contained workspace (docs/29 §21.1); untrusted execution infrastructure, never an authority; its own domain/safety settings are advisory; no stored credentials in v1 (`docs/DECISION_REGISTER.md` §2L) |
 | OD-AF-11…15 | Browser Use infrastructure: container mechanism, network namespace design, egress proxy architecture, image pinning, browsing capability/tier | docs/29 §21, `10`, `14` | **RATIFIED** (owner, 2026-10-02): rootless engine + gVisor; no network interface, per-run Unix sockets only; JARVIS's own CONNECT proxy on `server/net`, no TLS interception, authoritative; CI-built images pinned by digest, no floating tags; `browser.session`/`browse` at `low_write` on an explicit host list (`docs/DECISION_REGISTER.md` §2L) |
+| OD-CHAR-1 | Default expressive presentation character (§4/§23 vs docs/23 §7's deferral) | `23` (client), §23 | **DECIDED** (owner, 2026-10-12): the default character's seven presentation states are the default expressive presentation; §4 and §23 amended narrowly (§23 "Amendment"); presentation only — never a status, never an authority (`docs/DECISION_REGISTER.md` §2M) |
 | OD-AND-1 | Full capability→operation→primitive table | `08` | `[IMPL]`; owner signs |
 | OD-AND-2 | Shizuku required for MVP, or Accessibility-only | `08` | Rec Accessibility-first |
 | OD-AND-3 | Expose `system.restricted` at all in MVP | `08` | Rec no |

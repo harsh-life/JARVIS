@@ -317,8 +317,9 @@ class AppGraph(
         }
 
     /**
-     * What every surface shows — the task panel, the overlay, a future
-     * character — from one deterministic mapping ([Presenter]).
+     * What every status surface shows — the status line, the task panel, the
+     * overlay — from one deterministic mapping ([Presenter]). The character
+     * (OD-CHAR-1) does not read it.
      */
     val presentation: StateFlow<PresentationState> =
         PresentationStream
