@@ -4,6 +4,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -39,11 +40,12 @@ class CharacterViewTest {
         }
     }
 
+    // Unmerged: the preview's clickable cells merge their children's semantics.
     private fun awaitShown(asset: String) {
         compose.waitUntil(TIMEOUT) {
-            compose.onAllNodesWithTag("$CHARACTER_TAG/$asset").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("$CHARACTER_TAG/$asset", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithTag("$CHARACTER_TAG/$asset").assertExists()
+        compose.onNodeWithTag("$CHARACTER_TAG/$asset", useUnmergedTree = true).assertExists()
     }
 
     @Test

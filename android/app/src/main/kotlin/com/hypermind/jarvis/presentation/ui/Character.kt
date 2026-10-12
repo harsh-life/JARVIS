@@ -75,7 +75,7 @@ fun Character(
             CharacterSettings.Transition.NONE -> snap()
         }
     Box(modifier = modifier.size(height).testTag(TAG), contentAlignment = Alignment.Center) {
-        Crossfade(targetState = image, animationSpec = animation, contentKey = { it?.asset }, label = "character") {
+        Crossfade(targetState = image, animationSpec = animation, label = "character") {
             if (it != null) {
                 Image(
                     bitmap = it.bitmap.asImageBitmap(),
