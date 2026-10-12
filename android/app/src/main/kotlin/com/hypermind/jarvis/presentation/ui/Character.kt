@@ -16,8 +16,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
@@ -62,9 +65,10 @@ fun Character(
     if (!settings.visible) return
     val assets = LocalContext.current.assets
     val targetPx = with(LocalDensity.current) { height.roundToPx() }
-    val image by produceState<CharacterImage?>(null, expression, profile, targetPx) {
+    var image by remember { mutableStateOf<CharacterImage?>(null) }
+    LaunchedEffect(expression, profile, targetPx) {
         // The previous image stays on screen until this resolves (no blank frame).
-        value =
+        image =
             withContext(Dispatchers.IO) {
                 CharacterAssets.load(profile, expression, targetPx) { path -> assets.open(path) }
             }

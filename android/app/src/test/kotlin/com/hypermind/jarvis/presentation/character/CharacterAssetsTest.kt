@@ -80,7 +80,10 @@ class CharacterAssetsTest {
         val corrupt: (String) -> InputStream = { path ->
             if (path.endsWith("happy.webp")) "not an image".byteInputStream() else context.assets.open(path)
         }
-        assertEquals("default.png", CharacterAssets.load(CharacterProfile.BUILT_IN, Expression.HAPPY, 300, corrupt)?.asset)
+        assertEquals(
+            "default.png",
+            CharacterAssets.load(CharacterProfile.BUILT_IN, Expression.HAPPY, 300, corrupt)?.asset,
+        )
     }
 
     @Test

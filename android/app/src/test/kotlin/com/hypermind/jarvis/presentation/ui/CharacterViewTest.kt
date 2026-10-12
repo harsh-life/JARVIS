@@ -43,7 +43,12 @@ class CharacterViewTest {
     // Unmerged: the preview's clickable cells merge their children's semantics.
     private fun awaitShown(asset: String) {
         compose.waitUntil(TIMEOUT) {
-            compose.onAllNodesWithTag("$CHARACTER_TAG/$asset", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            compose
+                .onAllNodesWithTag(
+                    "$CHARACTER_TAG/$asset",
+                    useUnmergedTree = true,
+                ).fetchSemanticsNodes()
+                .isNotEmpty()
         }
         compose.onNodeWithTag("$CHARACTER_TAG/$asset", useUnmergedTree = true).assertExists()
     }

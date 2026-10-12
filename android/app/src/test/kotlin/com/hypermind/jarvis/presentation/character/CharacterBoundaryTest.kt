@@ -18,7 +18,11 @@ class CharacterBoundaryTest {
     private val root = File("src/main/kotlin/com/hypermind/jarvis")
 
     private val characterSources =
-        root.resolve("presentation/character").walkTopDown().filter { it.isFile && it.extension == "kt" }.toList() +
+        root
+            .resolve("presentation/character")
+            .walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .toList() +
             root.resolve("presentation/ui/Character.kt")
 
     private fun imports(file: File): List<String> =
