@@ -34,7 +34,18 @@ for _name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "WS_PROXY", 
     os.environ.pop(_name, None)
     os.environ.pop(_name.lower(), None)
 
+# Browser Use's own time limits. It runs each browser start-up handler under
+# a 30 s inner timeout and carries on when one expires — observed under gVisor
+# in roughly one start in ten, as a new tab whose `Page.enable` Chromium never
+# answers — but its default budget for the *whole* start event is also 30 s, so
+# that single stalled handler used to fail the run (`runtime_failed`) before
+# Browser Use could recover from it. The start budget is set well above the
+# inner timeout plus a normal start (about 5 s). Every other limit keeps its
+# default; JARVIS's own wall clock still bounds the run.
+BROWSER_USE_TIMEOUTS = {"TIMEOUT_BrowserStartEvent": "90"}
+
 os.environ.update({
+    **BROWSER_USE_TIMEOUTS,
     "ANONYMIZED_TELEMETRY": "false",
     "BROWSER_USE_CLOUD_SYNC": "false",
     "BROWSER_USE_LOGGING_LEVEL": "warning",
