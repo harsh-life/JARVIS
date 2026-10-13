@@ -849,9 +849,15 @@ Track A work.
 | Slice (plan step) | What is built | Contracts updated in the same PR |
 |---|---|---|
 | **M1** — deployment topology, admission, readiness | OD-PILOT-5 admission: `security.oidc.allowed_emails` / `allowed_domains`, matched only on a provider-verified email, checked in `OIDCLoginFlow.complete` after token validation and before `find_or_create_user` (`403`, audited, no user row). Readings 5 and 6 as startup preconditions (`server/config/preconditions.py`, called by the entrypoint). `GET /api/v1/ready` (booleans; `503` until migrated to head and unlocked). The pilot configuration (`config.pilot.example.yaml`: one priced remote primary, budgets, allow-list, memory/vault/agents on, unattended and external runtimes off, Judge on rules) and the single-host deployment (`deploy/`, `docs/DEPLOYMENT.md`). | PRD §9 (admission), §19 + OD-MT-2 row (remote primary); `02` §1.1/§12 (`/ready`); `03` §2.4 (admission); `06` §2 + OD-MT-2 row; `15` §2/§3/§6/§7 (allow-list fields, bootstrap, preconditions, OD-CFG-3) |
+| **M2** — backend dashboard API | C3 `GET /me`; C4 `GET /devices`; C5 `GET /agent/tasks` (owner-scoped cursor); C6 `GET /usage` (own ledger only, no global or cross-user figure); C7 the per-user model selection (`GET /config/model/catalog`, `GET/PUT/DELETE /config/model`: user scope only per interpretation 1, catalog entries only, no endpoint, the operator's key never copied into a user row) and write-only `POST/DELETE /secrets` (user-scoped `model_api_key`, handle only; the value bypasses request validation so no error can echo it); C9 `DELETE /memory` (confirmed, same risk table as one delete) and `GET /memory/export` (own facts only); C10 `GET/PUT/DELETE /config/presentation` (validated `CharacterPresentationSettings`, new package `server/presentation` mounted by the composition root, new import-linter contract). A route-inventory test: every route is public by name or refuses an anonymous request; operator routes refuse a user token. | `02` §3/§5/§6/§7; `01` §4.1 (tool-list semantics) and §4.2 (presentation settings); `CHARACTER_PRESENTATION.md` §4; plan status |
 
-OD-PILOT-1/3/4 (MCP, the web device) and the rest of OD-PILOT-2 (the
-per-user model configuration API) are not built by M1.
+Two behaviours M2 makes explicit: an `AgentConfiguration` row that sets
+neither tool list configures the model only (before, it meant "no tools");
+and a stored row names a user key as `secretstore:` + the store's handle,
+because the models boundary strips one prefix before resolving
+(pre-existing; documented rather than changed). OD-PILOT-1/3/4 (MCP, the web
+device) and C8 (agents following the user's selected model) are not built by
+M1 or M2.
 
 ---
 

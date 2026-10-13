@@ -175,6 +175,11 @@ Central list so no enum drifts across docs. An enum value not in this registry i
 **Keys/indexes:** PK `config_id`; unique index `(scope_type, scope_id)` — one active config per scope.
 **Resolution rule `[IMPL, constrained]`:** when both a user-scope and graph-scope config exist for a request, the resolution precedence (graph overrides user, or user overrides graph) is `[IMPL]` but MUST be deterministic and documented in `05_AGENT_RUNTIME.md`; it is not decided by the model.
 **Validation:** `primary_model` must reference a supported `model.provider`; secrets by handle only.
+**Tool lists (pilot plan C7, 2026-10-13):** `model_tools` and `enabled_tools` both unset means the row configures the model only and the scope's tools are the server's; setting either restricts the scope to exactly the listed ids. A row written by `PUT /config/model` (`02` §6) is user-scoped, names an operator catalog model, never an endpoint, and references the user's own `model_api_key` handle or none.
+
+### 4.2 PresentationSettings (pilot plan C10; OD-CHAR-1/2/3, `docs/DECISION_REGISTER.md` §2M)
+
+One row per user: `user_id` (PK, FK users), `settings` (json — exactly a validated `CharacterPresentationSettings`, `shared/schemas/presentation.py`: enumerated, boolean and numeric fields, no free text), `updated_at`. Presentation only: no authority package may read it (import-linter "Character presentation never reaches authority"; "Presentation settings are a store, not an authority").
 
 ---
 

@@ -55,6 +55,7 @@ _PACKAGES = [
     "server/fs", "server/net", "server/capabilities", "server/graph", "server/auth", "server/secrets",
     "server/memory", "server/vault", "server/evaluation", "server/intelligence", "server/scheduler",
     "server/voice", "server/agents", "server/dashboard", "server/gateway", "server/gateway/routers", "server/composition",
+    "server/presentation",
     "server/security", "server/storage", "server/config", "shared", "shared/schemas",
 ]
 _MODULES = [

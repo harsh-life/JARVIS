@@ -99,8 +99,17 @@ rejected whole and the client keeps its built-in defaults):
 directory.
 
 These thresholds are product parameters to be tuned on real use, not
-scientifically validated cut-offs. Delivering these documents to a device (an
-API, storage, sync) is the website's own work; nothing for it exists yet.
+scientifically validated cut-offs.
+
+**Server store (pilot plan C10, 2026-10-13).** `GET/PUT/DELETE
+/api/v1/config/presentation` keeps one validated `CharacterPresentationSettings`
+per user, so every client of that user can render the same way
+(`server/presentation`, table `presentation_settings`). It accepts exactly
+this document — a document with any unknown field, out-of-range value or path
+for a profile is refused whole — and nothing on the server reads it to decide
+anything. Clients still ship `presentation.json` as their defaults; the
+Android client does not fetch the stored settings yet. Asset profiles stay
+client-side; the server never reads artwork.
 
 ## 5. The provider today, and a future model
 
