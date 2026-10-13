@@ -1,0 +1,70 @@
+# JARVIS — reverse proxy (docs/PILOT_EXECUTION_PLAN.md F5, docs/DEPLOYMENT.md §5).
+#
+# Caddy terminates HTTPS (automatic certificates for the hostname below) and
+# forwards to the server on loopback. Use this OR the Cloudflare named tunnel
+# (deploy/cloudflared.example.yml), not both.
+#
+# Needs the rate-limit module, which stock Caddy lacks — without it this file
+# does not load (fail closed, not unthrottled):
+#   xcaddy build --with github.com/mholt/caddy-ratelimit
+# or the caddyserver.com download with that one plugin ticked.
+#
+# Install: /etc/caddy/Caddyfile, replace jarvis.example.com, then
+#   caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+{
+	order rate_limit before basic_auth
+	# The admin API stays on loopback (Caddy's default); never expose it.
+	admin localhost:2019
+}
+
+jarvis.example.com {
+	# What the server answers publicly: the API (including the device
+	# WebSocket), the App Link login return, and the Android assetlinks file.
+	# Everything else is 404 at the edge. /ui is the web client's mount (M3).
+	@jarvis path /api/* /ui /ui/* /app/login /.well-known/assetlinks.json
+
+	# The unauthenticated endpoints are throttled per client address here,
+	# because the in-app limits meter model and tool calls, not logins
+	# (plan §G, "unauthenticated throttling").
+	@unauthenticated path /api/v1/auth/* /api/v1/sessions/token
+	rate_limit @unauthenticated {
+		zone jarvis_unauthenticated {
+			key {remote_host}
+			events 30
+			window 1m
+		}
+	}
+
+	# Image input (P21) is at most 3 × 4 MB; anything larger never reaches the
+	# server.
+	request_body {
+		max_size 16MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	handle @jarvis {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle {
+		respond 404
+	}
+
+	# An access log without query strings: the OIDC callback carries `code` and
+	# `state` there. Caddy already omits Authorization and Cookie headers.
+	log {
+		output file /var/log/caddy/jarvis-access.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+		format filter {
+			wrap json
+			request>uri regexp "\?.*$" "?…"
+		}
+	}
+}

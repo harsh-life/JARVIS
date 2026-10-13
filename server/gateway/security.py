@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from server.auth.device import DeviceService
-from server.auth.login import OIDCLoginFlow
+from server.auth.login import Admission, OIDCLoginFlow
 from server.auth.oidc import GoogleOIDCProvider, OIDCProvider
 from server.auth.repository import AuthRepository
 from server.auth.push_tokens import PushTokens
@@ -121,6 +121,10 @@ def build_security_core(
             provider,
             redirect_uri=f"{config.server.base_url.rstrip('/')}{OIDC_CALLBACK_PATH}",
             repository=auth_repository,
+            admission=Admission(
+                emails=frozenset(config.security.oidc.allowed_emails),
+                domains=frozenset(config.security.oidc.allowed_domains),
+            ),
         ),
         devices=DeviceService(secret_store=secret_store, repository=auth_repository),
         step_up=StepUpService(),

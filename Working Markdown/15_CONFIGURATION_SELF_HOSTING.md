@@ -38,7 +38,7 @@ memory:      { mem0: { collection: "hypermind_memories", path, embedder }, }  # 
 vault:       { collection: "hypermind_vault", git_backed, path }             # distinct! (11)
 intelligence:{ enabled: false, provider?, config? }          # default false (25)
 voice:       { stt, diarization, speaker_id, tts }           # replaceable providers (27)
-security:    { auth: { oidc: { client_id, issuer } },
+security:    { auth: { oidc: { client_id, issuer, allowed_emails, allowed_domains } },
                rate_limits, budgets, capability_defaults }   # (03/13/16)
 secrets:     { store: "encrypted_local", kek_source }        # (12) — the KEK SOURCE, never the KEK
 ```
@@ -67,6 +67,8 @@ secrets:     { store: "encrypted_local", kek_source }        # (12) — the KEK 
 ```
 `[LOCKED]` Steps 2/3/5/6/8 are documented setup, not source edits — consistent with HOST-002. No step requires the original owner's secrets/data (HOST-001).
 
+**Pilot realization (plan M1, `docs/DEPLOYMENT.md`).** `deploy/bootstrap.sh` performs steps 3–6 idempotently on a single host (systemd + PostgreSQL + Caddy or a Cloudflare named tunnel): it never replaces an existing KEK, config or database. The KEK reaches the service as a systemd credential, not a file in the repository or an environment file. Step 10's smoke check is `GET /api/v1/ready` (`02` §12), which is `200` only when the store is migrated to head and the SecretStore is unlocked; `/health` remains liveness.
+
 ---
 
 ## 4. What belongs where (OSS-001 — open vs private boundary)
@@ -93,6 +95,8 @@ secrets:     { store: "encrypted_local", kek_source }        # (12) — the KEK 
 ## 6. Config validation (fail-closed)
 `[LOCKED]` At load, config is validated: distinct mem0/vault collections (else error); no literal secrets present (else error — a literal-looking key in config is a load failure, SECRET-004); required OIDC identity fields present; `intelligence.enabled` explicit. A malformed/secret-bearing config fails to start (fail-closed), with an explicit message — never a silent partial start.
 
+**Deployment preconditions (OD-PILOT-2/5, register §2N readings 5–6).** Beyond load-time validation, the server entrypoint (`server/composition/main.py` → `server/config/preconditions.py`) refuses to start a **non-local primary** unless `agent.bounds.per_task_budget`, `security.budgets.per_user_daily_cost_limit` and `security.budgets.global_daily_cost_limit` are all > 0 and `security.oidc.allowed_emails` or `allowed_domains` is non-empty. They are startup checks rather than schema rules so a configuration can still be loaded (and tested) without them; nothing serves without them. `allowed_emails` entries must be addresses and `allowed_domains` entries bare domains (no wildcards); both are lowercased at load.
+
 ---
 
 ## 7. Open items
@@ -101,7 +105,7 @@ secrets:     { store: "encrypted_local", kek_source }        # (12) — the KEK 
 |---|---|---|
 | OD-CFG-1 | config format (YAML/TOML/env-layered) | `[IMPL]`; shape + no-literal-secrets locked |
 | OD-CFG-2 | tunnel provider abstraction (Cloudflare-only vs pluggable) | `[IMPL]`; server-side-credential rule locked |
-| OD-CFG-3 | one-command bootstrap script vs documented steps | `[IMPL]`; no-source-edit-for-config rule locked |
+| OD-CFG-3 | one-command bootstrap script vs documented steps | `[IMPL]`: one idempotent script for the pilot host (`deploy/bootstrap.sh`, `docs/DEPLOYMENT.md`); no-source-edit-for-config rule locked |
 
 ---
 

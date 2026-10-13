@@ -764,7 +764,7 @@ OD-CHAR-2 excludes.
 boundaries below, together with an invite-only pilot. **Only these five rows
 are ratified.** The other pilot decisions in that plan (P1–P25 not named here)
 are *recommendations* and stay `[PROPOSED]` until the owner signs them.
-**Nothing in this section is built yet.** Prior owner decisions are preserved
+**Nothing in this section was built when it was signed;** what has been built since is listed under "Implementation status of §2N" below. Prior owner decisions are preserved
 except where a row says it amends one, and then only as stated.
 
 | ID | Decision (ratified) | Boundaries (the owner's, exact) | Amends / preserves |
@@ -844,6 +844,15 @@ the owner may relax either. **Unchanged:** the pilot stays invite-only
 (OD-PILOT-5) and the real-data gate stays closed (disposable/test data only).
 Not started by this confirmation: Agent Factory Phase 7, Darwin integration,
 Track A work.
+
+### Implementation status of §2N
+
+| Slice (plan step) | What is built | Contracts updated in the same PR |
+|---|---|---|
+| **M1** — deployment topology, admission, readiness | OD-PILOT-5 admission: `security.oidc.allowed_emails` / `allowed_domains`, matched only on a provider-verified email, checked in `OIDCLoginFlow.complete` after token validation and before `find_or_create_user` (`403`, audited, no user row). Readings 5 and 6 as startup preconditions (`server/config/preconditions.py`, called by the entrypoint). `GET /api/v1/ready` (booleans; `503` until migrated to head and unlocked). The pilot configuration (`config.pilot.example.yaml`: one priced remote primary, budgets, allow-list, memory/vault/agents on, unattended and external runtimes off, Judge on rules) and the single-host deployment (`deploy/`, `docs/DEPLOYMENT.md`). | PRD §9 (admission), §19 + OD-MT-2 row (remote primary); `02` §1.1/§12 (`/ready`); `03` §2.4 (admission); `06` §2 + OD-MT-2 row; `15` §2/§3/§6/§7 (allow-list fields, bootstrap, preconditions, OD-CFG-3) |
+
+OD-PILOT-1/3/4 (MCP, the web device) and the rest of OD-PILOT-2 (the
+per-user model configuration API) are not built by M1.
 
 ---
 

@@ -46,7 +46,9 @@ Per-branch setup detail (OIDC client id, superuser bootstrap, vault indexing,
 etc.) lives in `docs/RUNNING_FOUNDATION.md`, `docs/RUNNING_SECURITY_CORE.md`,
 `docs/RUNNING_RUNTIME.md`, `docs/RUNNING_EXECUTION.md`, `docs/RUNNING_MEMORY.md`,
 `docs/RUNNING_SCHEDULER.md`, `docs/RUNNING_VOICE.md` — read the relevant one
-before working in that area.
+before working in that area. The pilot's single-host deployment (systemd,
+PostgreSQL, Caddy or a Cloudflare named tunnel, `deploy/`) is
+`docs/DEPLOYMENT.md`.
 
 ## Commands
 

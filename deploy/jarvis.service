@@ -1,0 +1,63 @@
+# JARVIS (Hypermind Track B) — systemd unit (docs/PILOT_EXECUTION_PLAN.md F4,
+# docs/DEPLOYMENT.md §4). Installed by deploy/bootstrap.sh to
+# /etc/systemd/system/jarvis.service.
+#
+# No secret appears in this file. The KEK and the model key are systemd
+# credentials: root-owned 0600 files under /etc/jarvis/credentials/, exposed to
+# this service alone under $CREDENTIALS_DIRECTORY and exported by
+# deploy/jarvis-start.sh. Startup fails closed when the KEK is missing or wrong
+# (12 §8), when the configuration is invalid, or when a remote primary lacks
+# budgets or an allow-list (server/config/preconditions.py).
+
+[Unit]
+Description=JARVIS personal-agent server (Hypermind Track B)
+Documentation=file:///opt/jarvis/docs/DEPLOYMENT.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=jarvis
+Group=jarvis
+WorkingDirectory=/var/lib/jarvis
+Environment=HOME=/var/lib/jarvis
+Environment=JARVIS_HOME=/opt/jarvis
+Environment=HYPERMIND_CONFIG_PATH=/etc/jarvis/config.yaml
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+LoadCredential=kek:/etc/jarvis/credentials/kek
+LoadCredential=model_api_key:/etc/jarvis/credentials/model_api_key
+# Superuser authority does not exist unless you enable it (docs/RUNNING_SECURITY_CORE.md §5):
+#LoadCredential=superuser_token:/etc/jarvis/credentials/superuser_token
+
+ExecStart=/opt/jarvis/deploy/jarvis-start.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Everything the server writes is owner-only, and lives under /var/lib/jarvis.
+UMask=0077
+ProtectSystem=strict
+ReadWritePaths=/var/lib/jarvis
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+# The pilot runs no container runtime (P13). Enabling Browser Use (rootless
+# Podman + gVisor) later needs user namespaces: lift this line then, not before.
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
