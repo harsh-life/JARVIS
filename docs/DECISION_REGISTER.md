@@ -560,6 +560,7 @@ browser kill path in owner stop).
 | AF-P6-23 | **Failure codes are JARVIS's**: a result JARVIS could not read is `result_unreadable`; a readable `failed` result is `runtime_failed` whatever the runtime wrote as its error (found by BR-T2 row 49: a runtime could otherwise name any stop). | `server/composition/browser_runs.py` |
 | AF-P6-24 | **Restart**: an unfinished browser run is closed `failed: interrupted` — tokens revoked, task closed, **activation removed**, audited, workspace deleted — and the reconciler removes its container. | `server/composition/browser_runs.py` |
 | AF-P6-25 | **BR-T2 re-run** (docs/OD_A1_BR_T2.md §3g rows 46–53, new attacker model *compromised runtime*): no compromised-runtime or cross-user row reachable; row 52 (form submission on a granted host) reachable by design (OD-AF-15); row 53 (in-process reach to a live run's token) inside OD-A1 (a). Residuals: `ignore_cgroups` (limits unenforced) and row 52, both in §5. | `tests/integration/test_br_t2_container_rows.py` |
+| AF-P6-26 | **Browser start budget (CI fix, 2026-10-13).** `containers` failed twice on PR #45 (`test_a_real_browser_run_goes_only_through_jarvis` → `runtime_failed`). Reproduced locally (rootless Podman, gVisor `runsc` 20261005.0, Chromium 155.0.8059.39-1~deb12u1): in about one start in ten, Chromium under gVisor never answers one `Page.enable` on a new tab; Browser Use's 30 s inner handler timeout would recover from that, but its default budget for the whole start event was also 30 s, so the run failed first (`TimeoutError`, 0 steps). The entrypoint now sets `TIMEOUT_BrowserStartEvent=90`; nothing else changes (no security setting, no other limit; JARVIS's wall clock still bounds the run). The runtime's own failure words (already reduced to `[a-z0-9_]{≤40}`) are **logged** for the operator on a failed run (commit 2987edd, which landed in parallel), and the live test prints that log line on failure; they remain data, never a JARVIS code or audit outcome (row 49). The pinned production image (`BROWSER_USE_IMAGE`) still carries the old budget until the image published from `main` is re-pinned by a reviewed PR (OD-AF-14). | `runtime/browser_use/entrypoint.py`, `tests/agents/test_browser_runtime_config.py`, `tests/agents/test_browser_live.py` |
 
 6E/6F mutants M-AG239–M-AG250 (12/12 killed). A Phase 5 test that failed
 between 01:30 and 04:30 UTC (a delegation expiring before the miss it waits
@@ -630,7 +631,7 @@ open (§3).
 | ID | Decision (ratified) | Exact scope | Rationale (owner's) |
 |---|---|---|---|
 | **OD-AF-6** | **Browser Use (`browser_use`) is the first external runtime**, under docs/29 §21.1's **P2 contained-workspace** pattern. | Browser Use is **untrusted execution infrastructure**: it never authorizes anything. Its own `allowed_domains`, its safety settings and any framework approval feature are **advisory only, never authorization** (docs/29 §30.3). JARVIS stays the sole authority for task, graph, capability, risk, budget, confirmation and network policy: the JARVIS egress boundary is authoritative for every host it reaches (allowed hosts, checked-IP = connected-IP, `10` §4–§5). **No stored credentials in v1** (`sensitive_data` unused; no browser profile persists between runs). Its model calls go only through the JARVIS Model Gateway, with a run token and no provider key. Results return to the owner's inbox as data (OD-AF-8). No other external runtime is enabled: `letta`, `openhands`, `openclaw` and the SDK frameworks stay reserved ids. | It is a capability the native Agent Factory genuinely lacks (browser-based monitoring and interaction), and P2 keeps the authority boundary at the workspace: what enters, what it can reach, what leaves. |
-| **OD-TOOL-3** | **T0 — no MCP, in either direction, for the first Phase 6 provider.** | No inbound MCP (JARVIS consuming third-party MCP servers, `07` §6 / TOOL-004) and no outbound MCP (a JARVIS MCP server as the Tool Gateway's transport). No MCP transport is built for future-proofing. docs/29 §21 item 8's "JARVIS MCP server" is **not required** for a P2 provider: Browser Use's effects are browser actions inside its disposable workspace, bounded by the egress boundary, and its results come back as inbox data — it makes no Tool Gateway calls in v1. PRD §17 (TOOL-004) is unchanged and still governs any future MCP. | The first provider uses the P2 path, which needs no tool transport; an unused transport would only be attack surface. |
+| **OD-TOOL-3** | **T0 — no MCP, in either direction, for the first Phase 6 provider.** | No inbound MCP (JARVIS consuming third-party MCP servers, `07` §6 / TOOL-004) and no outbound MCP (a JARVIS MCP server as the Tool Gateway's transport). No MCP transport is built for future-proofing. docs/29 §21 item 8's "JARVIS MCP server" is **not required** for a P2 provider: Browser Use's effects are browser actions inside its disposable workspace, bounded by the egress boundary, and its results come back as inbox data — it makes no Tool Gateway calls in v1. PRD §17 (TOOL-004) is unchanged and still governs any future MCP. | The first provider uses the P2 path, which needs no tool transport; an unused transport would only be attack surface. *(Amended 2026-10-12 by OD-PILOT-1/4, §2N: inbound read-only MCP is permitted for the pilot; the text of this row is otherwise unchanged.)* |
 
 ### Infrastructure decisions that Browser Use requires
 
@@ -736,6 +737,114 @@ fixed the state order.
 | CHAR-7 | **Controller and renderer.** `CharacterController` (pure, virtual clock): baseline `default`, `sleepy` after `idle_timeout_ms` (5 min), wake on activity; a selected state holds for its `hold_ms` then returns to baseline; `min_display_ms` with latest-wins debouncing; a score ≥ `interrupt_score` interrupts. The renderer cross-fades for `transition_ms` (retargeted mid-fade) or swaps instantly with reduced motion. Inputs: a submitted request, voice start, the app coming to the front, and `CharacterEvents` (a fresh server-confirmed completion — it only reads the task tracker). | `.../character/CharacterController.kt`, `.../character/CharacterPresentation.kt`, `.../ui/Character.kt`, `CharacterEvents.kt`, `MainActivity.kt` |
 
 
+### OD-CHAR-3 — the character's model, signals and limits, clarified (OWNER DECISION, 2026-10-13)
+
+**Owner instruction, 2026-10-13:** *"My intended behaviour is a replaceable,
+endpoint-local inference model that selects among the seven existing character
+expressions using the current interaction, available vocal/prosodic signals and
+verified application events … It must not enable persistent emotional
+profiling, relationship scoring, claims of subjective feelings, or any
+influence on JARVIS authorization or execution. Custom personality text
+injected into model prompts, persistent persona memory and more elaborate
+personality systems remain deferred until a separate explicit decision. UI-only
+avatar, artwork, colour and presentation settings may proceed within the
+existing boundaries."* This row clarifies OD-CHAR-2; it widens nothing that
+OD-CHAR-2 excludes.
+
+| ID | Decision (ratified) | Exact scope |
+|---|---|---|
+| **OD-CHAR-3** | **The OD-CHAR-2 provider may be a learned model; prosody is an input; persona stays deferred; UI-only skinning may proceed.** | **Model:** the `PresentationInferenceProvider` may be a learned classifier (not only the deterministic cue scorer), provided it runs **on the endpoint** (weights shipped with or provisioned onto the client; no inference request leaves the device), is replaceable behind the same interface, and emits the same validated `PresentationInference` shape into the same deterministic selection policy. **Signals:** the current utterance (text or transcript), **vocal/prosodic features of the current utterance computed on the endpoint** (numbers such as loudness, pitch movement, speech rate — never raw audio, which is neither retained nor sent), at most the last three utterances of the current session in memory, and verified application events. **Configurable:** per-state activation thresholds, the confidence floor, transitions (duration, cross-fade or none, reduced motion) and the hold/idle/reset policy, as validated presentation settings. **Still excluded:** persistent emotional profiling of a user (no inferred state, score or feature is stored, logged, sent or turned into memory), relationship or trust scoring, any claim or first-person statement that JARVIS has subjective feelings, and any influence on authentication, identity, membership, ownership, capabilities, policy, risk classification, confirmation or step-up, budgets, or tool authorization or execution. **Deferred until a separate explicit decision:** custom personality text injected into model prompts, persistent persona memory, and any richer personality system (traits, tone or response-style settings that reach a prompt). **May proceed now:** UI-only avatar, artwork, colour and presentation settings — rendering choices that no prompt, memory, model configuration or authority path reads. Training a model on user data remains a separate decision (opt-in collection, no raw audio by default, OD-CHAR-2). |
+
+---
+
+## 2N. Pilot assembly — owner decisions (2026-10-12)
+
+**Owner instruction, 2026-10-12:** the four amendments listed in
+`docs/PILOT_EXECUTION_PLAN.md` §A.3 are approved, subject to the exact
+boundaries below, together with an invite-only pilot. **Only these five rows
+are ratified.** The other pilot decisions in that plan (P1–P25 not named here)
+are *recommendations* and stay `[PROPOSED]` until the owner signs them.
+**Nothing in this section is built yet.** Prior owner decisions are preserved
+except where a row says it amends one, and then only as stated.
+
+| ID | Decision (ratified) | Boundaries (the owner's, exact) | Amends / preserves |
+|---|---|---|---|
+| **OD-PILOT-1** | **Inbound, read-only MCP for the pilot.** JARVIS may consume MCP servers over HTTP(S) as an adapter behind the Tool Gateway. | Operator-pinned servers only, and only operator-pinned tools of those servers. **No** arbitrary or user-supplied server URLs. **No** credential forwarding. **No** execution-capable (write/act) MCP tools in this scope. Every call passes the Tool Gateway and the existing deterministic authorization, risk, resource-scope and audit mechanisms; the capability is `mcp.tool/read` (OD-PILOT-4). MCP never bypasses JARVIS authorization (PRD §17, TOOL-004, unchanged). | **Amends OD-TOOL-3** (§2L: "no MCP, in either direction, for the first Phase 6 provider") for the pilot's inbound read-only case only. Outbound MCP (JARVIS as an MCP server) and stdio MCP remain not built. Browser Use is unaffected. |
+| **OD-PILOT-2** | **One configurable remote primary model per workspace is permitted for the pilot.** One model serves multiple agent definitions. | The provider stays replaceable (the `ModelProvider` interface and factory are the only place a vendor is named). Credentials live in SecretStore and are resolved by handle; **no credential is ever exposed to the frontend**. Explicit **task** and **overall usage** budgets are enforced; a remote primary without non-zero budgets is a configuration error, not a default. | **Amends OD-MT-2** ("default local") for the pilot: a remote primary is a permitted configuration; the shipped default stays local. Preserves PRD §19 (MODEL-001..005: one normalized `ModelProvider` interface; PRD §19 already makes a cloud provider "a configurable choice, never a hidden dependency") and the 13 §3 fail-closed budget rule. |
+| **OD-PILOT-3** | **`DevicePlatform.web` is added** for the configuration dashboard and supported browser interactions, registered through the existing bootstrap model with a **non-extractable WebCrypto** key. | A browser identity confers **no** Android device privileges and **cannot** bypass step-up, device-bound grants or confirmation requirements. | **Amends `01` §1.2 / the `device.platform` registry** (`android` only). Preserves OD-F1, `03` §5.5 step-up (re-attestation) and docs/23 (Android is the only device-execution endpoint). |
+| **OD-PILOT-4** | **A new capability `mcp.tool` with one operation, `read`, is added to the closed registry**, conditional on OD-PILOT-1's scope. | Explicit operation, resource-scope and risk-tier rules (below). No other existing capability is broadened. | **Amends the closed capability registry** (`07`, `CAPABILITY_MATRIX.md`) by this single addition. |
+| **OD-PILOT-5** | **The pilot is invite-only / restricted to approved accounts.** | Remains so until tenant isolation, budget enforcement and usage controls are validated for the pilot (`docs/PILOT_EXECUTION_PLAN.md` §G, §I). **Unrestricted public signup with paid-model access is not enabled.** | Closes the open-signup finding (any Google account that completes OIDC creates a user, `find_or_create_user`). Preserves `03` §2 (Google OIDC is the only identity provider). |
+
+### How the boundaries are read (implementation constraints; objectionable until built)
+
+These turn the owner's boundaries into the rules the implementation will be
+held to. Where a word could be read two ways, the **more restrictive** reading
+is applied; the owner may loosen any of them.
+
+1. **`mcp.tool/read` rules (OD-PILOT-4).** Operation `read` only. Tier
+   `low_read` (automatic once authorized and granted). Resource scope is
+   exactly `{server_id, tool_name}` drawn from the operator's pinned list; a
+   call naming anything else is refused before the engine. It is a user-scoped
+   grant like any other (`POST /capabilities`); it is never in an agent
+   envelope's ceiling unless the compiler maps an ability to it (none does in
+   the pilot). Egress is only to the pinned server's host through
+   `server.net`.
+2. **No credential forwarding (OD-PILOT-1).** The pilot's MCP config has **no
+   `secret_ref`** and sends no `Authorization`, cookie, session, device, model
+   or user credential to any MCP server. A server that needs authentication is
+   out of pilot scope.
+3. **Read-only is enforced by JARVIS, not claimed by the server.** Only tool
+   names the operator pinned are registered; each pinned schema is hashed at
+   startup and a tool whose schema later changes is disabled. Results are
+   untrusted data (quoted, labelled, size-bounded) and never an instruction.
+4. **"Per workspace" (OD-PILOT-2)** is implemented as the existing
+   `AgentConfiguration(scope = user)` row for the user's private graph — one
+   row, one primary model. Graph-scoped model configuration is **not** exposed
+   through the API in the pilot. The user selects from the operator's catalog
+   (provider, model, endpoint, pricing); a user never supplies an endpoint.
+   Agents run on that resolved primary.
+5. **Budgets are a startup condition.** With a non-local primary configured,
+   the server refuses to start unless `agent.bounds.per_task_budget`,
+   `security.budgets.per_user_daily_cost_limit` and
+   `security.budgets.global_daily_cost_limit` are all non-zero.
+6. **Invite-only is a startup condition too.** With a non-local primary
+   configured, `security.oidc.allowed_emails` (or `allowed_domains`) must be
+   non-empty, and a login outside it is refused **before** any user row is
+   created (AUTH-T1: no mutation on a failed login).
+7. **Web endpoint ceiling (OD-PILOT-3), enforced server-side.** A `web` device
+   may submit tasks and may confirm a `consequential` action **for a task that
+   same device originated**; it cannot satisfy step-up, cannot hold or receive
+   `device.*`/`app.*` grants, cannot receive a device operation, and cannot
+   confirm another device's paused action. The SPA holds no policy.
+8. **Contracts updated with their implementing slices, not before:** `01`
+   §1.2 (`DevicePlatform`), `CAPABILITY_MATRIX.md` and `07` (`mcp.tool`),
+   PRD §19 / `06` §2 (remote primary), PRD §17 (a one-line pointer to
+   OD-PILOT-1), `docs/23`/`docs/24` (web endpoint). Each edit lands in the same
+   PR as the code and tests that need it.
+
+### Owner confirmation of §2N (2026-10-13)
+
+**Owner instruction, 2026-10-13:** *"I confirm the five pilot decisions
+recorded in §2N and approve the four readings, with the following precise
+interpretations."* OD-PILOT-1…5 are confirmed as written above. The owner's
+four interpretations are recorded here and **govern** the readings they touch;
+where a reading above is wider, this text wins.
+
+| # | Owner's interpretation (exact) | Readings it governs | Consequence for the build |
+|---|---|---|---|
+| 1 | **Workspace scope:** one private workspace per user for the pilot. Shared graph-scoped model configuration is deferred. | 4 (OD-PILOT-2) | The model-configuration API reads and writes only the caller's `AgentConfiguration(scope = user)` row for their private graph; no route accepts a graph id for model configuration. |
+| 2 | **MCP:** approve only operator-pinned, unauthenticated, read-only HTTP MCP servers, with no credentials or credential forwarding. Authenticated MCP and execution-capable MCP tools are deferred. | 1, 2, 3 (OD-PILOT-1, OD-PILOT-4) | The MCP server config has no credential field of any kind; only the HTTP(S) transport exists (no stdio, no subprocess); only operator-pinned read tools register, under `mcp.tool/read`. A server that requires authentication is out of scope, not worked around. |
+| 3 | **Browser endpoint:** a browser may confirm eligible consequential actions only for tasks it initiated. It cannot perform hardware-backed step-up, hold Android/device-specific grants, or approve a paused action belonging to another endpoint. | 7 (OD-PILOT-3) | Enforced server-side in the confirm, step-up and grant paths by the device's platform and the task's originating device; the browser holds no policy. |
+| 4 | **Contracts:** update affected contracts, PRD sections, decision records and tests in the same implementation PR as their corresponding code changes. | 8 | Every implementing PR carries its own contract/PRD/register/test edits; nothing lands ahead of its code. |
+
+Readings 5 and 6 (a non-local primary model requires non-zero task, per-user
+and global budgets, and a non-empty sign-in allow-list, as startup conditions)
+follow directly from OD-PILOT-2 and OD-PILOT-5 and are implemented as written;
+the owner may relax either. **Unchanged:** the pilot stays invite-only
+(OD-PILOT-5) and the real-data gate stays closed (disposable/test data only).
+Not started by this confirmation: Agent Factory Phase 7, Darwin integration,
+Track A work.
+
 ---
 
 ## 3. Genuinely unresolved owner decisions
@@ -744,7 +853,7 @@ fixed the state order.
 |---|---|---|
 | (matrix §5.1) | Sensitive-app classification for UI primitives | A tap can complete a payment. Which apps are "sensitive" and how far their tiers rise is a product-risk call. Needed before `08` ships device control. *(Phase H: the mechanism is implemented (`android.app_classification`, server gate + device guard) and the lists ship **empty**, so no app is UI-controllable until the owner classifies one. The lists themselves are still the owner's.)* |
 | OD-DP-9 | Ratify DecisionProvider at all | Unchanged; nothing in the runtime depends on it. |
-| OD-MT-2 | Any cloud primary by default | Default local (ollama); unchanged. |
+| OD-MT-2 | Any cloud primary by default | Default local (ollama); unchanged. *(Amended 2026-10-12 by OD-PILOT-2, §2N: one configurable remote primary is permitted for the pilot; the shipped default stays local.)* |
 | OD-SCH-1 | Ratify `scheduler.create` / `low_write` | Implemented as proposed (§2D); the owner signs the tier table. |
 | OD-SCH-2 | Fire-time `suggest` task with a sessionless principal | Not implemented (docs/22 recommendation); would introduce a principal with no session. |
 | OD-VOI-1 | Whether any server STT provider is enabled at pilot | A cloud STT receives user audio; default is on-device only (§2E). |

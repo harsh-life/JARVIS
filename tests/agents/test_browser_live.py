@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -63,7 +64,8 @@ def _step(action: dict, goal: str) -> str:
     return json.dumps({"evaluation_previous_goal": "ok", "memory": "", "next_goal": goal, "action": [action]})
 
 
-async def test_a_real_browser_run_goes_only_through_jarvis(make_harness, tmp_path, monkeypatch) -> None:
+async def test_a_real_browser_run_goes_only_through_jarvis(make_harness, tmp_path, monkeypatch, caplog) -> None:
+    caplog.set_level(logging.WARNING, logger="hypermind.agents.browser_runs")
     monkeypatch.setattr(runtime_registry, "BROWSER_USE_IMAGE", IMAGE)
 
     async def connect(ip, port):
@@ -93,7 +95,8 @@ async def test_a_real_browser_run_goes_only_through_jarvis(make_harness, tmp_pat
         if row.finished_at is not None:
             break
         await asyncio.sleep(0.5)
-    assert row.status == "completed", (row.status, row.failure_code)
+    # On failure, show what the runtime itself reported (the operator log).
+    assert row.status == "completed", (row.status, row.failure_code, [r.getMessage() for r in caplog.records])
     [item] = await h.rows(AgentInboxItemRow, AgentInboxItemRow.run_id == run_id)
     assert "Checked the advisories page." in item.body
     assert len(h.model.seen) >= 2                       # every model call went through the gateway
