@@ -30,6 +30,11 @@ from shared.schemas.memory import (
 )
 
 
+# Pilot plan C9: the most facts one export returns (the write gate bounds each
+# fact's size; this bounds the response).
+MAX_EXPORT_FACTS = 10_000
+
+
 class MemoryPort(Protocol):
     async def list(
         self, session: AsyncSession, *, principal: Principal, query: str | None, limit: int, audit: AuditLogger
@@ -66,6 +71,21 @@ class MemoryPort(Protocol):
         audit: AuditLogger,
     ) -> None: ...
 
+    async def delete_all_mine(
+        self,
+        session: AsyncSession,
+        *,
+        principal: Principal,
+        confirmation_token: str | None,
+        audit: AuditLogger,
+    ) -> int:
+        """Every fact the caller owns; `consequential`, so confirmed."""
+        ...
+
+    async def export_mine(self, session: AsyncSession, *, principal: Principal) -> list[Mem0Fact]:
+        """Every fact the caller owns, and nothing anyone else shared."""
+        ...
+
     async def status(self) -> dict: ...
 
 
@@ -77,4 +97,4 @@ class VaultPort(Protocol):
     async def status(self) -> dict: ...
 
 
-__all__ = ["MemoryPort", "VaultPort"]
+__all__ = ["MAX_EXPORT_FACTS", "MemoryPort", "VaultPort"]
