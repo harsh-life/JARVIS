@@ -15,13 +15,16 @@ dependency_unavailable` with `dependency: mem0` (02 §13, FAIL-008).
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, Request, Response, status
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.gateway.deps import get_audit_logger, get_db_session, get_principal
 from server.gateway.errors import AppError
-from server.gateway.memory_port import MemoryPort
+from server.gateway.memory_port import MAX_EXPORT_FACTS, MemoryPort
 from server.security.audit import AuditLogger
 from server.storage.idempotency import IdempotencyConflict, get_or_execute
 from shared.schemas.authorization import Principal
@@ -145,6 +148,59 @@ async def delete_memory(
         confirmation_token=confirmation_token, audit=audit,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class MemoryDeleteAllResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deleted: int
+
+
+class MemoryExport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    exported_at: datetime
+    items: list[Mem0Fact]
+    # True when the export stopped at the server's bound; nothing is silently dropped.
+    truncated: bool
+
+
+@router.delete("/memory", response_model=MemoryDeleteAllResponse)
+async def delete_all_memory(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+    audit: AuditLogger = Depends(get_audit_logger),
+    confirmation_token: str | None = Header(default=None, alias=CONFIRMATION_HEADER, max_length=512),
+) -> MemoryDeleteAllResponse:
+    """Pilot plan C9 (P11): delete every fact the caller owns. `consequential`:
+    the first call answers `403 confirmation_required` with a token bound to
+    exactly this action; the deletion runs when that token comes back."""
+
+    deleted = await _memory(request).delete_all_mine(
+        session, principal=principal, confirmation_token=confirmation_token, audit=audit
+    )
+    return MemoryDeleteAllResponse(deleted=deleted)
+
+
+@router.get("/memory/export", response_model=MemoryExport)
+async def export_memory(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> JSONResponse:
+    """Pilot plan C9 (P11): the caller's own facts as one JSON document."""
+
+    items = await _memory(request).export_mine(session, principal=principal)
+    body = MemoryExport(exported_at=datetime.now(timezone.utc), items=items,
+                        truncated=len(items) >= MAX_EXPORT_FACTS)
+    return JSONResponse(
+        body.model_dump(mode="json"),
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Disposition": 'attachment; filename="jarvis-memory-export.json"',
+        },
+    )
 
 
 @router.get("/memory/status")
