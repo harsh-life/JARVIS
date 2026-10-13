@@ -224,5 +224,11 @@ class ConfiguredModelResolver:
             generation_policy=dict(model_config.generation_policy or {}),
         )
         primary = self._build(spec, model_config.secret_ref, requester)
-        allowed = frozenset((row.enabled_tools or []) + (row.model_tools or []))
+        # A row that sets no tool list configures the model only (what the
+        # model-configuration API writes): the user's tools stay the server's.
+        # A row that sets either list restricts the task to exactly those.
+        if row.enabled_tools is None and row.model_tools is None:
+            allowed = None
+        else:
+            allowed = frozenset((row.enabled_tools or []) + (row.model_tools or []))
         return ResolvedModels(chain=(primary, *fallbacks), allowed_tool_ids=allowed)

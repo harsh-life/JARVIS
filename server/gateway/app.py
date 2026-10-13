@@ -41,6 +41,7 @@ from server.gateway.routers import (
     jobs,
     me,
     memory,
+    model_config,
     sessions,
     usage,
     vault,
@@ -161,6 +162,7 @@ def create_app(
     v1.include_router(device_channel.router)
     v1.include_router(me.router)
     v1.include_router(usage.router)
+    v1.include_router(model_config.router)
     app.include_router(v1)
     app.include_router(auth.public_router)
 
@@ -197,6 +199,8 @@ def create_app(
     app.state.features = me.features_from_config(config)
     # Pilot plan C6: the configured limits `GET /usage` reports against.
     app.state.usage_limits = usage_limits_from_config(config) if config else None
+    # Pilot plan C7: the operator-published models a user may select.
+    app.state.model_catalog = model_config.catalog_from_config(config)
     # docs/23 — App Links, the device channel. An explicit argument wins over
     # the loaded config; with neither, the defaults (everything off) apply.
     app.state.android = android_config or (config.android if config else AndroidConfig())
