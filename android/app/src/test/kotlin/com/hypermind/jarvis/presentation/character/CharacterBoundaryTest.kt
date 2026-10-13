@@ -39,8 +39,10 @@ class CharacterBoundaryTest {
     }
 
     @Test
-    fun `only the screen and the application hold the character`() {
-        val allowed = characterSources.toSet() + root.resolve("MainActivity.kt") + root.resolve("JarvisApplication.kt")
+    fun `only the screen, the application and the event bridge hold the character`() {
+        val allowed =
+            characterSources.toSet() + root.resolve("MainActivity.kt") + root.resolve("JarvisApplication.kt") +
+                root.resolve("CharacterEvents.kt")
         val readers =
             root
                 .walkTopDown()
@@ -53,6 +55,33 @@ class CharacterBoundaryTest {
                 }.map { it.path }
                 .toList()
         assertEquals(emptyList<String>(), readers)
+    }
+
+    @Test
+    fun `the event bridge only reads tasks - it never acts on one`() {
+        val bridge = root.resolve("CharacterEvents.kt").readText()
+        for (action in listOf(".submit(", ".approve(", ".decline(", ".cancel(", ".retry(", ".dismiss(", ".runAgent(")) {
+            assertTrue(action, !bridge.contains(action))
+        }
+        val imports = imports(root.resolve("CharacterEvents.kt")).filter { it.startsWith("com.hypermind.jarvis") }
+        assertEquals(
+            setOf(
+                "com.hypermind.jarvis.contract.TaskStatus",
+                "com.hypermind.jarvis.contract.TaskView",
+                "com.hypermind.jarvis.presentation.TaskSnapshot",
+            ),
+            imports.toSet(),
+        )
+    }
+
+    @Test
+    fun `the task, confirmation and authorization paths never reference the character`() {
+        for (dir in listOf("tasks", "auth", "action", "channel", "permissions", "privileged", "perception", "push")) {
+            for (file in root.resolve(dir).walkTopDown().filter { it.isFile && it.extension == "kt" }) {
+                val text = file.readText()
+                assertTrue(file.path, !text.contains("character", ignoreCase = true) && !text.contains("Expression."))
+            }
+        }
     }
 
     @Test

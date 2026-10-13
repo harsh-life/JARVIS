@@ -27,23 +27,25 @@ from shared.schemas.presentation import (
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DIR = ROOT / "assets" / "character" / "default"
 
-# The owner-supplied originals (2026-10-12): file → (sha256, width, height).
+# The owner-supplied originals: file → (sha256, width, height). Supplied
+# 2026-10-12; `satisfied.png` and `surprised.webp` replaced by the owner on
+# 2026-10-13 (OD-CHAR-2).
 # A changed digest means the artwork was replaced or re-encoded — that needs
 # the owner's approval, not a test update.
 APPROVED = {
     "default.png": ("8c291af5122c773b08d9870e548325180f2c408f761103c07f4abdc9fb08d89e", 427, 585),
-    "satisfied.webp": ("80e3d692b1c54a78a74767474c5f1a3a9d2ba1514646331220eebd2d67d248bc", 1024, 1536),
+    "satisfied.png": ("6a5a632acc262ff6efb5048a92b65e841bc62c7fda6aa4810afe21a71186f94f", 843, 1264),
     "happy.webp": ("5b5e853ed5d6973356dc64b16ccff70c396c59da86092be474db43f3d74c4c54", 1071, 1469),
     "sleepy.webp": ("2ad9003cd0bfd10fea0b1b4ead40db8b2fc7cc2c992c72b7eb1211f9728bc4bd", 1361, 1156),
-    "surprised.webp": ("40bd14d8edf0f24c9ff5dd60ec1a01f00311d869104554b3168bc0e2d241a0d6", 1024, 1536),
+    "surprised.webp": ("a61944733d1a94d4f803cebc1a817f53f4859c5af889bc6e5452e505dc5d8ae0", 843, 1264),
     "angry.webp": ("95068ad537e9a42167b63a5d610898e453ad49eacbfafa044cf7702ce8c768ae", 1145, 1374),
     "sad.webp": ("468ad50d34fc5e8b097630b5ac3daa1b346d2647bb017d6e14dc4b5481a440d0", 1145, 1374),
 }
 
 EXPECTED_MAPPING = {
-    Expression.DEFAULT: "default.png",
-    Expression.SATISFIED: "satisfied.webp",
     Expression.HAPPY: "happy.webp",
+    Expression.SATISFIED: "satisfied.png",
+    Expression.DEFAULT: "default.png",
     Expression.SLEEPY: "sleepy.webp",
     Expression.SURPRISED: "surprised.webp",
     Expression.ANGRY: "angry.webp",
@@ -72,11 +74,12 @@ def _image_header(data: bytes) -> tuple[str, int, int, bool]:
 # --- the states and the built-in profile -----------------------------------
 
 
-def test_there_are_exactly_seven_states_and_default_is_one_of_them():
+def test_the_seven_states_are_in_the_owners_order():
+    # The order is also the selection tie-break order (OD-CHAR-2).
     assert [e.value for e in Expression] == [
-        "default",
-        "satisfied",
         "happy",
+        "satisfied",
+        "default",
         "sleepy",
         "surprised",
         "angry",
@@ -89,6 +92,7 @@ def test_the_built_in_profile_maps_all_seven_states_to_their_images():
     assert profile.profile_id == "default"
     assert profile.fallback is Expression.DEFAULT
     assert profile.states == EXPECTED_MAPPING
+    assert list(profile.states) == list(Expression)
     for state, asset in EXPECTED_MAPPING.items():
         assert profile.asset_for(state) == asset
         assert profile.asset_for(state.value) == asset
@@ -138,7 +142,16 @@ def test_presentation_settings_are_separate_from_the_mapping():
     assert settings.profile_id == "default"
     assert settings.transition is CharacterTransition.CROSSFADE
     # Settings name a profile; they never carry a state→image mapping or a state.
-    assert set(CharacterPresentationSettings.model_fields) == {"visible", "profile_id", "transition"}
+    assert set(CharacterPresentationSettings.model_fields) == {
+        "schema_version",
+        "visible",
+        "profile_id",
+        "transition",
+        "reduced_motion",
+        "min_confidence",
+        "thresholds",
+        "timing",
+    }
     with pytest.raises(ValidationError):
         CharacterPresentationSettings.model_validate_json(json.dumps({"expression": "happy"}))
 
@@ -150,6 +163,14 @@ def test_the_directory_holds_exactly_the_profile_and_the_seven_originals():
     assert {p.name for p in DEFAULT_DIR.iterdir()} == set(APPROVED) | {"profile.json"}
 
 
+def test_the_replaced_images_are_the_new_files_and_the_old_ones_are_gone():
+    assert not (DEFAULT_DIR / "satisfied.webp").exists()
+    assert _profile().asset_for("satisfied") == "satisfied.png"
+    assert _profile().asset_for("surprised") == "surprised.webp"
+    for name in ("satisfied.png", "surprised.webp"):
+        assert APPROVED[name][1:] == (843, 1264)
+
+
 @pytest.mark.parametrize("name", sorted(APPROVED))
 def test_each_original_is_unchanged_with_its_format_size_and_alpha(name):
     data = (DEFAULT_DIR / name).read_bytes()
@@ -159,6 +180,19 @@ def test_each_original_is_unchanged_with_its_format_size_and_alpha(name):
     assert fmt == name.rsplit(".", 1)[1], "the extension names the real format"
     assert (w, h) == (width, height)
     assert alpha, "the sticker artwork keeps its transparent background"
+
+
+@pytest.mark.parametrize("name", sorted(APPROVED))
+def test_each_original_decodes(name):
+    # Decoding needs Pillow, which is not a project dependency: skipped
+    # where it is absent (the Android suite decodes every image for real).
+    image_module = pytest.importorskip("PIL.Image")
+    with image_module.open(DEFAULT_DIR / name) as image:
+        image.load()
+        assert image.mode == "RGBA"
+        assert image.size == APPROVED[name][1:]
+        # Corners are (visually) transparent: alpha at most 1/255 in these files.
+        assert image.getpixel((0, 0))[3] <= 1
 
 
 # --- the authority boundary -------------------------------------------------

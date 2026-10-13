@@ -1,0 +1,892 @@
+{
+ "version": 1,
+ "description": "OD-CHAR-2 selection policy vectors: every client's selector must give `expected` for `result` (serialized as JSON when an object or array; a string is passed as is) under default settings overlaid with `settings`, at `now` when given.",
+ "cases": [
+  {
+   "name": "no result",
+   "result": null,
+   "expected": "default"
+  },
+  {
+   "name": "not json",
+   "result": "not json",
+   "expected": "default"
+  },
+  {
+   "name": "a json array",
+   "result": [],
+   "expected": "default"
+  },
+  {
+   "name": "score above 10",
+   "result": {
+    "happy_score": 11,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "score below 1",
+   "result": {
+    "happy_score": 0,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "fractional score",
+   "result": {
+    "happy_score": 7.5,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "score as a string",
+   "result": {
+    "happy_score": "9",
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "confidence above 1",
+   "result": {
+    "happy_score": 9,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 1.5,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "negative confidence",
+   "result": {
+    "happy_score": 9,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": -0.1,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "missing score",
+   "result": {
+    "happy_score": 9,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "missing timestamp",
+   "result": {
+    "happy_score": 9,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "extra field",
+   "result": {
+    "happy_score": 9,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false,
+    "mood": "happy"
+   },
+   "expected": "default"
+  },
+  {
+   "name": "timestamp without a zone",
+   "result": {
+    "happy_score": 9,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "repeated signal",
+   "result": {
+    "happy_score": 9,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text",
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "unknown signal",
+   "result": {
+    "happy_score": 9,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "telepathy"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "uncertainty indicator ignores scores",
+   "result": {
+    "happy_score": 10,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": true
+   },
+   "expected": "default"
+  },
+  {
+   "name": "uncertain as a string",
+   "result": {
+    "happy_score": 10,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": "false"
+   },
+   "expected": "default"
+  },
+  {
+   "name": "below the confidence floor",
+   "result": {
+    "happy_score": 10,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.59,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "at the confidence floor",
+   "result": {
+    "happy_score": 10,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.6,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "happy"
+  },
+  {
+   "name": "custom confidence floor",
+   "result": {
+    "happy_score": 10,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default",
+   "settings": {
+    "min_confidence": 0.95
+   }
+  },
+  {
+   "name": "insufficient evidence",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "happy at its threshold",
+   "result": {
+    "happy_score": 7,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "happy"
+  },
+  {
+   "name": "happy below its threshold",
+   "result": {
+    "happy_score": 6,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "angry below its threshold",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 7,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "angry at its threshold",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 8,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "angry"
+  },
+  {
+   "name": "sad below its threshold",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 7,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "sleepy below its threshold",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 7,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "custom angry threshold",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 6,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "angry",
+   "settings": {
+    "thresholds": {
+     "angry": 5
+    }
+   }
+  },
+  {
+   "name": "custom happy threshold",
+   "result": {
+    "happy_score": 8,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default",
+   "settings": {
+    "thresholds": {
+     "happy": 9
+    }
+   }
+  },
+  {
+   "name": "happy alone",
+   "result": {
+    "happy_score": 9,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "happy"
+  },
+  {
+   "name": "satisfied alone",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 9,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "satisfied"
+  },
+  {
+   "name": "default alone",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 9,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "sleepy alone",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 9,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "sleepy"
+  },
+  {
+   "name": "surprised alone",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 9,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "surprised"
+  },
+  {
+   "name": "angry alone",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 9,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "angry"
+  },
+  {
+   "name": "sad alone",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 9,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "sad"
+  },
+  {
+   "name": "highest eligible wins",
+   "result": {
+    "happy_score": 8,
+    "satisfied_score": 9,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "satisfied"
+  },
+  {
+   "name": "the highest score is ineligible",
+   "result": {
+    "happy_score": 7,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 7,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "happy"
+  },
+  {
+   "name": "default can win on score",
+   "result": {
+    "happy_score": 7,
+    "satisfied_score": 1,
+    "default_score": 8,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "tie: happy before satisfied",
+   "result": {
+    "happy_score": 8,
+    "satisfied_score": 8,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "happy"
+  },
+  {
+   "name": "tie: satisfied before default",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 8,
+    "default_score": 8,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "satisfied"
+  },
+  {
+   "name": "tie: default before sleepy",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 9,
+    "sleepy_score": 9,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default"
+  },
+  {
+   "name": "tie: surprised before angry",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 9,
+    "angry_score": 9,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "surprised"
+  },
+  {
+   "name": "tie: angry before sad",
+   "result": {
+    "happy_score": 1,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 9,
+    "sad_score": 9,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "angry"
+  },
+  {
+   "name": "tie: all ten",
+   "result": {
+    "happy_score": 10,
+    "satisfied_score": 10,
+    "default_score": 10,
+    "sleepy_score": 10,
+    "surprised_score": 10,
+    "angry_score": 10,
+    "sad_score": 10,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "happy"
+  },
+  {
+   "name": "fresh result",
+   "result": {
+    "happy_score": 9,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "happy",
+   "now": "2026-10-13T12:00:04Z"
+  },
+  {
+   "name": "stale result",
+   "result": {
+    "happy_score": 9,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default",
+   "now": "2026-10-13T12:00:06Z"
+  },
+  {
+   "name": "result from the future",
+   "result": {
+    "happy_score": 9,
+    "satisfied_score": 1,
+    "default_score": 1,
+    "sleepy_score": 1,
+    "surprised_score": 1,
+    "angry_score": 1,
+    "sad_score": 1,
+    "confidence": 0.9,
+    "timestamp": "2026-10-13T12:00:00Z",
+    "signals": [
+     "text"
+    ],
+    "uncertain": false
+   },
+   "expected": "default",
+   "now": "2026-10-13T11:59:58Z"
+  }
+ ]
+}

@@ -19,10 +19,11 @@ val bundleSharedMapping by tasks.registering(Copy::class) {
 
 // OD-CHAR-1: the character profiles and their approved artwork, bundled
 // unchanged from their one location (assets/character/) under the APK's
-// `character/` assets — never copied into android/.
-val bundleCharacterAssets by tasks.registering(Copy::class) {
+// `character/` assets — never copied into android/. A Sync, not a Copy, so a
+// file removed or renamed there leaves the APK too.
+val bundleCharacterAssets by tasks.registering(Sync::class) {
     from(characterAssetsDir) {
-        include("*/profile.json", "*/*.png", "*/*.webp")
+        include("presentation.json", "*/profile.json", "*/*.png", "*/*.webp")
     }
     into(layout.buildDirectory.dir("generated/characterAssets/character"))
 }

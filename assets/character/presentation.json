@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "visible": true,
+  "profile_id": "default",
+  "transition": "crossfade",
+  "reduced_motion": "system",
+  "min_confidence": 0.6,
+  "thresholds": {
+    "happy": 7,
+    "satisfied": 7,
+    "default": 1,
+    "sleepy": 8,
+    "surprised": 7,
+    "angry": 8,
+    "sad": 8
+  },
+  "timing": {
+    "transition_ms": 220,
+    "min_display_ms": 1500,
+    "hold_ms": {
+      "happy": 5000,
+      "satisfied": 5000,
+      "sleepy": 5000,
+      "surprised": 2500,
+      "angry": 4000,
+      "sad": 5000
+    },
+    "idle_timeout_ms": 300000,
+    "interrupt_score": 9,
+    "max_result_age_ms": 5000
+  }
+}

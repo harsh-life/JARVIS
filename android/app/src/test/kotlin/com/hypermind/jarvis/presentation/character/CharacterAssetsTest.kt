@@ -27,10 +27,10 @@ class CharacterAssetsTest {
     private val sizes =
         mapOf(
             "default.png" to (427 to 585),
-            "satisfied.webp" to (1024 to 1536),
+            "satisfied.png" to (843 to 1264),
             "happy.webp" to (1071 to 1469),
             "sleepy.webp" to (1361 to 1156),
-            "surprised.webp" to (1024 to 1536),
+            "surprised.webp" to (843 to 1264),
             "angry.webp" to (1145 to 1374),
             "sad.webp" to (1145 to 1374),
         )
@@ -38,6 +38,22 @@ class CharacterAssetsTest {
     @Test
     fun `the app carries the built-in profile`() {
         assertEquals(CharacterProfile.BUILT_IN, CharacterAssets.profile(context.assets))
+    }
+
+    @Test
+    fun `the app carries exactly the profile's images - no stale or extra file`() {
+        val packaged = context.assets.list("character/default")!!.toSet()
+        assertEquals(
+            CharacterProfile.BUILT_IN.states.values
+                .toSet() + "profile.json",
+            packaged,
+        )
+    }
+
+    @Test
+    fun `the app carries the shipped presentation settings, which are the built-in defaults`() {
+        context.assets.open("character/presentation.json").close()
+        assertEquals(CharacterSettings(), CharacterAssets.settings(context.assets))
     }
 
     @Test
@@ -58,15 +74,15 @@ class CharacterAssetsTest {
             assertEquals(profile.assetFor(state), image!!.asset)
             assertEquals("$state", sizes.getValue(image.asset), image.bitmap.width to image.bitmap.height)
             assertTrue("$state keeps its alpha", image.bitmap.hasAlpha())
-            // The sticker's surroundings are transparent.
-            assertEquals("$state corner", 0, image.bitmap.getPixel(0, 0) ushr 24)
+            // The sticker's surroundings are transparent (alpha at most 1/255 in these files).
+            assertTrue("$state corner", image.bitmap.getPixel(0, 0) ushr 24 <= 1)
         }
     }
 
     @Test
     fun `a small slot decodes a smaller bitmap`() {
         val image = CharacterAssets.load(CharacterProfile.BUILT_IN, Expression.SATISFIED, 300, open)!!
-        assertEquals(1536 / 4, image.bitmap.height)
+        assertEquals(1264 / 4, image.bitmap.height)
     }
 
     @Test
