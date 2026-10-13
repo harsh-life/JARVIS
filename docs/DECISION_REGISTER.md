@@ -712,6 +712,30 @@ the row below and nothing else.
 | CHAR-2 | **Profile and settings, separately.** The state → image mapping is data (`profile.json`, validated as strictly on Android as by the Pydantic schema: no path, no unknown state or field, fallback must be mapped; an invalid profile is replaced whole by the built-in one). Presentation settings (`visible`, `profile_id`, `transition`) are a separate shape with built-in defaults. No database table, configuration key or API is added: the future configuration website supplies these two documents. | `shared/schemas/presentation.py`, `.../presentation/character/` |
 | CHAR-3 | **Where it shows.** Above the status line on the app's main screen, on every tab and before sign-in; sized from the window (42 % of the width, at most 24 % of the height, 96–220 dp); one change cross-fades once (220 ms) or snaps (`transition: none`), with no repeating animation; held in memory only, never persisted or sent. The floating overlay is unchanged. | `MainActivity.kt`, `.../presentation/ui/Character.kt` |
 
+### OD-CHAR-2 — selection from the current interaction (OWNER DECISION, 2026-10-13)
+
+**Owner instruction, 2026-10-13:** *"I am now directing JARVIS to support
+dynamic presentation-state selection based on the current interaction and
+verified application events."* OD-CHAR-1 left this open on purpose ("what it
+may base that choice on is a separate owner decision"), and PRD §23 EMO-004
+excludes "any expression gated on … interaction history"; this row decides it,
+narrowly. The owner also replaced two images (`satisfied`, `surprised`) and
+fixed the state order.
+
+| ID | Decision (ratified) | Exact scope |
+|---|---|---|
+| **OD-CHAR-2** | **The character's presentation state may be selected automatically, on the endpoint, from the current interaction and verified application events.** PRD §23's amendment is extended accordingly. | **Inputs allowed:** the current request (typed, or spoken and transcribed); features of the current utterance's audio (numbers, never audio); at most the last 3 utterances of the *current session*, in memory, only to interpret the current one; verified application events (today: a task the user started completed, per the server's own answer); the idle timer. **Not allowed:** relationship/trust scoring or any longer history (EMO-004 otherwise unchanged); raw audio in the contract or retained by default; loudness read as an emotion on its own; inventing events; storing an inferred state, score or utterance anywhere (no memory, no vault, no user profile, no log, nothing sent off the device); any first-person statement of feeling. **Selection:** a replaceable `PresentationInferenceProvider` returns, per state, a 1–10 score that the state is an appropriate *presentation* — not a measurement of the user's emotions — with a confidence (0–1), a timestamp, the signal types used and an uncertainty flag; a deterministic policy validates it, rejects malformed/stale/uncertain/low-confidence results, applies a per-state threshold, picks the highest eligible score, breaks ties in the owner's order (happy, satisfied, default, sleepy, surprised, angry, sad) and otherwise shows `default`. Thresholds are configurable product parameters, not validated measurements. **Never an authority, never a status:** unchanged from OD-CHAR-1 — no score or state influences authentication, identity, membership, ownership, capabilities, policy, risk classification, confirmation or step-up, budgets, or tool authorization or execution, and the status indicator stays the only account of what JARVIS is doing. **Training:** none in this change. Collecting labelled examples for a future model is opt-in only, keeps no raw audio by default, and is a separate decision when built. |
+
+**Implementation facts (2026-10-13).**
+
+| Item | Fact | Where |
+|---|---|---|
+| CHAR-4 | **Assets replaced.** `satisfied.webp` → `satisfied.png` (843 × 1264 RGBA PNG) and `surprised.webp` (843 × 1264, lossy WebP with alpha), both owner-supplied, byte for byte; the other five unchanged. States reordered to the owner's order (also the tie-break order). | `assets/character/default/` |
+| CHAR-5 | **Contract.** `PresentationInference` (7 scores, confidence, timestamp, signals, uncertainty), `CharacterPresentationSettings` (thresholds, confidence floor, transition, reduced motion, timing/idle policy) and the reference `select_expression`; `shared/android/presentation_selection_vectors.json` holds every client to the same policy. Defaults ship as `assets/character/presentation.json`. No table, configuration key or API is added. | `shared/schemas/presentation.py`, `assets/character/presentation.json` |
+| CHAR-6 | **Provider (pilot).** `LocalCueScorer`: a deterministic, on-device English cue list plus verified events — **not a trained model**; no dependency, no download. Negated cues ignored; mixed positive/negative cues uncertain; loudness alone never reaches a threshold; `sleepy` comes only from the idle policy. Audio features are accepted by the contract but not yet supplied by the Android recognizer. A small fine-tuned model can replace it behind the interface. | `android/app/.../presentation/character/LocalCueScorer.kt` |
+| CHAR-7 | **Controller and renderer.** `CharacterController` (pure, virtual clock): baseline `default`, `sleepy` after `idle_timeout_ms` (5 min), wake on activity; a selected state holds for its `hold_ms` then returns to baseline; `min_display_ms` with latest-wins debouncing; a score ≥ `interrupt_score` interrupts. The renderer cross-fades for `transition_ms` (retargeted mid-fade) or swaps instantly with reduced motion. Inputs: a submitted request, voice start, the app coming to the front, and `CharacterEvents` (a fresh server-confirmed completion — it only reads the task tracker). | `.../character/CharacterController.kt`, `.../character/CharacterPresentation.kt`, `.../ui/Character.kt`, `CharacterEvents.kt`, `MainActivity.kt` |
+
+
 ---
 
 ## 2N. Pilot assembly — owner decisions (2026-10-12)

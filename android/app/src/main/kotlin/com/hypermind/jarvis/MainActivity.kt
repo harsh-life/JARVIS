@@ -55,6 +55,7 @@ import com.hypermind.jarvis.overlay.OverlayController
 import com.hypermind.jarvis.permissions.GridSync
 import com.hypermind.jarvis.presentation.PresentationText
 import com.hypermind.jarvis.presentation.VoiceActivity
+import com.hypermind.jarvis.presentation.character.PresentationEvent
 import com.hypermind.jarvis.presentation.ui.Character
 import com.hypermind.jarvis.presentation.ui.CharacterGallery
 import com.hypermind.jarvis.push.PushRegistrar
@@ -106,6 +107,7 @@ class MainActivity : FragmentActivity() {
         val granted =
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
+        (application as JarvisApplication).character.onActivity()
         if (granted) speech?.start() else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
     }
 
@@ -188,6 +190,8 @@ class MainActivity : FragmentActivity() {
         super.onResume()
         // Inputs without callbacks (platform availability, enrollment, push) are re-read on return.
         (application as JarvisApplication).graph.refreshPresentation()
+        // Opening JARVIS is interaction: the character wakes if it was idle (OD-CHAR-2).
+        (application as JarvisApplication).character.onActivity()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -275,6 +279,12 @@ class MainActivity : FragmentActivity() {
 
         val presentation by graph.presentation.collectAsState()
         var tab by rememberSaveable { mutableStateOf(0) }
+        // OD-CHAR-2: a task the user started has just completed (the server's own answer).
+        LaunchedEffect(Unit) {
+            CharacterEvents.forwardCompletions(graph.taskTracker.snapshot) {
+                app.character.onEvent(PresentationEvent.TaskCompleted)
+            }
+        }
         // The one status line, on every tab (docs/23 §7).
         StatusHeader(presentation) { action -> onUserAction(graph, action) }
         TabRow(selectedTabIndex = tab) {
@@ -315,27 +325,27 @@ class MainActivity : FragmentActivity() {
     }
 
     /**
-     * OD-CHAR-1: the character, above the status line. It shows only the
-     * expression it has been given (default until something selects another);
-     * the status line below stays the one account of what JARVIS is doing.
+     * OD-CHAR-1/2: the character, above the status line. It shows the
+     * expression its controller decided (default until the current
+     * interaction or a verified event selects another); the status line
+     * below stays the one account of what JARVIS is doing.
      */
     @Composable
     private fun CharacterPortrait(app: JarvisApplication) {
         val character = app.character
         val expression by character.expression.collectAsState()
-        val settings by character.settings.collectAsState()
         Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Character(expression = expression, profile = character.profile, settings = settings)
+            Character(expression = expression, profile = character.profile, settings = character.settings)
         }
     }
 
-    /** Debug builds only: preview and select each of the character's states (nothing else changes). */
+    /** Debug builds only: preview each of the character's states (pinned until reset; nothing else changes). */
     @Composable
     private fun CharacterPreview(app: JarvisApplication) {
         val character = app.character
         val expression by character.expression.collectAsState()
-        CharacterGallery(profile = character.profile, selected = expression, onSelect = character::select)
-        OutlinedButton(onClick = { character.reset() }) { Text("Show the default character") }
+        CharacterGallery(profile = character.profile, selected = expression, onSelect = character::preview)
+        OutlinedButton(onClick = { character.reset() }) { Text("Back to the live character") }
     }
 
     /** docs/29 (Phase 4): the owner's agents; Run sends the owner's own request, then shows it on Tasks. */
@@ -459,7 +469,12 @@ class MainActivity : FragmentActivity() {
             canSubmit = TaskTracker.terminal(snapshot),
             actions =
                 TaskPanelActions(
-                    submit = { text -> graph.taskTracker.submit(text) },
+                    submit = { text ->
+                        graph.taskTracker.submit(text)
+                        // The request also informs the character's expression, on this
+                        // device and in memory only; it changes nothing about the task.
+                        app.character.onUtterance(text)
+                    },
                     approve = { taskId, pending -> graph.taskTracker.approve(taskId, pending, presence) },
                     decline = { taskId, pending -> graph.taskTracker.decline(taskId, pending) },
                     cancel = { graph.taskTracker.cancel() },

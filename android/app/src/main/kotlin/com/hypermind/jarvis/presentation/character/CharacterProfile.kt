@@ -40,6 +40,8 @@ data class CharacterProfile(
         private val ASSET_NAME = Regex("^[a-z0-9][a-z0-9_-]{0,63}\\.(png|webp)$")
         private val FIELDS = setOf("schema_version", "profile_id", "fallback", "states")
 
+        fun isProfileId(id: String): Boolean = PROFILE_ID.matches(id)
+
         /**
          * The built-in default character — the same mapping as
          * `assets/character/default/profile.json` (a test holds them equal). Used
@@ -52,9 +54,9 @@ data class CharacterProfile(
                 fallback = Expression.DEFAULT,
                 states =
                     mapOf(
-                        Expression.DEFAULT to "default.png",
-                        Expression.SATISFIED to "satisfied.webp",
                         Expression.HAPPY to "happy.webp",
+                        Expression.SATISFIED to "satisfied.png",
+                        Expression.DEFAULT to "default.png",
                         Expression.SLEEPY to "sleepy.webp",
                         Expression.SURPRISED to "surprised.webp",
                         Expression.ANGRY to "angry.webp",
