@@ -55,7 +55,7 @@ from server.composition.push import attach_push_wake
 from server.composition.secret_context import key_provider_for
 from server.config.errors import ConfigError
 from server.config.schema import AppConfig
-from server.gateway.app import create_app
+from server.gateway.app import API_V1_PREFIX, create_app
 from server.gateway.security import SecurityCore, build_security_core
 from server.composition.memory import MemoryFacade, MemoryFactLoader, VaultFacade
 from server.composition.voice import build_voice
@@ -486,6 +486,12 @@ def build_application(
     app.state.model_gateway_app = model_gateway_app
     app.state.model_gateway_listener = model_gateway_listener
     app.state.container_reconciler = container_reconciler
+    # Pilot plan C10: the character presentation settings store. Mounted here,
+    # not in the gateway, because no authority package may import the
+    # presentation contract (import-linter, OD-CHAR-1).
+    from server.presentation.routes import router as presentation_router
+
+    app.include_router(presentation_router, prefix=API_V1_PREFIX)
     # docs/23 §4: the optional push wake — nothing at all unless configured.
     attach_push_wake(config, app, device_hub)
     return app
