@@ -6,6 +6,7 @@ plugins {
 }
 
 val sharedAndroidDir: File by extra
+val characterAssetsDir: File by extra
 
 // docs/23 §5.1: the shared mapping table is bundled from its one location in
 // the repository (shared/android/), never copied into android/. The client
@@ -14,6 +15,16 @@ val sharedAndroidDir: File by extra
 val bundleSharedMapping by tasks.registering(Copy::class) {
     from(sharedAndroidDir.resolve("device_mapping.json"))
     into(layout.buildDirectory.dir("generated/sharedAssets"))
+}
+
+// OD-CHAR-1: the character profiles and their approved artwork, bundled
+// unchanged from their one location (assets/character/) under the APK's
+// `character/` assets — never copied into android/.
+val bundleCharacterAssets by tasks.registering(Copy::class) {
+    from(characterAssetsDir) {
+        include("*/profile.json", "*/*.png", "*/*.webp")
+    }
+    into(layout.buildDirectory.dir("generated/characterAssets/character"))
 }
 
 android {
@@ -41,6 +52,7 @@ android {
     }
 
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/sharedAssets"))
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/characterAssets"))
 
     buildTypes {
         debug {
@@ -86,7 +98,7 @@ android {
     }
 }
 
-tasks.named("preBuild") { dependsOn(bundleSharedMapping) }
+tasks.named("preBuild") { dependsOn(bundleSharedMapping, bundleCharacterAssets) }
 
 // Robolectric's Android framework jar is resolved by Gradle (with its retries
 // and cache) instead of Robolectric's own downloader at test time, and the
@@ -104,6 +116,9 @@ tasks.withType<Test>().configureEach {
     // Unit tests read the shared contract artifacts from their one location.
     systemProperty("jarvis.shared.dir", sharedAndroidDir.absolutePath)
     inputs.dir(sharedAndroidDir)
+    // ...and the character artwork (OD-CHAR-1), to hold the APK's copy to it.
+    systemProperty("jarvis.character.dir", characterAssetsDir.absolutePath)
+    inputs.dir(characterAssetsDir)
 }
 
 dependencies {
@@ -148,6 +163,9 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+    // Compose UI tests on Robolectric (the character's rendering and sizing).
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
 
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.androidx.test.ext.junit)

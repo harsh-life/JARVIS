@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "profile_id": "default",
+  "fallback": "default",
+  "states": {
+    "default": "default.png",
+    "satisfied": "satisfied.webp",
+    "happy": "happy.webp",
+    "sleepy": "sleepy.webp",
+    "surprised": "surprised.webp",
+    "angry": "angry.webp",
+    "sad": "sad.webp"
+  }
+}

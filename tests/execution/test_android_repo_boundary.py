@@ -78,13 +78,19 @@ def test_no_local_credentials_file_is_committed():
 # ── REPO-T3 ──────────────────────────────────────────────────────────────
 
 
+# The build may also bundle the character artwork (OD-CHAR-1, DECISION_REGISTER
+# §2M) from its one location. It is client presentation data the server never
+# reads, so it shares nothing with the server; REPO-T3 is unchanged.
+_ALLOWED_OUTSIDE = ("../shared/android", "../assets/character")
+
+
 def test_the_build_reaches_outside_android_only_for_shared_android():
     outside = re.compile(r"\.\./[A-Za-z_./-]+")
     for path in _text_files():
         if path.suffix != ".kts":
             continue
         for reference in outside.findall(path.read_text(encoding="utf-8")):
-            assert reference.startswith("../shared/android"), (path, reference)
+            assert reference.startswith(_ALLOWED_OUTSIDE), (path, reference)
 
 
 def test_no_build_configuration_pulls_in_server_code():

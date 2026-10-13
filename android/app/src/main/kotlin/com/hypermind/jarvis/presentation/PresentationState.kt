@@ -12,8 +12,8 @@ import java.time.Instant
  *
  * It is **signals only**. There is deliberately no field for task content — no
  * user words, no model response, no pending-action arguments, no confirmation
- * token, no screen text — so whatever renders it (today a plain indicator and
- * the floating overlay; later the character) cannot display or leak content,
+ * token, no screen text — so whatever renders it (the status indicator and
+ * the floating overlay) cannot display or leak content,
  * and can be replaced without touching the runtime, transport, auth,
  * execution, perception or task state. Content (a result, the canonical
  * confirmation card) is shown only by the task panel, from the task itself.
