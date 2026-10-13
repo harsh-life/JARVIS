@@ -329,6 +329,31 @@ async def test_the_runtimes_own_failure_words_never_become_jarviss(make_harness,
     assert (row.status, row.failure_code) == ("failed", "runtime_failed")
 
 
+async def test_a_failed_run_logs_what_the_runtime_reported_and_nothing_it_could_smuggle(
+        make_harness, tmp_path, fake_runtime, caplog) -> None:
+    """The runtime's error token is the only account of *why* a real browser run
+    failed (the live CI test once ended `runtime_failed` with no reason on
+    record). It is logged, reduced to a safe token, beside JARVIS's own code —
+    and the runtime's `final` text never is."""
+
+    h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
+    await h.grant(alice, BROWSER_CAPABILITY)
+
+    async def fails(spec) -> int:
+        fake_runtime.write_result(spec, {"status": "failed", "final": "SECRET-PAGE-TEXT", "steps": 3,
+                                         "error": "Not_Done\nINJECTED line; token=abc"})
+        return 1
+
+    fake_runtime.behaviour = fails
+    with caplog.at_level("WARNING", logger="hypermind.agents.browser_runs"):
+        resp = await run_agent(h, alice, agent["agent_id"])
+        row = await _wait_finished(h, resp.json()["run_id"])
+    assert (row.status, row.failure_code) == ("failed", "runtime_failed")
+    [line] = [r.getMessage() for r in caplog.records if "failed (runtime_failed)" in r.getMessage()]
+    assert "runtime_error=not_doneinjectedlinetokenabc" in line and "steps=3" in line and "exit_code=1" in line
+    assert "SECRET-PAGE-TEXT" not in line and "\n" not in line
+
+
 # ── a restart ──────────────────────────────────────────────────────────────
 
 
