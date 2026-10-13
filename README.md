@@ -214,10 +214,12 @@ status header and an optional floating overlay (off by default; state only,
 never focusable, never approves) all show it, and a waiting task is shown as
 paused with what to turn on. The default on-screen character (owner decision
 OD-CHAR-1, `docs/DECISION_REGISTER.md` §2M; artwork in `assets/character/`)
-sits above the status line in one of seven expressive presentation states —
-`default` unless something selects another; today only a debug-build preview
-does. It is presentation only: never a status (the indicator stays that) and
-never read by anything that authorizes, confirms or executes.
+sits above the status line in one of seven expressive presentation states,
+selected on the device from the current request and verified events (OD-CHAR-2;
+a deterministic cue scorer for the pilot, not a trained model), with `default`
+as the fallback and `sleepy` after inactivity. It is presentation only: never a
+status (the indicator stays that) and never read by anything that authorizes,
+confirms or executes. See `docs/CHARACTER_PRESENTATION.md`.
 
 **Scheduler build** — task-linked reminders (`docs/22_SCHEDULER.md`, operator
 guide `docs/RUNNING_SCHEDULER.md`). *A firing reminder delivers a message; it

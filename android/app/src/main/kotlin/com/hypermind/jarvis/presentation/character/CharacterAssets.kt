@@ -15,11 +15,22 @@ class CharacterImage(
 /**
  * Reads the character's profile and images from the app's assets (bundled
  * from `assets/character/` at build time). Every failure falls back: an
- * unreadable or invalid profile to [CharacterProfile.BUILT_IN], an image
+ * unreadable or invalid profile to [CharacterProfile.BUILT_IN], invalid
+ * settings to the built-in defaults, an image
  * that will not decode to the profile's fallback image, and a missing
  * fallback to nothing at all — the status line never depends on it.
  */
 object CharacterAssets {
+    /** The presentation settings (`character/presentation.json`); the built-in defaults if absent or invalid. */
+    fun settings(assets: AssetManager): CharacterSettings =
+        try {
+            val path = "${CharacterProfile.ASSET_ROOT}/${CharacterSettings.FILE}"
+            val text = assets.open(path).use { it.readBytes().toString(Charsets.UTF_8) }
+            CharacterSettings.parse(text) ?: CharacterSettings()
+        } catch (ignored: IOException) {
+            CharacterSettings()
+        }
+
     fun profile(
         assets: AssetManager,
         profileId: String = CharacterProfile.BUILT_IN.profileId,

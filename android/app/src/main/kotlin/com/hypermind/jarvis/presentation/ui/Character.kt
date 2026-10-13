@@ -1,5 +1,6 @@
 package com.hypermind.jarvis.presentation.ui
 
+import android.provider.Settings
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.snap
@@ -37,12 +38,14 @@ import com.hypermind.jarvis.presentation.character.CharacterImage
 import com.hypermind.jarvis.presentation.character.CharacterProfile
 import com.hypermind.jarvis.presentation.character.CharacterSettings
 import com.hypermind.jarvis.presentation.character.CharacterSizing
+import com.hypermind.jarvis.presentation.character.CharacterTransitions
 import com.hypermind.jarvis.presentation.character.Expression
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * The expressive character (OD-CHAR-1). It takes an [Expression], a profile
+ * The expressive character (OD-CHAR-1/2): the renderer only. It takes an
+ * [Expression] (decided by `CharacterController`), a profile
  * and settings — and nothing else: no task, status, error or content can
  * reach it, so it cannot report on the system, and the status indicator next
  * to it remains the only status. It is decorative to accessibility services
@@ -51,7 +54,10 @@ import kotlinx.coroutines.withContext
  *
  * The slot keeps one size whatever the image, so a change of expression never
  * moves the layout; the previous image stays until the next has decoded, and
- * a change cross-fades once (no repeating animation). An image that fails to
+ * a change cross-fades once for the configured duration — interrupted and
+ * retargeted if a newer state arrives mid-fade — or swaps instantly when
+ * transitions are off or motion is reduced (no repeating animation, no
+ * drawing over the artwork). An image that fails to
  * load shows the profile's fallback; if that fails too, the slot stays empty.
  */
 @Composable
@@ -73,11 +79,13 @@ fun Character(
                 CharacterAssets.load(profile, expression, targetPx) { path -> assets.open(path) }
             }
     }
-    val animation: FiniteAnimationSpec<Float> =
-        when (settings.transition) {
-            CharacterSettings.Transition.CROSSFADE -> tween(FADE_MILLIS)
-            CharacterSettings.Transition.NONE -> snap()
+    val context = LocalContext.current
+    val systemReducesMotion =
+        remember(context) {
+            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
         }
+    val fade = CharacterTransitions.fadeMillis(settings, systemReducesMotion).toInt()
+    val animation: FiniteAnimationSpec<Float> = if (fade > 0) tween(fade) else snap()
     Box(modifier = modifier.size(height).testTag(TAG), contentAlignment = Alignment.Center) {
         Crossfade(targetState = image, animationSpec = animation, label = "character") {
             if (it != null) {
@@ -139,5 +147,4 @@ fun CharacterGallery(
 const val CHARACTER_TAG = "character"
 private const val TAG = CHARACTER_TAG
 private const val GALLERY_TAG = "character-gallery"
-private const val FADE_MILLIS = 220
 private val GALLERY_HEIGHT = 72.dp

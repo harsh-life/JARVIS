@@ -6,15 +6,15 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import java.io.File
 
-/** OD-CHAR-1: the states, the built-in profile, fallback and sizing — pure, no Android. */
+/** OD-CHAR-1/2: the states, the built-in profile, fallback and sizing — pure, no Android. */
 class CharacterProfileTest {
     private val characterDir = File(System.getProperty("jarvis.character.dir") ?: "../../assets/character")
 
     private val expected =
         mapOf(
-            Expression.DEFAULT to "default.png",
-            Expression.SATISFIED to "satisfied.webp",
             Expression.HAPPY to "happy.webp",
+            Expression.SATISFIED to "satisfied.png",
+            Expression.DEFAULT to "default.png",
             Expression.SLEEPY to "sleepy.webp",
             Expression.SURPRISED to "surprised.webp",
             Expression.ANGRY to "angry.webp",
@@ -22,9 +22,9 @@ class CharacterProfileTest {
         )
 
     @Test
-    fun `the seven states match the server's contract`() {
+    fun `the seven states are in the owner's order, as in the server's contract`() {
         assertEquals(
-            listOf("default", "satisfied", "happy", "sleepy", "surprised", "angry", "sad"),
+            listOf("happy", "satisfied", "default", "sleepy", "surprised", "angry", "sad"),
             Expression.entries.map { it.wire },
         )
     }
@@ -34,6 +34,7 @@ class CharacterProfileTest {
         val profile = CharacterProfile.BUILT_IN
         assertEquals(Expression.DEFAULT, profile.fallback)
         assertEquals(expected, profile.states)
+        assertEquals(Expression.entries, profile.states.keys.toList())
         expected.forEach { (state, asset) -> assertEquals(asset, profile.assetFor(state)) }
         assertEquals("character/default/happy.webp", profile.assetPath(profile.assetFor(Expression.HAPPY)))
     }
@@ -45,38 +46,18 @@ class CharacterProfileTest {
     }
 
     @Test
-    fun `a new presentation starts at default`() {
-        val presentation = CharacterPresentation()
-        assertEquals(Expression.DEFAULT, presentation.expression.value)
-        assertEquals("default.png", presentation.profile.assetFor(presentation.expression.value))
-        assertEquals(CharacterSettings(), presentation.settings.value)
+    fun `the replaced images are mapped by their real extensions`() {
+        assertEquals("satisfied.png", CharacterProfile.BUILT_IN.assetFor(Expression.SATISFIED))
+        assertEquals("surprised.webp", CharacterProfile.BUILT_IN.assetFor(Expression.SURPRISED))
+        assertEquals(false, characterDir.resolve("default/satisfied.webp").exists())
     }
 
     @Test
-    fun `every state can be selected, and anything unknown selects default`() {
-        val presentation = CharacterPresentation()
-        for (state in Expression.entries) {
-            presentation.select(state.wire)
-            assertEquals(state, presentation.expression.value)
-            presentation.select(Expression.SAD)
-            presentation.reset()
-            assertEquals(Expression.DEFAULT, presentation.expression.value)
-        }
+    fun `anything unknown parses to default`() {
         for (bad in listOf("furious", "", "HAPPY", " happy", "Default", null)) {
-            presentation.select(Expression.HAPPY)
-            presentation.select(bad)
-            assertEquals("$bad", Expression.DEFAULT, presentation.expression.value)
+            assertEquals("$bad", Expression.DEFAULT, Expression.parse(bad))
         }
-    }
-
-    @Test
-    fun `settings change independently of the expression and the mapping`() {
-        val presentation = CharacterPresentation()
-        presentation.select(Expression.SLEEPY)
-        presentation.configure(CharacterSettings(visible = false, transition = CharacterSettings.Transition.NONE))
-        assertEquals(Expression.SLEEPY, presentation.expression.value)
-        assertEquals(CharacterProfile.BUILT_IN, presentation.profile)
-        assertEquals(false, presentation.settings.value.visible)
+        for (state in Expression.entries) assertEquals(state, Expression.parse(state.wire))
     }
 
     @Test
