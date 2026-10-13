@@ -36,6 +36,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from server.config.schema import AppConfig
 from server.storage.models import ScheduledJob, UsageEvent
 from shared.schemas.enums import JobStatus, UsageKind
 from shared.schemas.evaluation import EVALUATOR_USAGE_PREFIX
@@ -77,6 +78,21 @@ class UsageLimits:
     # any rate; whether it counts toward the global budget is this switch
     # (`evaluation.budget_scope`), defaulting to the more restrictive reading.
     evaluation_counts_toward_global_budget: bool = True
+
+
+def usage_limits_from_config(config: AppConfig) -> UsageLimits:
+    """The configured OD-USE-1 values (`security.rate_limits`, `security.budgets`)."""
+
+    rates = config.security.rate_limits
+    budgets = config.security.budgets
+    return UsageLimits(
+        per_user_calls_per_minute=rates.per_user_requests_per_minute,
+        per_device_calls_per_minute=rates.per_device_requests_per_minute,
+        global_calls_per_minute=rates.global_requests_per_minute,
+        per_user_daily_cost_limit=budgets.per_user_daily_cost_limit,
+        global_daily_cost_limit=budgets.global_daily_cost_limit,
+        evaluation_counts_toward_global_budget=config.evaluation.budget_scope == "own_and_global",
+    )
 
 
 class UsageLedger:

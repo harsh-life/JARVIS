@@ -77,7 +77,7 @@ from server.vault.index import VaultIndex
 from server.models.factory import build_provider
 from server.modeltools import model_tool_definition
 from server.secrets.requester import SecretRequester
-from server.security.usage import UsageLimits, UsagePolicy
+from server.security.usage import UsagePolicy, usage_limits_from_config
 from server.storage import StorageBackend
 from server.tools.device_vision import ScreenshotVision
 from server.tools.registry import ToolDefinition, ToolRegistry
@@ -121,19 +121,6 @@ def recovery_from_config(config: AppConfig) -> RecoveryPolicy | None:
         escalate_on_unresolved=r.escalate_on_unresolved,
         stall_window=r.stall_window,
         loop_repeat_limit=r.loop_repeat_limit,
-    )
-
-
-def usage_limits_from_config(config: AppConfig) -> UsageLimits:
-    rates = config.security.rate_limits
-    budgets = config.security.budgets
-    return UsageLimits(
-        per_user_calls_per_minute=rates.per_user_requests_per_minute,
-        per_device_calls_per_minute=rates.per_device_requests_per_minute,
-        global_calls_per_minute=rates.global_requests_per_minute,
-        per_user_daily_cost_limit=budgets.per_user_daily_cost_limit,
-        global_daily_cost_limit=budgets.global_daily_cost_limit,
-        evaluation_counts_toward_global_budget=config.evaluation.budget_scope == "own_and_global",
     )
 
 

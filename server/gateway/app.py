@@ -39,13 +39,16 @@ from server.gateway.routers import (
     graphs,
     health,
     jobs,
+    me,
     memory,
     sessions,
+    usage,
     vault,
     voice,
 )
 from server.gateway.security import SecurityCore, build_security_core
 from server.gateway.security_errors import install_security_error_handlers
+from server.security.usage import usage_limits_from_config
 from server.storage import StorageBackend
 
 API_V1_PREFIX = "/api/v1"
@@ -156,6 +159,8 @@ def create_app(
     v1.include_router(jobs.router)
     v1.include_router(voice.router)
     v1.include_router(device_channel.router)
+    v1.include_router(me.router)
+    v1.include_router(usage.router)
     app.include_router(v1)
     app.include_router(auth.public_router)
 
@@ -188,6 +193,10 @@ def create_app(
     # answer `503` with `voice`; nothing else depends on it (VOI-T1).
     app.state.voice = voice_port
     app.state.intelligence_enabled = bool(config.intelligence.enabled) if config else False
+    # Pilot plan C3: what the operator switched on, reported by `GET /me`.
+    app.state.features = me.features_from_config(config)
+    # Pilot plan C6: the configured limits `GET /usage` reports against.
+    app.state.usage_limits = usage_limits_from_config(config) if config else None
     # docs/23 — App Links, the device channel. An explicit argument wins over
     # the loaded config; with neither, the defaults (everything off) apply.
     app.state.android = android_config or (config.android if config else AndroidConfig())
