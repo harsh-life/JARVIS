@@ -1,0 +1,30 @@
+# JARVIS — Cloudflare NAMED tunnel, the alternative to deploy/Caddyfile
+# (docs/PILOT_EXECUTION_PLAN.md F5/F6, docs/DEPLOYMENT.md §5.2).
+#
+# Use when the host has no public address (a laptop, a home server): cloudflared
+# dials out to Cloudflare, which terminates HTTPS for your hostname. It must be
+# a *named* tunnel on a domain in your Cloudflare account — a quick tunnel's
+# random trycloudflare.com URL changes on every start and cannot be a Google
+# OIDC redirect URI or an Android App Link host.
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create jarvis              # writes <TUNNEL-UUID>.json (a credential: 0600, never committed)
+#   cloudflared tunnel route dns jarvis jarvis.example.com
+#   install this file as /etc/cloudflared/config.yml, then
+#   cloudflared tunnel ingress validate && cloudflared service install
+#
+# What Caddy does in-process must then be done in the Cloudflare dashboard for
+# the zone (docs/DEPLOYMENT.md §5.2): HSTS on, a rate-limiting rule for
+# /api/v1/auth/* and /api/v1/sessions/token. Request size is capped by
+# Cloudflare's plan limit (100 MB on Free), far above the pilot's 3 × 4 MB
+# images; the server's own limits still apply.
+
+tunnel: REPLACE-WITH-TUNNEL-UUID
+credentials-file: /etc/cloudflared/REPLACE-WITH-TUNNEL-UUID.json
+
+ingress:
+  # The same public surface as the Caddyfile; everything else is 404.
+  - hostname: jarvis.example.com
+    path: ^/(api/|ui(/|$)|app/login$|\.well-known/assetlinks\.json$)
+    service: http://127.0.0.1:8000
+  - service: http_status:404

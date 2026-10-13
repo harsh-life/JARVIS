@@ -23,7 +23,7 @@ Non-goals: OIDC redirect mechanics (that's `03`), the agent loop internals (that
 - Every non-public endpoint requires a **short-lived access token** in `Authorization: Bearer <access_token>`.
 - The server **derives identity from the token**, never from any `user_id`/`graph_id`/`session_id` in the request body (PHONE-003). A body that contains those fields has them treated as *claims to validate*, never as authorization.
 - Token refresh uses the **long-lived device credential** (SESSION-001), via a dedicated endpoint (§3), not a full re-login.
-- Public endpoints (no token): only the OIDC start/callback and health (`§2`, `§12`).
+- Public endpoints (no token): only the OIDC start/callback, health and readiness (`§2`, `§12`).
 
 ### 1.2 Authorization `[LOCKED]` (PRD SESSION-004, RAUTH-002)
 Every resource-touching endpoint runs the deterministic chain before doing work:
@@ -239,10 +239,11 @@ Tools are invoked **by the agent, internally**, not directly by the client — t
 
 | Method · Path | Auth | Purpose |
 |---|---|---|
-| `GET /api/v1/health` | public | Liveness (no data, no auth) → `{status}` |
+| `GET /api/v1/health` | public | Liveness (no data, no auth) → `{status}`; always `200` |
+| `GET /api/v1/ready` | public | Readiness (pilot plan F10/C3, register §2N) → `{ready, database, migrations, secrets}`, booleans only; `200` when the store answers, its schema is at the code's migration head and the SecretStore is unlocked, else `503`; `Cache-Control: no-store` |
 | `GET /api/v1/admin/*` | **superuser** (DASH-003/004) | Observability surfaces (devices/users/graphs/sessions/audit/usage/health) |
 
-`[LOCKED]` `/admin/*` requires a **superuser principal**, distinct from any normal user session (DASH-004, SUPER-001) — an ordinary Bearer token cannot reach it. Admin responses are **secret-free** (DASH-005) and **PII-redacted by default** (DASH-006); viewing unredacted user content is a separate privileged, audited action. `/health` is the only data-free public endpoint besides OIDC start/callback.
+`[LOCKED]` `/admin/*` requires a **superuser principal**, distinct from any normal user session (DASH-004, SUPER-001) — an ordinary Bearer token cannot reach it. Admin responses are **secret-free** (DASH-005) and **PII-redacted by default** (DASH-006); viewing unredacted user content is a separate privileged, audited action. `/health` and `/ready` are the only data-free public endpoints besides OIDC start/callback; `/ready` reports component booleans only — no versions, revision ids or error text.
 
 ---
 

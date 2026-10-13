@@ -408,7 +408,10 @@ DSH-T1..T5 pass and are mutation-tested. What blocks real data:
 - A new authorized-path row: approved Judge guidance can carry one user's
   content to every user (row 38).
 - The real-integration smoke was not run: it needs an OIDC client, a stable
-  hostname and a phone.
+  hostname and a phone. The single-host deployment it would run on (systemd,
+  PostgreSQL, Caddy or a Cloudflare named tunnel, invite-only sign-in,
+  `GET /api/v1/ready`) is `docs/DEPLOYMENT.md`; it has been drilled on a
+  scratch host, not yet on the pilot's own hostname.
 
 #32 fairness is no longer on this list: since the H-1 owner decision
 (`docs/DECISION_REGISTER.md` §2I) the pilot's runtime store is PostgreSQL, a
