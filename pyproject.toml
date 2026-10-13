@@ -133,7 +133,7 @@ containers = ["server"]
 layers = [
     "composition",
     "dashboard",
-    "agent | agents | modeltools | tools | memory | vault | scheduler | voice | evaluation",
+    "agent | agents | modeltools | tools | memory | vault | scheduler | voice | evaluation | presentation",
     "models",
     "gateway",
     "auth",
@@ -720,3 +720,35 @@ source_modules = [
     "server.voice",
 ]
 forbidden_modules = ["shared.schemas.presentation"]
+
+# Pilot plan C10 (step M2): the server-side presentation settings store is a
+# store and nothing else. It may use the gateway's request plumbing (to know
+# whose settings these are) and storage; it never reaches a deciding or acting
+# package. Direct imports only: `server.gateway.deps` itself sits on the
+# security core, and that dependency runs the other way (a request is
+# authenticated before any setting is read). The reverse direction — no
+# authority package importing `server.presentation` — is the contract above,
+# which forbids the presentation schema transitively.
+[[tool.importlinter.contracts]]
+name = "Presentation settings are a store, not an authority (pilot C10, OD-CHAR-1/3)"
+type = "forbidden"
+source_modules = ["server.presentation"]
+forbidden_modules = [
+    "server.agent",
+    "server.agents",
+    "server.auth",
+    "server.capabilities",
+    "server.evaluation",
+    "server.execution",
+    "server.graph",
+    "server.memory",
+    "server.models",
+    "server.modeltools",
+    "server.scheduler",
+    "server.secrets",
+    "server.security",
+    "server.tools",
+    "server.vault",
+    "server.voice",
+]
+allow_indirect_imports = "True"

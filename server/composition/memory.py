@@ -27,6 +27,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.config.schema import MemoryConfig, VaultConfig
 from server.gateway.errors import AppError
+from server.capabilities.risk import resource_operation_tier
+from server.gateway.memory_port import MAX_EXPORT_FACTS
 from server.gateway.security import SecurityCore
 from server.graph.authorization import AccessRequest, AuthorizationOutcome
 from server.graph.ports import ResourceDescriptor
@@ -38,7 +40,15 @@ from server.models.provider import ChatMessage
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
 from server.vault.index import VaultIndex, VaultUnavailable
-from shared.schemas.authorization import DenialSurface, Operation, Principal, ResourceType, device_of, session_of
+from shared.schemas.authorization import (
+    ActionBinding,
+    DenialSurface,
+    Operation,
+    Principal,
+    ResourceType,
+    device_of,
+    session_of,
+)
 from shared.schemas.enums import AuditActor, AuditResult, FactType, Visibility
 from shared.schemas.errors import ErrorCode
 from shared.schemas.memory import (
@@ -360,6 +370,74 @@ class MemoryFacade:
         except MemoryProviderUnavailable:
             raise _mem0_down() from None
         await self._audit(audit, principal, AuditAction.MEMORY_DELETED, f"mem0fact:{fact_id}", AuditResult.SUCCESS)
+
+    async def delete_all_mine(
+        self,
+        session: AsyncSession,
+        *,
+        principal: Principal,
+        confirmation_token: str | None,
+        audit: AuditLogger,
+    ) -> int:
+        """Pilot plan C9 (P11): delete every fact the caller owns, private or
+        shared, and every mirror of it.
+
+        The owner's own act on the owner's own facts (D3) — the set is chosen by
+        the store's owner key, never by an id the client supplies. It is
+        `consequential` by the same risk table as a single delete
+        (`resource_operation_tier`), so it runs only with a single-use token
+        bound to exactly this action: this principal and session, `delete`,
+        `mem0fact`, the reference `owner:<user_id>`. No token, or a token for
+        anything else, mints a fresh one and deletes nothing — the engine's
+        rule for every confirmable action."""
+
+        await self._require_available()
+        tier = resource_operation_tier(ResourceType.MEM0FACT, Operation.DELETE)
+        ref = f"owner:{principal.user_id}"
+        binding = ActionBinding(
+            principal_user_id=principal.user_id,
+            session_id=session_of(principal),
+            task_id=f"{ResourceType.MEM0FACT.value}:{ref}",
+            operation=Operation.DELETE,
+            resource_type=ResourceType.MEM0FACT,
+            resource_ref=ref,
+            arguments={"scope": "all_owned"},
+        )
+        if not (confirmation_token and await self._core.confirmations.consume(
+            session, token=confirmation_token, binding=binding
+        )):
+            issued = await self._core.confirmations.issue(session, binding=binding, risk_category=tier)
+            raise AppError(
+                ErrorCode.CONFIRMATION_REQUIRED,
+                "deleting all of your memories needs your confirmation before it runs",
+                details={
+                    "confirmation_token": issued.token,
+                    "expires_at": issued.expires_at.isoformat(),
+                    "action": "memory.delete_all",
+                    "risk_category": tier.value,
+                },
+            )
+        try:
+            # Reported in facts, not store records (a shared fact also has a mirror).
+            owned = await self.export_mine(session, principal=principal)
+            await self._provider.delete_all_for_user(principal.user_id)
+        except MemoryProviderUnavailable:
+            raise _mem0_down() from None
+        await self._audit(audit, principal, AuditAction.MEMORY_DELETED, f"mem0fact:{ref}", AuditResult.SUCCESS)
+        return len(owned)
+
+    async def export_mine(self, session: AsyncSession, *, principal: Principal) -> list[Mem0Fact]:
+        """Pilot plan C9 (P11): every fact the caller owns — not facts other
+        members shared into a graph with them, which are theirs to export."""
+
+        await self._require_available()
+        try:
+            facts = await self._provider.list_facts(
+                owner_user_id=principal.user_id, readable_graph_ids=frozenset(), limit=MAX_EXPORT_FACTS
+            )
+        except MemoryProviderUnavailable:
+            raise _mem0_down() from None
+        return [f for f in facts if f.owner_user_id == principal.user_id]
 
     async def status(self) -> dict:
         return {

@@ -28,6 +28,8 @@ interface ModelProvider:
 
 `[LOCKED]` The default and recommended primary is a **local model via Ollama** (Qwen-class), consistent with Track B's local-first posture — no per-worker cloud dependency, no per-call cost, data stays local. Cloud providers are available but are a *choice*, not a requirement, and are never a hidden dependency. `[IMPL]` which local model; `[REC]` a small capable instruct model, upsized only on evaluated need.
 
+**Amendment (OD-PILOT-2, owner 2026-10-12, confirmed 2026-10-13; `docs/DECISION_REGISTER.md` §2N).** For the pilot a remote primary is a permitted *configuration* (`config.pilot.example.yaml`); the default stays local. It must be priced (13 §3, already a load-time rule), and `server/config/preconditions.py` refuses to start the server with a non-local primary unless `agent.bounds.per_task_budget`, `security.budgets.per_user_daily_cost_limit` and `security.budgets.global_daily_cost_limit` are all > 0 and `security.oidc.allowed_emails`/`allowed_domains` is non-empty.
+
 ---
 
 ## 3. LLM-as-a-Tool (MODELTOOL-001..004)
@@ -63,7 +65,7 @@ interface ModelProvider:
 | ID | Question | Status |
 |---|---|---|
 | OD-MT-1 | Default local model choice | `[IMPL]`, `[REC]` small Qwen-class |
-| OD-MT-2 | Whether any task justifies a cloud primary by default | `[OPEN — OWNER]`; default local |
+| OD-MT-2 | Whether any task justifies a cloud primary by default | default local; **amended for the pilot** by OD-PILOT-2 (§2, `docs/DECISION_REGISTER.md` §2N) |
 | OD-RT-1 (from 05) | nesting depth | shared; finite cap locked |
 
 ---

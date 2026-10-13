@@ -39,6 +39,14 @@ class InvalidLoginState(AuthError):
     """
 
 
+class LoginNotAdmitted(AuthError):
+    """A valid login from an account outside the server's sign-in allow-list
+    (OD-PILOT-5: the pilot is invite-only). Refused before any user row is
+    created; rendered as `403`, never naming the list."""
+
+    client_message = "this account is not admitted to this server"
+
+
 class InvalidBootstrapToken(AuthError):
     """The bootstrap token was absent, already used, expired, or bound to a
     different user (03 §3.2)."""

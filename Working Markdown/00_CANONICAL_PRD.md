@@ -122,6 +122,8 @@ DEVICE (Android — Accessibility Service, Shizuku, on-device capture)
 | `PHONE-003` | **The client is never trusted to assert identity.** Every identity fact acted on is server-derived from a validated token/credential — never a `user_id`/`graph_id`/`session_id` in a request body. |
 | `PHONE-004` | The device's long-lived credential is stored client-side only in Android secure storage (Keystore-backed); it is never in source, logs, or any server-returned value after the one-time registration response. |
 
+**Admission (owner decision OD-PILOT-5, 2026-10-12, confirmed 2026-10-13; `docs/DECISION_REGISTER.md` §2N):** a server may restrict who signs in with `security.oidc.allowed_emails` / `allowed_domains`. Only a provider-verified email can match; a login outside the list is refused (`403`) after full `id_token` validation and **before** any `User` row exists (`03` §2.4). The pilot is invite-only, and a remote primary model without a list does not start. Identity stays keyed by `(issuer, subject)` (AUTH-005) — the list decides admission, never identity.
+
 ## 10. Target User & Pilot Model
 
 `[LOCKED]` People on $100–200 Android devices — the largest smartphone price segment in India, structurally excluded from flagship on-device AI as the RAM bar for on-device assistants moves *up*, not down. During Phase 2b, the actual near-term "user" is a small internal pilot group of ~10 people (§38), not the eventual public audience — design and test against that reality (multi-tenant, laptop-hosted, disposable data) rather than eventual scale.
@@ -208,6 +210,8 @@ Anti-enumeration `[LOCKED]`: a denial that would reveal the existence or visibil
 ## 19. Model Provider & LLM-as-Tool Principles
 
 `[LOCKED]` Realizes `MODEL-001..005`, `MODELTOOL-001..004`. The runtime speaks one normalized `ModelProvider` interface (`invoke`, `health`) — never a vendor SDK directly; adding a provider is an adapter + config, never a runtime change (`P4`). The default and recommended primary is a **local model** (Ollama, open-weight) — cloud providers are a configurable choice, never a hidden dependency. Any LLM may additionally be registered as a **tool** the primary agent invokes (`MODELTOOL-001`) — this flows through the *same* capability/authorization/metering machinery as any other tool, is native (no MCP-per-provider, `MODELTOOL-003`), and its output is **untrusted data** returned into the agent's context, never itself authoritative. Model-tool invocation nests to a finite, configured depth (§12) — unbounded model-calling-model recursion is impossible by construction.
+
+**Amendment (owner decision OD-PILOT-2, 2026-10-12, confirmed 2026-10-13; `docs/DECISION_REGISTER.md` §2N):** for the pilot, one configurable **remote** primary model may serve every user and agent of a server. The shipped default stays local (`config.example.yaml`); the pilot configuration (`config.pilot.example.yaml`) names a priced remote entry. A non-local primary is a startup condition, not a default: the server refuses to start unless the per-task, per-user daily and global daily budgets are all non-zero (13 §3) and sign-in is restricted (§9, OD-PILOT-5). The provider stays replaceable behind `ModelProvider`; its key is a SecretStore/env reference, never exposed to a client.
 
 ## 20. Filesystem & Network Enforcement Principles
 
@@ -562,7 +566,7 @@ hypermind-track-b/
 | OD-RT-2 | Context-compaction strategy | `05` | `[IMPL]`; non-fabricating constraint locked |
 | OD-RT-3 | AgentConfiguration resolution precedence (user vs graph scope) | `01`,`05` | Must be deterministic + documented before multi-scope configs ship |
 | OD-MT-1 | Default local model choice | `06` | Rec small Qwen-class |
-| OD-MT-2 | Whether any task justifies a cloud primary by default | `06` | Default local |
+| OD-MT-2 | Whether any task justifies a cloud primary by default | `06` | Default local; **AMENDED for the pilot** by OD-PILOT-2 (owner, 2026-10-12/13): a remote primary is a permitted configuration under non-zero budgets and an allow-list (§19, `docs/DECISION_REGISTER.md` §2N) |
 | OD-TOOL-1 | Exact risk-tier assignment per operation | `07` | **RATIFIED AT THE SEMANTIC-CAPABILITY LEVEL** (owner); concrete names/tiers `[PROPOSED]` in `docs/CAPABILITY_MATRIX.md`, owner signs the tier table |
 | OD-TOOL-2 | Provisional/untrusted-tool enablement gate specifics | `07` | `[IMPL]` |
 | OD-TOOL-3 | Which MCP servers (if any) are enabled at pilot | `07` | **DECIDED** (owner, 2026-10-02): **none** — no inbound or outbound MCP for the first Agent Factory external runtime (T0, `docs/DECISION_REGISTER.md` §2L). §17 is unchanged and still governs any future MCP |

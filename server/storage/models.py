@@ -214,6 +214,20 @@ class AgentConfiguration(Base):
     )
 
 
+class PresentationSettingsRow(Base):
+    """Pilot plan C10 (OD-CHAR-1/2/3): one user's character presentation
+    settings, as the validated `CharacterPresentationSettings` document — only
+    enumerated, boolean and numeric fields, no free text. Read by clients to
+    render; nothing on the server reads it to decide anything (import-linter
+    contract "Character presentation never reaches authority")."""
+
+    __tablename__ = "presentation_settings"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), primary_key=True)
+    settings: Mapped[dict] = mapped_column(SAJSON, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class CapabilityGrant(Base):
     __tablename__ = "capability_grants"
 

@@ -230,6 +230,8 @@ class AuditAction(str, Enum):
     IMPROVEMENT_CANDIDATE_REJECTED = "improvement.candidate.rejected"
     CONFIG_VERSION_APPLIED = "config.version.applied"
     CONFIG_VERSION_ROLLED_BACK = "config.version.rolled_back"
+    # Pilot plan C7: a user chose (or cleared) their own primary model.
+    MODEL_CONFIG_CHANGED = "config.model.changed"
     # A superuser request on the Judge's control path (switches, review queue).
     CONTROL_EVALUATION = "control.evaluation"
 

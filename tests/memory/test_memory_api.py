@@ -362,6 +362,65 @@ async def test_owner_deletion_needs_confirmation_and_removes_the_fact(world):
     assert again.status_code == 404
 
 
+# ── bulk deletion and export (pilot plan C9, P11) ─────────────────────────
+
+
+async def test_deleting_all_my_memories_is_confirmed_and_touches_only_mine(world):
+    h, alice, bob, _, _ = world
+    a_private = (await remember(h, alice, unique("The user prefers green tea"))).json()["fact_id"]
+    a_shared = (await remember(h, alice, unique("The user wants shared notes"))).json()["fact_id"]
+    await share(h, alice, a_shared)
+    b_shared = (await remember(h, bob, unique("The user prefers bob coffee"))).json()["fact_id"]
+    await share(h, bob, b_shared)
+
+    first = await h.client.delete(MEM, headers=alice.auth)
+    assert first.status_code == 403, first.text
+    err = first.json()["error"]
+    assert err["code"] == "confirmation_required"
+    assert err["details"]["action"] == "memory.delete_all"
+    assert err["details"]["risk_category"] == "consequential"
+    assert {f["fact_id"] for f in await listed(h, alice)} >= {a_private, a_shared}   # nothing deleted yet
+    token = err["details"]["confirmation_token"]
+
+    # The token is bound to this action and this principal: not to bob's, not to one fact's delete.
+    assert (await h.client.delete(MEM, headers={**bob.auth, "X-Confirmation-Token": token})).status_code == 403
+    assert (await h.client.delete(f"{MEM}/{a_private}",
+                                  headers={**alice.auth, "X-Confirmation-Token": token})).status_code == 403
+    assert {f["fact_id"] for f in await listed(h, alice)} >= {a_private, a_shared}
+
+    resp, spent = await confirmed(h, alice, "DELETE", MEM)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"deleted": 2}
+    left = {f["fact_id"] for f in await listed(h, alice)}
+    assert a_private not in left and a_shared not in left
+    assert b_shared in left                                   # bob's shared fact is bob's
+    bob_sees = {f["fact_id"] for f in await listed(h, bob)}
+    assert a_shared not in bob_sees and b_shared in bob_sees  # alice's mirror went with it
+    assert f"mem0fact:owner:{alice.user_id}" in [r.resource for r in await audit_rows(h, "memory.deleted")]
+    # A spent token never runs it again.
+    replay = await h.client.delete(MEM, headers={**alice.auth, "X-Confirmation-Token": spent})
+    assert replay.status_code == 403
+
+
+async def test_export_is_my_own_facts_only(world):
+    h, alice, bob, _, _ = world
+    a_private = (await remember(h, alice, unique("The user prefers oolong"))).json()["fact_id"]
+    a_shared = (await remember(h, alice, unique("The user wants shared oolong"))).json()["fact_id"]
+    await share(h, alice, a_shared)
+    b_shared = (await remember(h, bob, unique("The user prefers bob oolong"))).json()["fact_id"]
+    await share(h, bob, b_shared)
+    assert b_shared in {f["fact_id"] for f in await listed(h, alice)}   # alice can read it ...
+
+    resp = await h.client.get(f"{MEM}/export", headers=alice.auth)
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["cache-control"] == "no-store"
+    assert resp.headers["content-disposition"].startswith("attachment")
+    body = resp.json()
+    assert set(body) == {"exported_at", "items", "truncated"} and body["truncated"] is False
+    assert {f["fact_id"] for f in body["items"]} == {a_private, a_shared}   # ... but it is not hers to export
+    assert all(f["owner_user_id"] == str(alice.user_id) for f in body["items"])
+
+
 # ── lifecycle through the facade (LIFE-003, MEM-T9, MP-T11) ────────────────
 
 
@@ -399,7 +458,7 @@ async def test_api_t1_every_memory_endpoint_requires_a_token(world):
     fid = uuid.uuid4()
     for method, url, kwargs in (("GET", MEM, {}), ("POST", MEM, {"json": {"fact_type": "preference", "content": "x"}}),
                                 ("PATCH", f"{MEM}/{fid}", {"json": {"content": "x"}}), ("DELETE", f"{MEM}/{fid}", {}),
-                                ("GET", f"{MEM}/status", {})):
+                                ("GET", f"{MEM}/status", {}), ("DELETE", MEM, {}), ("GET", f"{MEM}/export", {})):
         resp = await h.client.request(method, url, **kwargs)
         assert resp.status_code == 401, (method, url)
 
@@ -418,7 +477,8 @@ async def test_api_t10_a_down_store_is_503_mem0_on_every_endpoint(world, monkeyp
     for method, url, kwargs in (("GET", MEM, {}),
                                 ("POST", MEM, {"json": {"fact_type": "preference", "content": "The user prefers x"}}),
                                 ("PATCH", f"{MEM}/{fact_id}", {"json": {"content": "The user prefers y"}}),
-                                ("DELETE", f"{MEM}/{fact_id}", {})):
+                                ("DELETE", f"{MEM}/{fact_id}", {}),
+                                ("DELETE", MEM, {}), ("GET", f"{MEM}/export", {})):
         resp = await h.client.request(method, url, headers=alice.auth, **kwargs)
         assert resp.status_code == 503, (method, resp.text)
         err = resp.json()["error"]

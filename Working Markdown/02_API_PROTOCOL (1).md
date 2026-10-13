@@ -23,7 +23,7 @@ Non-goals: OIDC redirect mechanics (that's `03`), the agent loop internals (that
 - Every non-public endpoint requires a **short-lived access token** in `Authorization: Bearer <access_token>`.
 - The server **derives identity from the token**, never from any `user_id`/`graph_id`/`session_id` in the request body (PHONE-003). A body that contains those fields has them treated as *claims to validate*, never as authorization.
 - Token refresh uses the **long-lived device credential** (SESSION-001), via a dedicated endpoint (§3), not a full re-login.
-- Public endpoints (no token): only the OIDC start/callback and health (`§2`, `§12`).
+- Public endpoints (no token): only the OIDC start/callback, health and readiness (`§2`, `§12`).
 
 ### 1.2 Authorization `[LOCKED]` (PRD SESSION-004, RAUTH-002)
 Every resource-touching endpoint runs the deterministic chain before doing work:
@@ -123,6 +123,8 @@ Every endpoint that triggers a model call or tool execution emits a `UsageEvent`
 | `POST /api/v1/sessions/token` | device credential | Exchange/refresh → short-lived access token (SESSION-001) without full re-login | `{device_credential}` → `{access_token, expires_at}` | 401 (revoked device → `unauthorized`), 503 |
 | `POST /api/v1/sessions/logout` | Bearer | End current session | — → `204` | 401 |
 | `DELETE /api/v1/devices/{device_id}` | Bearer (owner) | Revoke a device (lost-phone, SESSION-002); invalidates its credential remotely | — → `204` | 403, 404 |
+| `GET /api/v1/me` | Bearer | The caller (pilot plan C3): user id, display name, current device, active graph **re-checked live** (04 §9), active device count, the operator's feature flags (reported, never consulted) | — → `{user_id, display_name, device_id, active_graph_id, active_devices, features}` | 401 |
+| `GET /api/v1/devices` | Bearer | The caller's **own** devices (pilot plan C4): platform, registration, last seen, revocation, step-up enrolment, live connection, `current` — never a credential handle, push token or key | — → `{items:[DeviceView]}` (≤ 100) | 401 |
 | `DELETE /api/v1/account` | Bearer + fresh-auth | Account deletion → cascades graphs/memories/files/tasks/devices/tokens/creds/caches (LIFE-003) | — → `202` (async purge) | 403 |
 
 `[LOCKED]` The device credential value is returned exactly once at registration, never retrievable again, never in any log/audit/usage record. A lost credential is handled by revoke+re-register, not by re-fetch.
@@ -152,6 +154,7 @@ Every endpoint that triggers a model call or tool execution emits a `UsageEvent`
 | `POST /api/v1/agent/tasks/{task_id}/confirm` | Bearer | Provide human confirmation for a pending consequential/irreversible action (PERM-004) | `{confirmation_token, approve:bool}` → resumes or aborts | 403 `prohibited` (if somehow an absolute-floor action — should never reach here), 409 |
 | `POST /api/v1/agent/tasks/{task_id}/cancel` | Bearer | Cancel a running task (runaway/user abort) | — → `204` | 404 |
 | `GET /api/v1/agent/tasks/{task_id}` | Bearer (owner) | Poll task status/result | — → `AgentResult{status}` | 403, 404 |
+| `GET /api/v1/agent/tasks` | Bearer (owner) | The caller's task history, newest first (pilot plan C5): status, mode, failure code, origin (`device`/`delegation`), counts, timestamps — no task text, result or confirmation token | `?limit=1..100&before=<task_id>` → `{items:[TaskSummary], next_before}`; a cursor that is not one of the caller's tasks → `422` | 401, 422 |
 
 `[LOCKED]` The agent endpoint returns a **proposal-executed-under-authorization** result, never raw model execution authority (P1). If the agent's plan includes a consequential action, the API returns `confirmation_required` and does **not** perform it until `/confirm` (PERM-004). An absolute-floor action (PERM-006) is never surfaced as confirmable — it returns `prohibited`.
 
@@ -165,6 +168,12 @@ Tools are invoked **by the agent, internally**, not directly by the client — t
 |---|---|---|---|
 | `GET /api/v1/config/tools` | Bearer | List tools available/enabled for the resolved config (`ToolConfiguration`) | → `{items:[ToolContract-summary]}` |
 | `PUT /api/v1/config/agent` | Bearer (owner-of-scope) | Set primary model / model-tools / enabled tools for a user- or graph-scoped `AgentConfiguration` (MODEL-001) | `AgentConfiguration` → `AgentConfiguration` |
+| `GET /api/v1/config/model/catalog` | Bearer | The operator-published models a user may select (pilot plan C7, OD-PILOT-2): `agent.primary`, `agent.fallback` — provider, model, prices, `local`, `requires_user_key`; never an endpoint or key reference | → `{items:[CatalogEntry]}` |
+| `GET/PUT/DELETE /api/v1/config/model` | Bearer | The caller's own primary model (pilot plan C7). **User scope only** — no graph id is accepted; graph-scoped model configuration is deferred (owner, 2026-10-13). `PUT` names a catalog entry and, for a paid one, one of the caller's own live keys; no endpoint, provider or model field exists. "Server default" = no row (the operator's key is never copied into a user row). `DELETE` returns to the default | `{catalog_id, key_ref?}` → `ModelSelection` |
+| `POST /api/v1/secrets` | Bearer | Store one model API key, user-scoped, class `model_api_key` (pilot plan C7). Returns **only** the handle; the value is never returned, logged, audited or echoed by a validation error; ≤ 10 live keys per user | `{value}` → `201 {key_ref}` |
+| `DELETE /api/v1/secrets/{key_ref}` | Bearer | Revoke one of the caller's own keys (12 §5); anyone else's, or any other class, is `404` | — → `204` |
+| `GET/PUT/DELETE /api/v1/config/presentation` | Bearer | The caller's character presentation settings (pilot plan C10, OD-CHAR-1/2/3): exactly the shared `CharacterPresentationSettings` document — enumerated, boolean and numeric fields, no free text; a malformed document is refused whole (`422`, field names only); `DELETE` = defaults. Rendered by clients; nothing on the server decides from it | `CharacterPresentationSettings` → same |
+| `GET /api/v1/usage` | Bearer | The caller's own spend and limits (pilot plan C6) over the usage policy's windows (24 h budget, 1 min rate; Judge excluded), a 30-day report and its per-agent part. No global or other-user figure | → `{spent_24h, daily_limit, remaining_24h, calls_last_minute, calls_per_minute_limit, spent_30d, agents_30d}` |
 | `GET /api/v1/capabilities` | Bearer | List the caller's active `CapabilityGrant`s | → `{items:[CapabilityGrant]}` |
 | `POST /api/v1/capabilities` | Bearer | Grant a capability (user consent, PERM-002) — e.g. per-app device capability from the phone's permission UI (§13) | `{capability, scope_type, scope_id, resource_scope, expires_at?}` → `CapabilityGrant` |
 | `DELETE /api/v1/capabilities/{grant_id}` | Bearer | Revoke a capability | — → `204` |
@@ -186,6 +195,8 @@ Tools are invoked **by the agent, internally**, not directly by the client — t
 | `POST /api/v1/memory` | Bearer | Explicitly add a memory (default `visibility:private`) | `{fact_type, content, graph_id}` → `Mem0Fact` |
 | `PATCH /api/v1/memory/{fact_id}` | Bearer (owner only) | Correct a memory, or change `visibility` private↔graph (owner-only, audited — RAUTH V2) | `{content?, visibility?}` → `Mem0Fact` |
 | `DELETE /api/v1/memory/{fact_id}` | Bearer (owner only) | Delete a memory (MEM-003) | — → `204` |
+| `DELETE /api/v1/memory` | Bearer (owner) + confirmation | Delete **every** fact the caller owns, private or shared, with its mirrors (pilot plan C9, P11). `consequential`: answered with `403 confirmation_required` and a single-use token bound to exactly this action; runs when the token returns in `X-Confirmation-Token` | — → `{deleted}` |
+| `GET /api/v1/memory/export` | Bearer (owner) | Export the caller's own facts — not facts others shared with them (pilot plan C9) | — → `{exported_at, items:[Mem0Fact], truncated}` (`no-store`, attachment, ≤ 10 000) |
 
 `[LOCKED]` `GET /memory` returns only facts where `visibility==graph` OR `owner_user_id==caller` (RAUTH-003) — being in the graph is not enough to see another user's private facts. A `fact_type` outside the enum on POST → `422` (EMO-002). Changing visibility to `graph` emits an AuditEvent (RAUTH V2).
 
@@ -239,10 +250,11 @@ Tools are invoked **by the agent, internally**, not directly by the client — t
 
 | Method · Path | Auth | Purpose |
 |---|---|---|
-| `GET /api/v1/health` | public | Liveness (no data, no auth) → `{status}` |
+| `GET /api/v1/health` | public | Liveness (no data, no auth) → `{status}`; always `200` |
+| `GET /api/v1/ready` | public | Readiness (pilot plan F10/C3, register §2N) → `{ready, database, migrations, secrets}`, booleans only; `200` when the store answers, its schema is at the code's migration head and the SecretStore is unlocked, else `503`; `Cache-Control: no-store` |
 | `GET /api/v1/admin/*` | **superuser** (DASH-003/004) | Observability surfaces (devices/users/graphs/sessions/audit/usage/health) |
 
-`[LOCKED]` `/admin/*` requires a **superuser principal**, distinct from any normal user session (DASH-004, SUPER-001) — an ordinary Bearer token cannot reach it. Admin responses are **secret-free** (DASH-005) and **PII-redacted by default** (DASH-006); viewing unredacted user content is a separate privileged, audited action. `/health` is the only data-free public endpoint besides OIDC start/callback.
+`[LOCKED]` `/admin/*` requires a **superuser principal**, distinct from any normal user session (DASH-004, SUPER-001) — an ordinary Bearer token cannot reach it. Admin responses are **secret-free** (DASH-005) and **PII-redacted by default** (DASH-006); viewing unredacted user content is a separate privileged, audited action. `/health` and `/ready` are the only data-free public endpoints besides OIDC start/callback; `/ready` reports component booleans only — no versions, revision ids or error text.
 
 ---
 

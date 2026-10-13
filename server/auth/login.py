@@ -27,7 +27,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.auth.bootstrap import issue_bootstrap_token
-from server.auth.errors import AuthError, InvalidLoginState
+from server.auth.errors import AuthError, InvalidLoginState, LoginNotAdmitted
 from server.auth.oidc import (
     OIDCProvider,
     code_challenge_for,
@@ -48,6 +48,30 @@ LOGIN_STATE_TTL = timedelta(minutes=10)
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+@dataclass(frozen=True)
+class Admission:
+    """Who may sign in (OD-PILOT-5). Empty on both sides → anyone may (the
+    development default). Matching is exact and case-insensitive, on the
+    provider's *verified* email only: no wildcard, and a domain never covers
+    its subdomains."""
+
+    emails: frozenset[str] = frozenset()
+    domains: frozenset[str] = frozenset()
+
+    @property
+    def restricted(self) -> bool:
+        return bool(self.emails or self.domains)
+
+    def admits(self, email: str | None, *, verified: bool) -> bool:
+        if not self.restricted:
+            return True
+        if not email or not verified:
+            return False
+        address = email.strip().lower()
+        _, _, domain = address.rpartition("@")
+        return address in self.emails or (bool(domain) and domain in self.domains)
 
 
 @dataclass(frozen=True)
@@ -74,11 +98,13 @@ class OIDCLoginFlow:
         redirect_uri: str,
         repository: AuthRepository | None = None,
         state_ttl: timedelta = LOGIN_STATE_TTL,
+        admission: Admission | None = None,
     ) -> None:
         self._provider = provider
         self._redirect_uri = redirect_uri
         self._repo = repository or AuthRepository()
         self._state_ttl = state_ttl
+        self._admission = admission or Admission()
 
     async def start(
         self, session: AsyncSession, *, audit: AuditLogger, app_state: str | None = None
@@ -141,11 +167,15 @@ class OIDCLoginFlow:
             identity = await self._exchange_and_validate(
                 code=code, state_row=state_row
             )
+            # OD-PILOT-5: an account outside the allow-list is refused here,
+            # after every token check and before any user row exists (AUTH-T1).
+            if not self._admission.admits(identity.email, verified=identity.email_verified):
+                raise LoginNotAdmitted("not on the sign-in allow-list")
         except AuthError as exc:
             await audit.record(
                 actor=AuditActor.SYSTEM,
                 action=AuditAction.OIDC_LOGIN_REJECTED,
-                resource="auth:oidc",
+                resource="auth:oidc:not_admitted" if isinstance(exc, LoginNotAdmitted) else "auth:oidc",
                 result=AuditResult.BLOCKED,
             )
             raise exc
