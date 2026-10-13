@@ -531,13 +531,19 @@ class BrowserRuns:
             status, failure = AgentTaskStatus.FAILED, "result_unreadable"
         else:
             # The runtime's own words for its failure are data, never a code
-            # of JARVIS's (they could name any stop at all). They are logged
-            # for the operator only — already reduced by read_result to at most
-            # 40 characters of [a-z0-9_] — so a failed run can be diagnosed.
+            # of JARVIS's (they could name any stop at all).
             status, failure = AgentTaskStatus.FAILED, "runtime_failed"
-            logger.warning("browser run %s: the runtime reported a failure (its words: %s; steps: %d)",
-                           live.run_id, result.error or "none", result.steps)
         response = result.final if result is not None and status is AgentTaskStatus.COMPLETED else None
+        if status is AgentTaskStatus.FAILED:
+            # What the runtime itself said went wrong is otherwise recorded
+            # nowhere (the code above is JARVIS's, the runtime's words are
+            # data). `error` is already reduced to [a-z0-9_]{0,40} by
+            # `read_result`; nothing of `final`, the task or a page is logged.
+            logger.warning(
+                "browser run %s failed (%s): exit_code=%s runtime_status=%s runtime_error=%s steps=%s egress=%s",
+                live.run_id, failure, exit_code, result.status if result is not None else None,
+                result.error if result is not None else None, result.steps if result is not None else None,
+                ",".join(f"{k}={v}" for k, v in sorted(live.decisions.items())) or "none")
         try:
             async with self._storage.session() as session:
                 await self._close(session, live, status, failure, response)
