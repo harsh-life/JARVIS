@@ -736,6 +736,24 @@ fixed the state order.
 | CHAR-7 | **Controller and renderer.** `CharacterController` (pure, virtual clock): baseline `default`, `sleepy` after `idle_timeout_ms` (5 min), wake on activity; a selected state holds for its `hold_ms` then returns to baseline; `min_display_ms` with latest-wins debouncing; a score ≥ `interrupt_score` interrupts. The renderer cross-fades for `transition_ms` (retargeted mid-fade) or swaps instantly with reduced motion. Inputs: a submitted request, voice start, the app coming to the front, and `CharacterEvents` (a fresh server-confirmed completion — it only reads the task tracker). | `.../character/CharacterController.kt`, `.../character/CharacterPresentation.kt`, `.../ui/Character.kt`, `CharacterEvents.kt`, `MainActivity.kt` |
 
 
+### OD-CHAR-3 — the character's model, signals and limits, clarified (OWNER DECISION, 2026-10-13)
+
+**Owner instruction, 2026-10-13:** *"My intended behaviour is a replaceable,
+endpoint-local inference model that selects among the seven existing character
+expressions using the current interaction, available vocal/prosodic signals and
+verified application events … It must not enable persistent emotional
+profiling, relationship scoring, claims of subjective feelings, or any
+influence on JARVIS authorization or execution. Custom personality text
+injected into model prompts, persistent persona memory and more elaborate
+personality systems remain deferred until a separate explicit decision. UI-only
+avatar, artwork, colour and presentation settings may proceed within the
+existing boundaries."* This row clarifies OD-CHAR-2; it widens nothing that
+OD-CHAR-2 excludes.
+
+| ID | Decision (ratified) | Exact scope |
+|---|---|---|
+| **OD-CHAR-3** | **The OD-CHAR-2 provider may be a learned model; prosody is an input; persona stays deferred; UI-only skinning may proceed.** | **Model:** the `PresentationInferenceProvider` may be a learned classifier (not only the deterministic cue scorer), provided it runs **on the endpoint** (weights shipped with or provisioned onto the client; no inference request leaves the device), is replaceable behind the same interface, and emits the same validated `PresentationInference` shape into the same deterministic selection policy. **Signals:** the current utterance (text or transcript), **vocal/prosodic features of the current utterance computed on the endpoint** (numbers such as loudness, pitch movement, speech rate — never raw audio, which is neither retained nor sent), at most the last three utterances of the current session in memory, and verified application events. **Configurable:** per-state activation thresholds, the confidence floor, transitions (duration, cross-fade or none, reduced motion) and the hold/idle/reset policy, as validated presentation settings. **Still excluded:** persistent emotional profiling of a user (no inferred state, score or feature is stored, logged, sent or turned into memory), relationship or trust scoring, any claim or first-person statement that JARVIS has subjective feelings, and any influence on authentication, identity, membership, ownership, capabilities, policy, risk classification, confirmation or step-up, budgets, or tool authorization or execution. **Deferred until a separate explicit decision:** custom personality text injected into model prompts, persistent persona memory, and any richer personality system (traits, tone or response-style settings that reach a prompt). **May proceed now:** UI-only avatar, artwork, colour and presentation settings — rendering choices that no prompt, memory, model configuration or authority path reads. Training a model on user data remains a separate decision (opt-in collection, no raw audio by default, OD-CHAR-2). |
+
 ---
 
 ## 2N. Pilot assembly — owner decisions (2026-10-12)
@@ -802,6 +820,29 @@ is applied; the owner may loosen any of them.
    PRD §19 / `06` §2 (remote primary), PRD §17 (a one-line pointer to
    OD-PILOT-1), `docs/23`/`docs/24` (web endpoint). Each edit lands in the same
    PR as the code and tests that need it.
+
+### Owner confirmation of §2N (2026-10-13)
+
+**Owner instruction, 2026-10-13:** *"I confirm the five pilot decisions
+recorded in §2N and approve the four readings, with the following precise
+interpretations."* OD-PILOT-1…5 are confirmed as written above. The owner's
+four interpretations are recorded here and **govern** the readings they touch;
+where a reading above is wider, this text wins.
+
+| # | Owner's interpretation (exact) | Readings it governs | Consequence for the build |
+|---|---|---|---|
+| 1 | **Workspace scope:** one private workspace per user for the pilot. Shared graph-scoped model configuration is deferred. | 4 (OD-PILOT-2) | The model-configuration API reads and writes only the caller's `AgentConfiguration(scope = user)` row for their private graph; no route accepts a graph id for model configuration. |
+| 2 | **MCP:** approve only operator-pinned, unauthenticated, read-only HTTP MCP servers, with no credentials or credential forwarding. Authenticated MCP and execution-capable MCP tools are deferred. | 1, 2, 3 (OD-PILOT-1, OD-PILOT-4) | The MCP server config has no credential field of any kind; only the HTTP(S) transport exists (no stdio, no subprocess); only operator-pinned read tools register, under `mcp.tool/read`. A server that requires authentication is out of scope, not worked around. |
+| 3 | **Browser endpoint:** a browser may confirm eligible consequential actions only for tasks it initiated. It cannot perform hardware-backed step-up, hold Android/device-specific grants, or approve a paused action belonging to another endpoint. | 7 (OD-PILOT-3) | Enforced server-side in the confirm, step-up and grant paths by the device's platform and the task's originating device; the browser holds no policy. |
+| 4 | **Contracts:** update affected contracts, PRD sections, decision records and tests in the same implementation PR as their corresponding code changes. | 8 | Every implementing PR carries its own contract/PRD/register/test edits; nothing lands ahead of its code. |
+
+Readings 5 and 6 (a non-local primary model requires non-zero task, per-user
+and global budgets, and a non-empty sign-in allow-list, as startup conditions)
+follow directly from OD-PILOT-2 and OD-PILOT-5 and are implemented as written;
+the owner may relax either. **Unchanged:** the pilot stays invite-only
+(OD-PILOT-5) and the real-data gate stays closed (disposable/test data only).
+Not started by this confirmation: Agent Factory Phase 7, Darwin integration,
+Track A work.
 
 ---
 
