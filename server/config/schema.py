@@ -21,7 +21,7 @@ import re
 from pathlib import PurePath
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from shared.schemas.agent_factory import AgentModelProfile
 from shared.schemas.push import FcmClientOptions, PushProvider
@@ -747,9 +747,42 @@ class AndroidConfig(StrictModel):
     push: AndroidPushConfig = Field(default_factory=AndroidPushConfig)
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[a-z0-9.-]+\.[a-z]{2,}$")
+_DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$")
+
+
 class OIDCConfig(StrictModel):
     client_id: str
     issuer: str
+    # OD-PILOT-5 (invite-only): who may sign in. Both empty → anyone who
+    # completes OIDC may (the development default); otherwise a login whose
+    # *verified* email is neither listed nor in a listed domain is refused
+    # before any user row exists (AUTH-T1). Exact, case-insensitive matches:
+    # no wildcard, and a domain never covers its subdomains.
+    allowed_emails: list[str] = Field(default_factory=list)
+    allowed_domains: list[str] = Field(default_factory=list)
+
+    @field_validator("allowed_emails")
+    @classmethod
+    def _emails(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip().lower() for item in value]
+        for item in normalized:
+            if not _EMAIL_RE.match(item):
+                raise ValueError(f"security.oidc.allowed_emails: {item!r} is not an email address")
+        return normalized
+
+    @field_validator("allowed_domains")
+    @classmethod
+    def _domains(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip().lower() for item in value]
+        for item in normalized:
+            if not _DOMAIN_RE.match(item):
+                raise ValueError(f"security.oidc.allowed_domains: {item!r} is not a domain name")
+        return normalized
+
+    @property
+    def restricted(self) -> bool:
+        return bool(self.allowed_emails or self.allowed_domains)
 
 
 class RateLimitsConfig(StrictModel):

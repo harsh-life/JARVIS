@@ -1,0 +1,219 @@
+# Hypermind Track B — the PILOT configuration model (docs/PILOT_EXECUTION_PLAN.md
+# F1, decisions P1–P24; register §2N, confirmed by the owner 2026-10-13).
+#
+# The same schema as config.example.yaml (15_CONFIGURATION_SELF_HOSTING.md);
+# only the values differ. Laptop and VPS use this one file shape. Copy it to
+# /etc/jarvis/config.yaml (or set HYPERMIND_CONFIG_PATH), replace every
+# REPLACE_ / example value, and never commit the copy.
+#
+# No value here is a secret. Every credential is a reference:
+#   env:NAME            resolved from the server's environment at use
+#   secretstore:<id>    resolved through the SecretStore (12)
+# The KEK and the superuser token reach the process through systemd
+# credentials (deploy/jarvis.service), never through this file.
+#
+# What this configuration is NOT cleared for: real user data. The real-data
+# gate stays closed (README "Before putting real data anywhere near this",
+# docs/OD_A1_BR_T2.md). Disposable/test data only.
+#
+# Startup preconditions (server/config/preconditions.py, checked by the
+# entrypoint before the app is built):
+#   * a non-local primary needs agent.bounds.per_task_budget and both
+#     security.budgets limits > 0 (OD-PILOT-2, reading 5);
+#   * a non-local primary needs a non-empty security.oidc.allowed_emails or
+#     allowed_domains — the pilot is invite-only (OD-PILOT-5, reading 6).
+
+server:
+  host: "127.0.0.1"                    # always loopback; Caddy or cloudflared is the only public face
+  port: 8000
+  base_url: "https://jarvis.example.com"   # REPLACE: the named-tunnel / Caddy hostname (docs/DEPLOYMENT.md §2)
+  tunnel:
+    provider: "cloudflare"
+
+# P1/P5 — one priced remote primary for every user and every agent (amends
+# OD-MT-2: a config choice; config.example.yaml stays local Ollama). A user
+# never chooses an endpoint. The key is a reference; the key itself lives in
+# the service's environment (deploy/jarvis.env) or in the SecretStore.
+agent:
+  provider: "openai_compatible"
+  model: "REPLACE_WITH_THE_PILOT_MODEL"
+  endpoint: "https://api.example.com/v1"   # REPLACE: the provider's https base URL
+  secret_ref: "env:JARVIS_MODEL_API_KEY"
+  timeout_seconds: 60
+  # REPLACE with the provider's real prices, in the currency of security.budgets.
+  pricing: { input_per_1k_tokens: 0.001, output_per_1k_tokens: 0.002 }
+  # Optional keyless local fallback (05 §5). Leave commented unless Ollama runs on this host.
+  # fallback: { provider: "ollama", model: "qwen2.5:3b-instruct" }
+  generation_policy: {}
+  bounds:                              # P6 — the built defaults, with a non-zero task budget
+    max_iterations: 12
+    max_model_calls: 16
+    max_tool_calls: 24
+    max_model_tool_nesting_depth: 1
+    wall_clock_timeout_seconds: 120
+    per_task_budget: 0.05              # REPLACE with your number; must be > 0 (OD-PILOT-2)
+    memory_top_k: 5
+  breaker:
+    denial_limit: 5
+    violation_limit: 3
+    rejection_limit: 3
+
+models_as_tools: []                    # P1 — no model-as-a-tool in the pilot
+
+tools: []
+
+# P9/P12 — Mem0 behind MemoryProvider. `python -m server.memory provision`
+# (deploy/bootstrap.sh) is the only step that downloads anything.
+memory:
+  enabled: true
+  provider: "mem0"
+  writes_enabled: true
+  auto_extract: true                   # P9: the owner's own metered call, through the write gate
+  max_fact_chars: 500
+  max_facts_per_task: 3
+  mem0:
+    collection: "hypermind_memories"
+    path: "/var/lib/jarvis/mem0_storage"     # 0700; plaintext at rest (OD-MB-4 open → test data only)
+    embedder: "bge-small-en-v1.5"
+    embedder_cache: "/var/lib/jarvis/models"
+    mode: "jarvis_extraction"
+
+# P12 — Git-backed, separate store, no HTTP write path.
+vault:
+  enabled: true
+  collection: "hypermind_vault"
+  git_backed: true
+  path: "/var/lib/jarvis/vault"
+  index_path: "/var/lib/jarvis/vault_index"
+  embedder: "bge-small-en-v1.5"
+  embedder_cache: "/var/lib/jarvis/models"
+  chunk_chars: 1200
+  hydration_top_k: 3
+  hydration_max_chars: 3000
+
+intelligence:
+  enabled: false
+
+# D7 — the Judge on rules: no model, no cost, no authority. Improvements stay
+# unapproved (OD-JDG-5).
+evaluation:
+  enabled: true
+  evaluator: rules
+  provider: null
+  live:
+    enabled: false
+  may_request_stop: false
+  budget: 0.0
+  budget_scope: own_and_global
+
+scheduler:
+  enabled: true
+  backend: apscheduler_db
+  misfire_grace_minutes: 60
+  max_active_jobs_per_user: 50
+  agent_tool_enabled: true
+  poll_seconds: 30
+  min_recurrence_minutes: 5
+  max_horizon_days: 730
+  max_task_reason_chars: 1000
+  pending_delivery_ttl_hours: 72
+
+# P22 — on-device speech; server STT/TTS providers off (OD-VOI-1).
+voice:
+  stt: device
+  tts: device
+  diarization: null
+  speaker_id: null
+  providers: []
+
+execution:
+  filesystem:
+    base_root: "/var/lib/jarvis/sandboxes"
+    containment_mode: "mediated"
+  network:
+    enforcement_mode: "mediated_proxy"
+    default_destinations: []           # add the hosts net.request / agents may reach
+    default_internet: false
+    default_private_net: false
+  process:
+    allowed_executables: []
+    confinement_mode: "landlock"
+    read_only_paths: []
+    break_glass:
+      enabled: false
+      allowed_executables: []
+      max_window_minutes: 15
+      max_invocations: 1
+
+# P16 — Android is the pilot's primary endpoint. The sensitive-app lists ship
+# EMPTY: no UI control works until the owner classifies apps.
+android:
+  enabled: true
+  operation_ttl_seconds: 30
+  app_links:
+    base_url: "https://jarvis.example.com"   # REPLACE: the same host as server.base_url (F6)
+    package_name: com.hypermind.jarvis
+    sha256_cert_fingerprints: []       # REPLACE: the signing certificate of the APK you install (public)
+  app_classification:
+    non_sensitive: []
+    sensitive: []
+    payment: []
+  vision: null
+  push:
+    provider: none                     # FCM off: H-2 stays out of scope
+
+# P13/P15 — agents on, native runtime only, present-user and reminder-tap runs.
+# Unattended runs stay off (P14). Browser Use and every other external runtime
+# stay off for the pilot (reserved, not enabled).
+agents:
+  enabled: true
+  enabled_templates: [research_digest, web_monitor_basic, knowledge_keeper, file_organizer]
+  max_agents_per_user: 5               # OD-AF-7
+  default_budget_per_run: 0.05
+  default_budget_per_month: 1.0
+  unattended_enabled: false
+  model_profiles:
+    - profile_id: "general-agentic"
+      version: 1
+      model_ref: "agent.primary"       # P3 — agents follow the user's primary
+      features: [agentic_reasoning, tool_calling, structured_output]
+      context_window: 8192             # REPLACE with the pilot model's window
+      supported_runtimes: [native]
+      display_name: "General agent"
+  model_profiles_open_to_all: ["general-agentic"]
+  runtimes:
+    native: { enabled: true }
+
+security:
+  oidc:
+    client_id: "REPLACE_WITH_YOUR_OWN_GOOGLE_OIDC_CLIENT_ID"   # public; redirect URI = <base_url>/api/v1/auth/oidc/callback
+    issuer: "https://accounts.google.com"
+    # P19 / OD-PILOT-5 — invite-only. A verified Google email on this list (or
+    # at exactly one of the domains) may sign in; anyone else gets 403 and no
+    # user row. Required with a remote primary.
+    allowed_emails: ["pilot-user@example.com"]   # REPLACE
+    allowed_domains: []
+  rate_limits:
+    per_user_requests_per_minute: 60
+    per_device_requests_per_minute: 60
+    global_requests_per_minute: 600
+    per_session_concurrent_tasks: 1
+    per_user_concurrent_tasks: 2
+    global_concurrent_tasks: 8
+    scheduler_creations_per_hour: 20
+  budgets:                             # P15 — your numbers; both must be > 0 (OD-PILOT-2)
+    per_user_daily_cost_limit: 1.0
+    global_daily_cost_limit: 5.0
+  capability_defaults: {}
+
+secrets:
+  store: "encrypted_local"
+  kek_source: "env:HYPERMIND_KEK"      # set by deploy/jarvis-start.sh from the systemd credential
+
+# H-1 — PostgreSQL on this host, over its Unix socket with peer authentication:
+# the OS user `jarvis` is the database role `jarvis`, so no database password
+# exists at all (deploy/postgres.md). Config refuses a password in this URL
+# anyway (SECRET-004). For a database on another host use
+#   postgresql+asyncpg://jarvis@db.internal:5432/jarvis?ssl=require
+# with the password in ~jarvis/.pgpass (0600).
+database_url: "postgresql+asyncpg://jarvis@/jarvis?host=/run/postgresql"

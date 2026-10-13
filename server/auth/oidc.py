@@ -68,6 +68,9 @@ class OIDCIdentity:
     subject: str
     email: str | None = None
     display_name: str | None = None
+    # Whether the provider vouches for `email` (the `email_verified` claim).
+    # Admission (OD-PILOT-5) matches only a verified email; nothing else reads it.
+    email_verified: bool = False
 
 
 class OIDCProvider(Protocol):
@@ -200,6 +203,7 @@ def validate_id_token(
         subject=str(subject),
         email=claims.get("email"),
         display_name=claims.get("name"),
+        email_verified=claims.get("email_verified") in (True, "true"),
     )
 
 
