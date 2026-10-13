@@ -35,7 +35,8 @@ import com.hypermind.jarvis.ui.theme.Secondary
  * The plain status indicator (docs/23 §7): a ring whose colour, motion and
  * centre glyph all carry the state, so it reads without relying on colour.
  * It takes a [PresentationSignal] and nothing else — no task content can
- * reach it. This is the one composable the future character replaces.
+ * reach it. The character (OD-CHAR-1) sits beside it and does not replace
+ * it: this stays the status, whatever the character's expression.
  */
 @Composable
 fun StatusIndicator(

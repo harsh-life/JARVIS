@@ -120,7 +120,7 @@ names remain `[PROPOSED]` until the owner signs them.
 | (new) | Waiting for an on-device dependency (docs/23 §5.3) | Task status `waiting_for_platform`: a device operation refused `platform_unavailable` (e.g. Shizuku after a reboot) pauses the **task**, never the operation — nothing is queued on the device. Bounded: `max_platform_waits` 2 per task, `max_platform_wait_seconds` 600 each; expiry fails the task `platform_unavailable`. Resumed only when **that** device reports **that** dependency available; the call is then proposed again through every check and the engine (a revoked grant is honoured; a consequential action needs a **new** confirmation), and a fresh operation is built. Volatile like a paused confirmation: a restart fails it closed. | `server/agent/runtime.py`, migration `…_agent_task_waiting_for_platform` |
 | (new) | The per-app grid's server side (PRD §13, docs/23 §5.2) | Each ON toggle is backed by a **device-scoped** `CapabilityGrant` narrowed to exactly `{package_name}`, created through the existing `POST /capabilities` (the server checks the scope id is the caller's own device). The capabilities come from the shared mapping (`screen_read` → `device.read` + `app.interact`; `ui_interaction` → `app.interact` + `device.ui_control`; `screenshot` → `device.read`), and are requested only where the cached classification would allow the operation at all. Turning a toggle **off** refuses locally first and then revokes. Turning one **on** authorizes nothing until the server records it. A failed sync is retried on the next connection. The grid revokes only its own grants: this device, one app, a mapped capability. It leaves user-wide or dashboard-made grants alone, and the device-side grid still refuses under them. **`device_state` (battery) is never synced:** `read_battery` takes no app, so its grant would be an unscoped `device.read` covering every app's screen at the server layer. That grant stays a deliberate owner action from the dashboard. A capability grant covers all its operations, so e.g. `app.interact` for reading also covers `tap` server-side; the per-toggle split is enforced by the device guard (two layers, 08 §4). | `android/.../permissions/GridSync.kt`, `contract/Grants.kt`, `shared/android/grant_samples.json` |
 | (new) | Push wake (docs/23 §4, OD-AND-5 stays open) | **Optional and off by default** (`android.push.provider: none`). The only payload is `shared/schemas/push.py`'s `fcm_wake_message`: an FCM *data* message `{"type": "wake"}` plus fixed routing (high priority, 600 s TTL, one collapse key) — no task, operation, user content, id, token or authorization (ANDC-T9, tested at the model and at the HTTP transport). The phone binds its **own** registration token over its authenticated session (`PUT /devices/me/push-token`; one token → one device; another user's token cannot be taken over; revocation clears it). When an operation is sent to an offline device that can be woken, the operation **still fails at once** (`device_unavailable`, never queued — ANDC-T2) and a coalesced wake is sent; the *task* may wait in the existing bounded `waiting_for_platform` state (dependency `device_channel`) and resumes only when that device's channel re-authenticates — re-authorized from scratch, a fresh operation. The push itself resumes nothing and authorizes nothing. The server's sending credential is a Google service-account key, resolved per use from the SecretStore (server-owned, class `oauth_token` only) or an env var; its assertion goes only to Google's fixed token endpoint. On the phone the Firebase SDK is linked but never initialized unless the server offers FCM **and** the user opts in: its init provider is removed, auto-registration is off, and both the library receiver and our handler ship disabled. A wake only (re)connects the channel, never overrides the user's Disconnect, and is ignored by a revoked phone. *(Phase H: the scheduler build merged after this row and now uses the same waker for a reminder owed to an offline device — the same fixed wake; `tests/scheduler/test_firing.py::test_offline_wake_goes_through_the_configured_push_waker`.)* | `shared/schemas/push.py`, `server/execution/device_wake.py`, `server/auth/push_tokens.py`, migration `…_device_push_token`, `android/…/push/` |
-| (new) | Android presentation layer (docs/23 §7, Phase G) | **Presentation shows; it never decides.** One content-free `PresentationState` (task status, pending risk tier, step-up needed, what a task waits for, device context incl. perception rung and push/platform state, break-glass, error kind, cancel/retry affordances) derived by one pure mapping from the server's task answers and the device's own state; precedence revoked > server task answer > connection; unknown server values never map to success. The current task lives in an app-scope tracker holding only the server's last answer: one task at a time (no duplicate submission), a retry only of an unanswered submission with the same Idempotency-Key, live tasks re-read every 3 s (the server resumes them — nothing is re-run client-side), only the task id persisted for re-attach. A waiting task is described as paused, never queued. **Overlay:** optional (off by default, `SYSTEM_ALERT_WINDOW` granted by the user), attached by the existing channel foreground service, never focusable, shows state only, hidden while JARVIS is in front; its actions are open app / cancel task / hide — **it never approves** (a floating approval could be tapjacked). Approval happens only on the in-app canonical confirmation card (unchanged: built from the server's pending action), which now states risk tier, step-up and expiry and drops touches while obscured (`filterTouchesWhenObscured`). Push-to-talk (docs/27) shows as *listening* / *recognizing* only while no task phase outranks it — display only, never read as an approval or a command. The final character is deferred: `StatusIndicator` reads signals only and is the one component it replaces (boundary tested on the source). | `android/app/.../presentation/`, `.../overlay/`, `.../tasks/TaskTracker.kt`, `.../ui/` |
+| (new) | Android presentation layer (docs/23 §7, Phase G) | **Presentation shows; it never decides.** One content-free `PresentationState` (task status, pending risk tier, step-up needed, what a task waits for, device context incl. perception rung and push/platform state, break-glass, error kind, cancel/retry affordances) derived by one pure mapping from the server's task answers and the device's own state; precedence revoked > server task answer > connection; unknown server values never map to success. The current task lives in an app-scope tracker holding only the server's last answer: one task at a time (no duplicate submission), a retry only of an unanswered submission with the same Idempotency-Key, live tasks re-read every 3 s (the server resumes them — nothing is re-run client-side), only the task id persisted for re-attach. A waiting task is described as paused, never queued. **Overlay:** optional (off by default, `SYSTEM_ALERT_WINDOW` granted by the user), attached by the existing channel foreground service, never focusable, shows state only, hidden while JARVIS is in front; its actions are open app / cancel task / hide — **it never approves** (a floating approval could be tapjacked). Approval happens only on the in-app canonical confirmation card (unchanged: built from the server's pending action), which now states risk tier, step-up and expiry and drops touches while obscured (`filterTouchesWhenObscured`). Push-to-talk (docs/27) shows as *listening* / *recognizing* only while no task phase outranks it — display only, never read as an approval or a command. The final character is deferred: `StatusIndicator` reads signals only and is the one component it replaces (boundary tested on the source). *Superseded in part by **OD-CHAR-1** (§2M, 2026-10-12): the character now exists and sits **beside** `StatusIndicator` without replacing it; the indicator remains the status.* | `android/app/.../presentation/`, `.../overlay/`, `.../tasks/TaskTracker.kt`, `.../ui/` |
 
 ---
 
@@ -686,70 +686,31 @@ wildcard), no stored credentials, and a fresh browser profile per run.
 
 ---
 
-## 2M. Pilot assembly — owner decisions (2026-10-12)
+## 2M. Default character — expressive presentation (OWNER DECISION, 2026-10-12)
 
-**Owner instruction, 2026-10-12:** the four amendments listed in
-`docs/PILOT_EXECUTION_PLAN.md` §A.3 are approved, subject to the exact
-boundaries below, together with an invite-only pilot. **Only these five rows
-are ratified.** The other pilot decisions in that plan (P1–P25 not named here)
-are *recommendations* and stay `[PROPOSED]` until the owner signs them.
-**Nothing in this section is built yet.** Prior owner decisions are preserved
-except where a row says it amends one, and then only as stated.
+**Owner instruction, 2026-10-12:** *"Proceed with this character set as the
+default expressive presentation."* The owner supplied seven approved images
+(`assets/character/default/`) and directed that the existing emotional-boundary
+restriction be amended narrowly rather than bypassed: the character is an
+expressive interface; its appearance does not establish that JARVIS experiences
+subjective emotions.
 
-| ID | Decision (ratified) | Boundaries (the owner's, exact) | Amends / preserves |
-|---|---|---|---|
-| **OD-PILOT-1** | **Inbound, read-only MCP for the pilot.** JARVIS may consume MCP servers over HTTP(S) as an adapter behind the Tool Gateway. | Operator-pinned servers only, and only operator-pinned tools of those servers. **No** arbitrary or user-supplied server URLs. **No** credential forwarding. **No** execution-capable (write/act) MCP tools in this scope. Every call passes the Tool Gateway and the existing deterministic authorization, risk, resource-scope and audit mechanisms; the capability is `mcp.tool/read` (OD-PILOT-4). MCP never bypasses JARVIS authorization (PRD §17, TOOL-004, unchanged). | **Amends OD-TOOL-3** (§2L: "no MCP, in either direction, for the first Phase 6 provider") for the pilot's inbound read-only case only. Outbound MCP (JARVIS as an MCP server) and stdio MCP remain not built. Browser Use is unaffected. |
-| **OD-PILOT-2** | **One configurable remote primary model per workspace is permitted for the pilot.** One model serves multiple agent definitions. | The provider stays replaceable (the `ModelProvider` interface and factory are the only place a vendor is named). Credentials live in SecretStore and are resolved by handle; **no credential is ever exposed to the frontend**. Explicit **task** and **overall usage** budgets are enforced; a remote primary without non-zero budgets is a configuration error, not a default. | **Amends OD-MT-2** ("default local") for the pilot: a remote primary is a permitted configuration; the shipped default stays local. Preserves PRD §19 (MODEL-001..005: one normalized `ModelProvider` interface; PRD §19 already makes a cloud provider "a configurable choice, never a hidden dependency") and the 13 §3 fail-closed budget rule. |
-| **OD-PILOT-3** | **`DevicePlatform.web` is added** for the configuration dashboard and supported browser interactions, registered through the existing bootstrap model with a **non-extractable WebCrypto** key. | A browser identity confers **no** Android device privileges and **cannot** bypass step-up, device-bound grants or confirmation requirements. | **Amends `01` §1.2 / the `device.platform` registry** (`android` only). Preserves OD-F1, `03` §5.5 step-up (re-attestation) and docs/23 (Android is the only device-execution endpoint). |
-| **OD-PILOT-4** | **A new capability `mcp.tool` with one operation, `read`, is added to the closed registry**, conditional on OD-PILOT-1's scope. | Explicit operation, resource-scope and risk-tier rules (below). No other existing capability is broadened. | **Amends the closed capability registry** (`07`, `CAPABILITY_MATRIX.md`) by this single addition. |
-| **OD-PILOT-5** | **The pilot is invite-only / restricted to approved accounts.** | Remains so until tenant isolation, budget enforcement and usage controls are validated for the pilot (`docs/PILOT_EXECUTION_PLAN.md` §G, §I). **Unrestricted public signup with paid-model access is not enabled.** | Closes the open-signup finding (any Google account that completes OIDC creates a user, `find_or_create_user`). Preserves `03` §2 (Google OIDC is the only identity provider). |
+**What this amends.** PRD §4's non-goal bullet and §23 (EMO-001, EMO-003) read
+"no simulated agent emotions, mood, personality … anywhere in the … UI"; docs/23
+§7 recorded the character as `[OWNER-RATIFIED]` *deferred*. Both are amended by
+the row below and nothing else.
 
-### How the boundaries are read (implementation constraints; objectionable until built)
+| ID | Decision (ratified) | Exact scope |
+|---|---|---|
+| **OD-CHAR-1** | **The default character, with seven expressive presentation states, is JARVIS's default expressive presentation.** PRD §4 and §23 are amended to permit it (§23 "Amendment"); docs/23 §7's deferral ends for this character. | **Allowed:** showing one of the seven approved images — `default`, `satisfied`, `happy`, `sleepy`, `surprised`, `angry`, `sad` — selected through a closed, typed presentation state (`shared/schemas/presentation.py` `Expression`; Android `presentation/character/`). `default` is the initial and fallback state; an unknown state, an unmapped state or an image that fails to load shows `default`. **Not allowed (unchanged):** an agent mood machine or any mood that persists or evolves with interaction history (EMO-001); a personality or trait system, or any character content in prompts, model configuration, memory or the vault (EMO-002/003); first-person statements of feeling, or an expression gated on relationship/trust scoring or interaction history (EMO-004); voice or speaker affect read as authority (EMO-005). **Never an authority:** an expression never influences authorization, graph membership, capabilities, security policy, risk classification, confirmation requirements, budgets or tool execution — no authority package imports the contract (import-linter "Character presentation never reaches authority"; Android `CharacterBoundaryTest`). **Never a status:** the expression is not derived from task, connection or error state, and the status indicator and its words remain the only account of what JARVIS is doing; to accessibility services the character is decorative. **What selects it:** today nothing automatic — `default` until a development preview (debug builds) selects another. A future classifier or orchestrator may *supply* a state through the same validated interface; what it may base that choice on is a separate owner decision and stays inside EMO-001…005. |
 
-These turn the owner's boundaries into the rules the implementation will be
-held to. Where a word could be read two ways, the **more restrictive** reading
-is applied; the owner may loosen any of them.
+**Implementation facts (2026-10-12).**
 
-1. **`mcp.tool/read` rules (OD-PILOT-4).** Operation `read` only. Tier
-   `low_read` (automatic once authorized and granted). Resource scope is
-   exactly `{server_id, tool_name}` drawn from the operator's pinned list; a
-   call naming anything else is refused before the engine. It is a user-scoped
-   grant like any other (`POST /capabilities`); it is never in an agent
-   envelope's ceiling unless the compiler maps an ability to it (none does in
-   the pilot). Egress is only to the pinned server's host through
-   `server.net`.
-2. **No credential forwarding (OD-PILOT-1).** The pilot's MCP config has **no
-   `secret_ref`** and sends no `Authorization`, cookie, session, device, model
-   or user credential to any MCP server. A server that needs authentication is
-   out of pilot scope.
-3. **Read-only is enforced by JARVIS, not claimed by the server.** Only tool
-   names the operator pinned are registered; each pinned schema is hashed at
-   startup and a tool whose schema later changes is disabled. Results are
-   untrusted data (quoted, labelled, size-bounded) and never an instruction.
-4. **"Per workspace" (OD-PILOT-2)** is implemented as the existing
-   `AgentConfiguration(scope = user)` row for the user's private graph — one
-   row, one primary model. Graph-scoped model configuration is **not** exposed
-   through the API in the pilot. The user selects from the operator's catalog
-   (provider, model, endpoint, pricing); a user never supplies an endpoint.
-   Agents run on that resolved primary.
-5. **Budgets are a startup condition.** With a non-local primary configured,
-   the server refuses to start unless `agent.bounds.per_task_budget`,
-   `security.budgets.per_user_daily_cost_limit` and
-   `security.budgets.global_daily_cost_limit` are all non-zero.
-6. **Invite-only is a startup condition too.** With a non-local primary
-   configured, `security.oidc.allowed_emails` (or `allowed_domains`) must be
-   non-empty, and a login outside it is refused **before** any user row is
-   created (AUTH-T1: no mutation on a failed login).
-7. **Web endpoint ceiling (OD-PILOT-3), enforced server-side.** A `web` device
-   may submit tasks and may confirm a `consequential` action **for a task that
-   same device originated**; it cannot satisfy step-up, cannot hold or receive
-   `device.*`/`app.*` grants, cannot receive a device operation, and cannot
-   confirm another device's paused action. The SPA holds no policy.
-8. **Contracts updated with their implementing slices, not before:** `01`
-   §1.2 (`DevicePlatform`), `CAPABILITY_MATRIX.md` and `07` (`mcp.tool`),
-   PRD §19 / `06` §2 (remote primary), PRD §17 (a one-line pointer to
-   OD-PILOT-1), `docs/23`/`docs/24` (web endpoint). Each edit lands in the same
-   PR as the code and tests that need it.
+| Item | Fact | Where |
+|---|---|---|
+| CHAR-1 | **Assets.** The seven owner-supplied files, byte for byte (SHA-256 pinned by a test). `default.png` is PNG (427 × 585, RGBA); the other six were supplied as lossy WebP with alpha and keep that format and extension — nothing is re-encoded, cropped or repainted, and no file is mislabelled. Bundled into the APK from their one location at build time — the Android build's only reach outside `android/` besides `shared/android` (the REPO-T3 test allows exactly `../assets/character`). The server never reads the artwork, so `android/` still shares only `shared/` with the server (16 §4). | `assets/character/`, `android/app/build.gradle.kts`, `tests/execution/test_android_repo_boundary.py` |
+| CHAR-2 | **Profile and settings, separately.** The state → image mapping is data (`profile.json`, validated as strictly on Android as by the Pydantic schema: no path, no unknown state or field, fallback must be mapped; an invalid profile is replaced whole by the built-in one). Presentation settings (`visible`, `profile_id`, `transition`) are a separate shape with built-in defaults. No database table, configuration key or API is added: the future configuration website supplies these two documents. | `shared/schemas/presentation.py`, `.../presentation/character/` |
+| CHAR-3 | **Where it shows.** Above the status line on the app's main screen, on every tab and before sign-in; sized from the window (42 % of the width, at most 24 % of the height, 96–220 dp); one change cross-fades once (220 ms) or snaps (`transition: none`), with no repeating animation; held in memory only, never persisted or sent. The floating overlay is unchanged. | `MainActivity.kt`, `.../presentation/ui/Character.kt` |
 
 ---
 

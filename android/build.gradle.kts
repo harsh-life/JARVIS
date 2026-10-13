@@ -1,7 +1,8 @@
 // The Android client (docs/23). It shares exactly two things with the server
 // (16 §4, REPO-T3): shared/schemas' wire contract, mirrored in :contract, and
 // the versioned mapping artifact shared/android/device_mapping.json, bundled at
-// build time from its one location — never copied into this tree.
+// build time from its one location — never copied into this tree. The
+// character artwork (OD-CHAR-1) is bundled the same way from assets/character.
 plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.android) apply false
@@ -13,6 +14,7 @@ plugins {
 }
 
 val sharedDir = rootDir.resolve("../shared/android")
+val characterDir = rootDir.resolve("../assets/character")
 val ktlintVersion: String = libs.versions.ktlint.engine.get()
 
 subprojects {
@@ -41,4 +43,5 @@ subprojects {
     }
 
     extra["sharedAndroidDir"] = sharedDir
+    extra["characterAssetsDir"] = characterDir
 }

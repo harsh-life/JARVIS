@@ -2,9 +2,9 @@ package com.hypermind.jarvis.presentation
 
 /**
  * The non-text signals for a [PresentationState]: tone, motion and a glyph —
- * several at once, so no state is told apart by colour alone (and so a future
- * character can express the same signals in its own way). Colours are chosen
- * by the renderer from the tone; nothing here names one.
+ * several at once, so no state is told apart by colour alone. Colours are
+ * chosen by the renderer from the tone; nothing here names one. The character
+ * (OD-CHAR-1) never expresses these signals: status is shown only by them.
  */
 data class PresentationSignal(
     val tone: Tone,
