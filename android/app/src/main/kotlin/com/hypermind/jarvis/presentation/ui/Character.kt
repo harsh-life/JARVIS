@@ -40,6 +40,10 @@ import com.hypermind.jarvis.presentation.character.CharacterSettings
 import com.hypermind.jarvis.presentation.character.CharacterSizing
 import com.hypermind.jarvis.presentation.character.CharacterTransitions
 import com.hypermind.jarvis.presentation.character.Expression
+import com.hypermind.jarvis.presentation.character.rig.AnimatedCharacter
+import com.hypermind.jarvis.presentation.character.rig.RigAssets
+import com.hypermind.jarvis.presentation.character.rig.RigLoader
+import com.hypermind.jarvis.presentation.character.rig.RigNative
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -51,6 +55,12 @@ import kotlinx.coroutines.withContext
  * to it remains the only status. It is decorative to accessibility services
  * for the same reason: a screen reader hears the truthful status line, not a
  * face.
+ *
+ * It draws the animated rig ([AnimatedCharacter], `character/rig/`) when that loads: each state
+ * its own transition and idle, the long-idle action after ten minutes of one state. Without the
+ * rig — no native runtime for this device, missing or invalid files — it draws the seven static
+ * images below, which are also what shows while the rig loads. Either way it only shows the
+ * expression it is given.
  *
  * The slot keeps one size whatever the image, so a change of expression never
  * moves the layout; the previous image stays until the next has decoded, and
@@ -67,8 +77,38 @@ fun Character(
     settings: CharacterSettings,
     modifier: Modifier = Modifier,
     height: Dp = characterHeight(),
+    rig: RigLoader? = RigAssets.Bundled,
 ) {
     if (!settings.visible) return
+    val context = LocalContext.current
+    val systemReducesMotion =
+        remember(context) {
+            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+        }
+    // The bundled rig needs the native runtime; without it (an ABI it was not built for, a build
+    // without it, a JVM test) the images show at once, with no loading step.
+    val loader = rig?.takeIf { it !== RigAssets.Bundled || RigNative.available }
+    val reducedMotion = settings.reducedMotion == CharacterSettings.ReducedMotion.ALWAYS || systemReducesMotion
+    Box(modifier = modifier.size(height).testTag(TAG), contentAlignment = Alignment.Center) {
+        if (loader != null) {
+            AnimatedCharacter(expression, reducedMotion, loader, Modifier.fillMaxSize()) {
+                StaticCharacter(expression, profile, settings, height, systemReducesMotion)
+            }
+        } else {
+            StaticCharacter(expression, profile, settings, height, systemReducesMotion)
+        }
+    }
+}
+
+/** The seven approved images, one per state, cross-faded: the renderer before the rig, and its fallback. */
+@Composable
+private fun StaticCharacter(
+    expression: Expression,
+    profile: CharacterProfile,
+    settings: CharacterSettings,
+    height: Dp,
+    systemReducesMotion: Boolean,
+) {
     val assets = LocalContext.current.assets
     val targetPx = with(LocalDensity.current) { height.roundToPx() }
     var image by remember { mutableStateOf<CharacterImage?>(null) }
@@ -79,23 +119,16 @@ fun Character(
                 CharacterAssets.load(profile, expression, targetPx) { path -> assets.open(path) }
             }
     }
-    val context = LocalContext.current
-    val systemReducesMotion =
-        remember(context) {
-            Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
-        }
     val fade = CharacterTransitions.fadeMillis(settings, systemReducesMotion).toInt()
     val animation: FiniteAnimationSpec<Float> = if (fade > 0) tween(fade) else snap()
-    Box(modifier = modifier.size(height).testTag(TAG), contentAlignment = Alignment.Center) {
-        Crossfade(targetState = image, animationSpec = animation, label = "character") {
-            if (it != null) {
-                Image(
-                    bitmap = it.bitmap.asImageBitmap(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize().testTag("$TAG/${it.asset}"),
-                )
-            }
+    Crossfade(targetState = image, animationSpec = animation, label = "character", modifier = Modifier.fillMaxSize()) {
+        if (it != null) {
+            Image(
+                bitmap = it.bitmap.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().testTag("$TAG/${it.asset}"),
+            )
         }
     }
 }
@@ -135,6 +168,8 @@ fun CharacterGallery(
                         profile = profile,
                         settings = CharacterSettings(transition = CharacterSettings.Transition.NONE),
                         height = GALLERY_HEIGHT,
+                        // Seven players for a preview grid is not worth it: the images.
+                        rig = null,
                     )
                     val label = if (expression == selected) "• ${expression.wire}" else expression.wire
                     Text(label, style = MaterialTheme.typography.labelSmall)

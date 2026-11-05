@@ -1,3 +1,6 @@
+import org.gradle.process.ExecOperations
+import javax.inject.Inject
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -24,8 +27,113 @@ val bundleSharedMapping by tasks.registering(Copy::class) {
 val bundleCharacterAssets by tasks.registering(Sync::class) {
     from(characterAssetsDir) {
         include("presentation.json", "*/profile.json", "*/*.png", "*/*.webp")
+        // The animated character (docs/CHARACTER_RIG.md): the rig project's exports.
+        include("rig/JarvisCharacter.skel", "rig/JarvisCharacter.atlas", "rig/JarvisCharacter.contract.json")
     }
     into(layout.buildDirectory.dir("generated/characterAssets/character"))
+}
+
+// The character player's native library (docs/CHARACTER_RIG.md): android/rig-native, the vendored
+// Rigby2D runtime and its JNI bridge, built with cargo for each ABI (the NDK's clang links it), and
+// once for the build machine so the JVM unit tests run the real library. -Pjarvis.rig.native=false
+// builds without it: the app then shows the static images (RigNative.available is false).
+val rigNative = providers.gradleProperty("jarvis.rig.native").map { it.toBoolean() }.getOrElse(true)
+val rigNativeDir = rootDir.resolve("rig-native")
+val rigCargo = providers.gradleProperty("jarvis.rig.cargo").getOrElse("cargo")
+val rigNdkVersion = "27.2.12479018"
+val rigMinApi = 24
+val rigAbis =
+    mapOf(
+        "arm64-v8a" to ("aarch64-linux-android" to "aarch64-linux-android"),
+        "armeabi-v7a" to ("armv7-linux-androideabi" to "armv7a-linux-androideabi"),
+        "x86_64" to ("x86_64-linux-android" to "x86_64-linux-android"),
+    )
+val rigHostLibrary =
+    rigNativeDir.resolve("target/release").resolve(
+        if (System.getProperty("os.name").startsWith("Mac")) "libjarvis_rig.dylib" else "libjarvis_rig.so",
+    )
+
+/** Runs cargo for the rig-native workspace (inputs: its sources and lockfile). */
+abstract class CargoTask
+    @Inject
+    constructor(
+        private val exec: ExecOperations,
+    ) : DefaultTask() {
+        @get:Input abstract val cargo: Property<String>
+
+        @get:Input abstract val arguments: ListProperty<String>
+
+        @get:Input abstract val environment: MapProperty<String, String>
+
+        @get:InputFiles
+        @get:PathSensitive(PathSensitivity.RELATIVE)
+        abstract val sources: ConfigurableFileCollection
+
+        @get:Internal abstract val workspace: DirectoryProperty
+
+        @get:OutputFiles abstract val products: ConfigurableFileCollection
+
+        @TaskAction
+        fun run() {
+            exec.exec {
+                workingDir = workspace.get().asFile
+                executable = cargo.get()
+                args(arguments.get())
+                environment(this@CargoTask.environment.get())
+            }
+        }
+    }
+
+val rigSources =
+    files(
+        rigNativeDir.resolve("Cargo.toml"),
+        rigNativeDir.resolve("Cargo.lock"),
+        fileTree(rigNativeDir.resolve("rigby-runtime")) { include("Cargo.toml", "src/**") },
+        fileTree(rigNativeDir.resolve("jarvis-rig")) { include("Cargo.toml", "src/**") },
+    )
+val rigJniDir = layout.buildDirectory.dir("generated/rigJniLibs")
+
+val buildRigNativeAbis =
+    rigAbis.map { (abi, triples) ->
+        val (rustTarget, clangTarget) = triples
+        tasks.register<CargoTask>("buildRigNative_${abi.replace('-', '_')}") {
+            onlyIf { rigNative }
+            cargo.set(rigCargo)
+            arguments.set(listOf("build", "--release", "--locked", "-p", "jarvis-rig", "--target", rustTarget))
+            sources.from(rigSources)
+            workspace.set(rigNativeDir)
+            products.from(rigNativeDir.resolve("target/$rustTarget/release/libjarvis_rig.so"))
+            environment.set(
+                provider {
+                    val ndk = android.ndkDirectory
+                    val host = if (System.getProperty("os.name").startsWith("Mac")) "darwin-x86_64" else "linux-x86_64"
+                    val clang = ndk.resolve("toolchains/llvm/prebuilt/$host/bin/$clangTarget$rigMinApi-clang")
+                    check(clang.exists()) {
+                        "NDK $rigNdkVersion is needed to build the character player: $clang (or -Pjarvis.rig.native=false)"
+                    }
+                    val key = rustTarget.uppercase().replace('-', '_')
+                    mapOf("CARGO_TARGET_${key}_LINKER" to clang.absolutePath, "CC_$rustTarget" to clang.absolutePath)
+                },
+            )
+        }
+    }
+
+val buildRigNative by tasks.registering(Sync::class) {
+    onlyIf { rigNative }
+    for ((i, abi) in rigAbis.keys.withIndex()) {
+        from(buildRigNativeAbis[i]) { into(abi) }
+    }
+    into(rigJniDir)
+}
+
+val buildRigNativeHost by tasks.registering(CargoTask::class) {
+    onlyIf { rigNative }
+    cargo.set(rigCargo)
+    arguments.set(listOf("build", "--release", "--locked", "-p", "jarvis-rig"))
+    environment.set(emptyMap())
+    sources.from(rigSources)
+    workspace.set(rigNativeDir)
+    products.from(rigHostLibrary)
 }
 
 android {
@@ -54,6 +162,10 @@ android {
 
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/sharedAssets"))
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/characterAssets"))
+    if (rigNative) {
+        ndkVersion = rigNdkVersion
+        sourceSets["main"].jniLibs.srcDir(rigJniDir)
+    }
 
     buildTypes {
         debug {
@@ -100,6 +212,10 @@ android {
 }
 
 tasks.named("preBuild") { dependsOn(bundleSharedMapping, bundleCharacterAssets) }
+tasks
+    .matching {
+        it.name.startsWith("merge") && it.name.endsWith("JniLibFolders")
+    }.configureEach { dependsOn(buildRigNative) }
 
 // Robolectric's Android framework jar is resolved by Gradle (with its retries
 // and cache) instead of Robolectric's own downloader at test time, and the
@@ -120,6 +236,12 @@ tasks.withType<Test>().configureEach {
     // ...and the character artwork (OD-CHAR-1), to hold the APK's copy to it.
     systemProperty("jarvis.character.dir", characterAssetsDir.absolutePath)
     inputs.dir(characterAssetsDir)
+    // The character player's native library, built for this machine (NativeRigRuntimeTest).
+    if (rigNative) {
+        dependsOn(buildRigNativeHost)
+        systemProperty("jarvis.rig.native.lib", rigHostLibrary.absolutePath)
+        systemProperty("jarvis.rig.native.required", "true")
+    }
 }
 
 dependencies {

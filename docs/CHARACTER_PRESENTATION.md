@@ -26,7 +26,7 @@ an appropriate *presentation* — not a measurement of anyone's emotions.
 | Inference provider | scores the 7 states for the current interaction | `PresentationInferenceProvider`; pilot: `LocalCueScorer` | `PresentationInference` |
 | Selector | validates a result and picks a state, deterministically | `StateSelector` | `select_expression` + `shared/android/presentation_selection_vectors.json` |
 | Controller | when to show, hold, return to baseline, sleep and wake | `CharacterController`, run by `CharacterPresentation` | `PresentationTiming` |
-| Renderer | draws the chosen image; cross-fade or instant swap | `presentation/ui/Character.kt` | `transition`, `transition_ms`, `reduced_motion` |
+| Renderer | draws the chosen state: the animated rig (`docs/CHARACTER_RIG.md`), or the image with a cross-fade or instant swap when the rig is unavailable | `presentation/ui/Character.kt`, `presentation/character/rig/` | `transition`, `transition_ms`, `reduced_motion` |
 | Operational status | what JARVIS is actually doing | `Presenter` → `StatusIndicator` (untouched) | — |
 
 None of these is an authority. No server authority package imports the
