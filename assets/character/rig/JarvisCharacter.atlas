@@ -1,0 +1,47 @@
+JarvisCharacter.png
+size: 512, 512
+filter: Linear, Linear
+arm_l
+bounds: 363, 2, 64, 71
+arm_r
+bounds: 429, 2, 63, 70
+eyes_angry
+bounds: 233, 249, 98, 43
+eyes_closed
+bounds: 254, 312, 89, 30
+eyes_default
+bounds: 333, 249, 93, 42
+eyes_happy
+bounds: 2, 352, 90, 25
+eyes_sad
+bounds: 154, 312, 98, 35
+eyes_satisfied
+bounds: 345, 312, 91, 26
+eyes_surprised
+bounds: 2, 312, 88, 38
+face_angry
+bounds: 146, 249, 85, 59
+face_default
+bounds: 230, 184, 91, 62
+face_happy
+bounds: 2, 184, 89, 63
+face_sad
+bounds: 63, 249, 81, 60
+face_satisfied
+bounds: 323, 184, 89, 61
+face_sleepy
+bounds: 414, 184, 78, 61
+face_surprised
+bounds: 93, 184, 73, 63
+hand_l
+bounds: 92, 312, 29, 36
+hand_r
+bounds: 123, 312, 29, 36
+head
+bounds: 2, 2, 216, 180
+leg_l
+bounds: 168, 184, 60, 63
+leg_r
+bounds: 2, 249, 59, 61
+torso
+bounds: 220, 2, 141, 132

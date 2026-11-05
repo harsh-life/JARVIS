@@ -1,0 +1,16 @@
+# The character player's native side (docs/CHARACTER_RIG.md): the vendored Rigby2D runtime and the
+# small JNI library the Android client loads (libjarvis_rig.so). Built by :app's buildRigNative task.
+[workspace]
+resolver = "2"
+members = ["rigby-runtime", "jarvis-rig"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+strip = true
+opt-level = "s"

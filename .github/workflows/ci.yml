@@ -273,7 +273,17 @@ jobs:
         with:
           # Explicit: the action's default list still names the obsolete
           # `tools` package, which current sdkmanager no longer has.
-          packages: platform-tools platforms;android-35 build-tools;35.0.0
+          # The NDK links the character player's native library (docs/CHARACTER_RIG.md).
+          packages: platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018
+
+      - name: Rust targets for the character player
+        # rustup is on the runner image; the library is built for these ABIs and for the
+        # runner itself (the JVM unit tests load that build).
+        run: rustup toolchain install stable --profile minimal && rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+
+      - name: Character player native tests (cargo)
+        working-directory: android/rig-native
+        run: cargo test --release --locked
 
       - uses: gradle/actions/setup-gradle@v4
 

@@ -10,3 +10,6 @@ captures/
 *.jks
 *.keystore
 google-services.json
+
+# The character player native build (cargo)
+/rig-native/target/

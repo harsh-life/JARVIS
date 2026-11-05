@@ -1,5 +1,6 @@
 package com.hypermind.jarvis.presentation.ui
 
+import android.graphics.Bitmap
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -15,8 +16,15 @@ import androidx.compose.ui.unit.dp
 import com.hypermind.jarvis.presentation.character.CharacterProfile
 import com.hypermind.jarvis.presentation.character.CharacterSettings
 import com.hypermind.jarvis.presentation.character.Expression
+import com.hypermind.jarvis.presentation.character.rig.FakeRigRuntime
+import com.hypermind.jarvis.presentation.character.rig.LoadedRig
+import com.hypermind.jarvis.presentation.character.rig.RIG_TAG
+import com.hypermind.jarvis.presentation.character.rig.RigAssetsFixture
+import com.hypermind.jarvis.presentation.character.rig.RigCharacterPlayer
+import com.hypermind.jarvis.presentation.character.rig.RigLoader
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -201,6 +209,108 @@ class CharacterViewTest {
         }
         compose.onNodeWithTag("character-gallery/surprised").performClick()
         assertEquals(Expression.SURPRISED, expression.value)
+    }
+
+    // ── The animated rig and its fallback ──────────────────────────────────
+
+    private val contract = RigAssetsFixture.contract()
+
+    private fun fakeRig(runtime: FakeRigRuntime): RigLoader =
+        RigLoader { _, reducedMotion ->
+            val player = requireNotNull(RigCharacterPlayer.create(runtime, contract, reducedMotion))
+            LoadedRig(player, Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888), runtime.info)
+        }
+
+    // The rig draws every frame, so Compose never idles by itself: these tests drive the clock.
+    private fun showRig(
+        rig: RigLoader,
+        settings: CharacterSettings = CharacterSettings(),
+        visible: MutableStateFlow<Boolean> = MutableStateFlow(true),
+    ) {
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            val shown by expression.collectAsState()
+            val on by visible.collectAsState()
+            if (on) Character(expression = shown, profile = profile, settings = settings, rig = rig)
+        }
+    }
+
+    /** Advances frames until [condition] holds. */
+    private fun pump(condition: () -> Boolean) {
+        compose.waitUntil(TIMEOUT) {
+            compose.mainClock.advanceTimeByFrame()
+            condition()
+        }
+    }
+
+    private fun awaitRig() =
+        pump { compose.onAllNodesWithTag(RIG_TAG, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+
+    @Test
+    fun `without the native runtime the static images are the character`() {
+        // Robolectric has no Android .so, so the bundled rig cannot load here: the fallback.
+        show()
+        awaitShown("default.png")
+        compose.onNodeWithTag(RIG_TAG, useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `a rig that fails to load falls back to the images`() {
+        showRig(RigLoader { _, _ -> null })
+        // No rig, so nothing animates: the normal clock again.
+        compose.mainClock.autoAdvance = true
+        awaitShown("default.png")
+        expression.value = Expression.SAD
+        awaitShown("sad.webp")
+    }
+
+    @Test
+    fun `a loaded rig replaces the images and follows the expression`() {
+        val runtime = FakeRigRuntime.forContract(contract)
+        showRig(fakeRig(runtime))
+        awaitRig()
+        compose.onNodeWithTag("$CHARACTER_TAG/default.png", useUnmergedTree = true).assertDoesNotExist()
+        pump { runtime.calls.contains("set 0 idle_default loop=true mix=0.0") }
+        expression.value = Expression.HAPPY
+        pump { runtime.calls.any { it.startsWith("set 0 to_happy") } }
+        pump { runtime.updates.isNotEmpty() }
+        val starts = runtime.calls.count { it.startsWith("set 0 to_happy") }
+        expression.value = Expression.HAPPY
+        repeat(10) { compose.mainClock.advanceTimeByFrame() }
+        assertEquals(
+            "the same state again restarts nothing",
+            starts,
+            runtime.calls.count { it.startsWith("set 0 to_happy") },
+        )
+    }
+
+    @Test
+    fun `the rig keeps the slot's size`() {
+        showRig(fakeRig(FakeRigRuntime.forContract(contract)))
+        awaitRig()
+        compose.onNodeWithTag(CHARACTER_TAG).assertHeightIsEqualTo(172.62.dp).assertWidthIsEqualTo(172.62.dp)
+    }
+
+    @Test
+    fun `the rig is released when the character leaves the screen`() {
+        val runtime = FakeRigRuntime.forContract(contract)
+        val visible = MutableStateFlow(true)
+        showRig(fakeRig(runtime), visible = visible)
+        awaitRig()
+        visible.value = false
+        pump { runtime.closed > 0 }
+        repeat(10) { compose.mainClock.advanceTimeByFrame() }
+        assertEquals("released once", 1, runtime.closed)
+    }
+
+    @Test
+    fun `with reduced motion the rig holds still`() {
+        val runtime = FakeRigRuntime.forContract(contract)
+        showRig(fakeRig(runtime), CharacterSettings(reducedMotion = CharacterSettings.ReducedMotion.ALWAYS))
+        awaitRig()
+        pump { runtime.updates.isNotEmpty() }
+        assertTrue(runtime.updates.all { it == 0f })
+        assertTrue(runtime.calls.none { it.contains("enter") })
     }
 
     private companion object {

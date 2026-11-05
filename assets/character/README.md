@@ -32,6 +32,11 @@ that format. All have transparent surroundings and the white sticker edge.
 
 The order is the owner's, and it is also the selection tie-break order.
 
+`rig/` holds the animated character (`docs/CHARACTER_RIG.md`): the Rigby2D rig
+project's exports (`JarvisCharacter.skel`, `.atlas`, `.png`, `.contract.json`),
+byte for byte, pinned by `rig/SHA256SUMS`. When the rig cannot play on a device,
+the client shows the images above.
+
 The Android build bundles this directory into the APK's assets from here
 (`android/app/build.gradle.kts`, `bundleCharacterAssets`); it is never copied
 into `android/`.
