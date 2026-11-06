@@ -267,6 +267,120 @@ class CharacterRigDeviceTest {
         assertTrue(File(dir, "overview.png").length() > 0)
     }
 
+    private val contract: RigContract by lazy {
+        val text =
+            context.assets.open("${RigAssets.ROOT}/${RigAssets.CONTRACT}").use {
+                it.readBytes().toString(Charsets.UTF_8)
+            }
+        requireNotNull(RigContract.parse(text))
+    }
+
+    /** Rows of labelled frames as one contact sheet under `intensity/`, each frame [cell] px. */
+    private fun sheet(
+        name: String,
+        rows: List<Pair<String, List<Bitmap>>>,
+        cell: Int = SIZE,
+    ) {
+        val cols = rows.maxOf { it.second.size }
+        val sheet = Bitmap.createBitmap(cell * cols, cell * rows.size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(sheet).apply { drawColor(Color.WHITE) }
+        val label =
+            Paint().apply {
+                textSize = 16f
+                color = Color.BLACK
+                isAntiAlias = true
+            }
+        for ((r, row) in rows.withIndex()) {
+            for ((k, f) in row.second.withIndex()) {
+                val x = k * cell
+                val y = r * cell
+                c.drawBitmap(f, null, android.graphics.Rect(x, y, x + cell, y + cell), null)
+            }
+            c.drawText(row.first, 6f, r * cell + 18f, label)
+        }
+        save(sheet, "intensity/$name")
+    }
+
+    /**
+     * Frames every [stepFrames] of a session: [setup] runs, then [frames] frames advance, with
+     * [at] actions keyed by frame. Every frame drawn is checked to be a whole character.
+     */
+    private fun timeline(
+        setup: (CharacterAnimationPlayer) -> Unit,
+        frames: Int,
+        stepFrames: Int,
+        at: Map<Int, (CharacterAnimationPlayer) -> Unit> = emptyMap(),
+    ): List<Bitmap> =
+        load().use { rig ->
+            val geometry = RigGeometry(rig.info)
+            setup(rig.player)
+            val out = mutableListOf<Bitmap>()
+            for (f in 0 until frames) {
+                at[f]?.invoke(rig.player)
+                rig.player.advance(1f / 60f)
+                if (f % stepFrames == 0) {
+                    assertTrue(rig.player.build(geometry))
+                    out += draw(rig, geometry).also { assertTrue("frame $f is whole", it.opaque() > SIZE * SIZE / 8) }
+                }
+            }
+            out
+        }
+
+    @Test
+    fun longIdlesAndIntensityChangesAreCapturedWholeAndRecognisable() {
+        File(out, "intensity").mkdirs()
+        // Further intensities: settled idle frames, recognisable against the same moment at 5.
+        val extra = listOf(Expression.SLEEPY to 2, Expression.SLEEPY to 8, Expression.ANGRY to 1, Expression.ANGRY to 4)
+        val rows =
+            (extra + (Expression.ANGRY to 10) + (Expression.SAD to 10)).map { (e, i) ->
+                val (bitmaps, _) = idleFrames(e, i)
+                val neutral = idleFrames(e, 5).first
+                for ((k, f) in bitmaps.withIndex()) {
+                    val iou = silhouetteIou(f, neutral[k])
+                    assertTrue("${e.wire} $i phase $k IoU vs neutral $iou", iou > MIN_IOU_VS_NEUTRAL)
+                    save(f, "intensity/${e.wire}-$i-$k")
+                }
+                "${e.wire} $i" to bitmaps
+            }
+        sheet("extra-levels", rows)
+        // The regular idle into its long idle and back, at a strong and a weak intensity: frames
+        // every 0.1 s around each crossfade (into: 0.3 s; back: 0.4 s, the posture easing in after).
+        val longIdle = mutableListOf<Pair<String, List<Bitmap>>>()
+        for ((e, i) in listOf(Expression.SLEEPY to 10, Expression.ANGRY to 1)) {
+            val trigger =
+                mapOf(
+                    TRIGGER_FRAME to
+                        { p: CharacterAnimationPlayer -> assertTrue("the long idle starts", p.triggerLongIdle()) },
+                )
+            val into = timeline({ it.start(e, i, entrance = false) }, TRIGGER_FRAME + INTO_FRAMES, SAMPLE, trigger)
+            longIdle += "${e.wire} $i: 0.5 s before the long idle, then every 0.1 s" to into.drop(BEFORE_TRIGGER)
+            val long = (contract.durations.getValue(contract.longIdle.getValue(e)) * 60).toInt()
+            val back =
+                timeline({ it.start(e, i, entrance = false) }, TRIGGER_FRAME + long + BACK_FRAMES, SAMPLE, trigger)
+            longIdle += "${e.wire} $i: from 1 s before the idle returns, every 0.1 s" to back.takeLast(RETURN_SAMPLES)
+        }
+        sheet("long-idle", longIdle, cell = SIZE / 2)
+
+        // Intensity changing while an expression shows: happy 2 -> 10 -> 2 and sad 1 -> 10, every
+        // 0.1 s through the posture ramp; nothing restarts, the pose eases.
+        fun change(
+            e: Expression,
+            from: Int,
+            to: Int,
+        ) = "${e.wire} $from -> $to: the change, then every 0.1 s" to
+            timeline(
+                { it.start(e, from, entrance = false) },
+                SETTLE_FRAMES + CHANGE_FRAMES,
+                SAMPLE,
+                mapOf(SETTLE_FRAMES to { p: CharacterAnimationPlayer -> p.show(e, to) }),
+            ).drop(SETTLE_FRAMES / SAMPLE)
+        sheet(
+            "intensity-changes",
+            listOf(change(Expression.HAPPY, 2, 10), change(Expression.HAPPY, 10, 2), change(Expression.SAD, 1, 10)),
+            cell = SIZE / 2,
+        )
+    }
+
     @Test
     fun reducedMotionIgnoresIntensity() {
         val frames =
@@ -362,5 +476,14 @@ class CharacterRigDeviceTest {
 
         /** Silhouette overlap with the same moment at intensity 5. */
         const val MIN_IOU_VS_NEUTRAL = 0.85f
+
+        /** Timelines: a frame every 0.1 s; the long idle triggered at 1.5 s. */
+        const val SAMPLE = 6
+        const val TRIGGER_FRAME = 90
+        const val BEFORE_TRIGGER = (TRIGGER_FRAME - 30) / SAMPLE
+        const val INTO_FRAMES = 60
+        const val BACK_FRAMES = 84
+        const val RETURN_SAMPLES = 24
+        const val CHANGE_FRAMES = 90
     }
 }
