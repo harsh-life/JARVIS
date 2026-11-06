@@ -15,9 +15,9 @@ import kotlin.math.hypot
 
 /**
  * Presentation intensity through the real JNI library (host build) with the bundled rig and the
- * bundled intensity profile: it applies, neutral is bit-identical, every expression at every
- * intensity stays within the guard where expected, changes never jump, and bad values are refused.
- * Plain JUnit (see NativeRigRuntimeTest).
+ * bundled intensity profile: it applies, neutral is bit-identical, no expression at any intensity
+ * needs the guard (it stays a boundary for the unexpected), changes never jump, and bad values are
+ * refused. Plain JUnit (see NativeRigRuntimeTest).
  */
 class NativeRigIntensityTest {
     private val skeleton = RigAssetsFixture.bytes(RigAssets.SKELETON)
@@ -133,30 +133,38 @@ class NativeRigIntensityTest {
         return Session(requireNotNull(throughIdle), requireNotNull(rig.shapeInfo()), differs)
     }
 
+    private fun where(
+        rig: NativeRigRuntime,
+        info: NativeRigRuntime.ShapeInfo,
+    ): String {
+        if (info.clamps == 0L) return "none"
+        val bone = FakeRigRuntime.BONES.firstOrNull { rig.boneIndex(it) == info.largestBone } ?: "${info.largestBone}"
+        return "${info.clamps}x, largest ${"%.4f".format(info.largestClamp)} at $bone.${CHANNELS[info.largestChannel]}"
+    }
+
     @Test
-    fun `every expression at every intensity - the guard engages only where documented`() {
+    fun `no expression at any intensity needs the guard`() {
+        val rig = open()
         val results = Expression.entries.flatMap { e -> (1..10).map { i -> Triple(e, i, session(e, i)) } }
+        // The intervention report (docs/CHARACTER_RIG.md §5.4): requested gains, what the guard
+        // trimmed through the entry and regular idle, and in the whole session with a long idle.
         println(
             results.joinToString("\n") { (e, i, r) ->
-                "${e.wire} $i: entry+idle ${r.throughIdle.clamps}/${"%.3f".format(r.throughIdle.largestClamp)}" +
-                    ", with long idle ${r.total.clamps}/${"%.3f".format(r.total.largestClamp)}"
+                val g = profile.gains(e, i)
+                "${e.wire} $i: posture ${g.posture} motion ${g.motion}; entry+idle ${where(rig, r.throughIdle)}" +
+                    "; with long idle ${where(rig, r.total)}; applied/requested " +
+                    "%.5f".format(if (r.total.requested > 0f) r.total.applied / r.total.requested else 1f)
             },
         )
+        rig.close()
         for ((e, i, r) in results) {
             val neutral = profile.gains(e, i).neutral
             assertEquals("$e $i changes the pose exactly when a gain is not 1", !neutral, r.changedPose)
             if (neutral) assertEquals("$e $i: the canonical animation is never clamped", 0L, r.total.clamps)
-            // Through the entry and the regular idle — what the profile was calibrated on — the guard
-            // only trims a rare peak.
-            assertTrue("$e $i entry+idle: ${r.throughIdle.largestClamp}", r.throughIdle.largestClamp <= IDLE_MAX_CLAMP)
-            // OPEN (docs/CHARACTER_RIG.md §5.6): the posture layer also applies during long idles, whose
-            // authored peaks already reach the rig's range, so there the guard trims more. Pinned at the
-            // measured maxima so it cannot grow unnoticed; the gains stay provisional until calibrated.
-            val known = KNOWN_LONG_IDLE_CLAMP.getValue(e)
-            assertTrue(
-                "$e $i with long idle: ${r.total.largestClamp} > known $known",
-                r.total.largestClamp <= known + 0.01f,
-            )
+            // The guard is a boundary for the unexpected, not part of the look: what it may trim is a
+            // rounding-size remainder (sad's forearm sway while idle_sad crossfades, 0.005).
+            assertTrue("$e $i entry+idle: ${r.throughIdle}", r.throughIdle.largestClamp <= GUARD_REMAINDER)
+            assertTrue("$e $i with long idle: ${r.total}", r.total.largestClamp <= GUARD_REMAINDER)
         }
     }
 
@@ -234,23 +242,10 @@ class NativeRigIntensityTest {
         /** The entry and regular idle: the session's first seconds. */
         private const val IDLE_SECONDS = 3f
 
-        /** The most the guard may trim through an entry and regular idle (degrees or units). */
-        private const val IDLE_MAX_CLAMP = 0.85f
+        /** The most the guard may trim anywhere (degrees or units): rounding-size, invisible. */
+        private const val GUARD_REMAINDER = 0.01f
 
-        /**
-         * The largest trim measured over each expression's sessions at intensities 1–10, long idle
-         * included (degrees or units). An open calibration item, not an accepted look.
-         */
-        private val KNOWN_LONG_IDLE_CLAMP =
-            mapOf(
-                Expression.HAPPY to 1.0f,
-                Expression.SATISFIED to 0.911f,
-                Expression.DEFAULT to 0f,
-                Expression.SLEEPY to 2.498f,
-                Expression.SURPRISED to 0.986f,
-                Expression.ANGRY to 0.999f,
-                Expression.SAD to 1.6f,
-            )
+        private val CHANNELS = listOf("x", "y", "rotation", "scaleX", "scaleY", "shearX", "shearY")
 
         @JvmStatic
         @BeforeClass

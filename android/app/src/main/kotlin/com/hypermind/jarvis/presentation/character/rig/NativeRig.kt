@@ -46,7 +46,7 @@ internal object RigNative {
 
     const val LIBRARY = "jarvis_rig"
     const val INFO_SIZE = 10
-    const val SHAPE_INFO_SIZE = 4
+    const val SHAPE_INFO_SIZE = 8
     const val ERROR_SIZE = 256
 
     @JvmStatic external fun nativeCreate(
@@ -236,8 +236,10 @@ class NativeRigRuntime private constructor(
     ): Boolean = RigNative.nativeSetShape(live(), idle, postureGain, motionGain)
 
     /**
-     * The layers' state for tests and diagnostics: whether configured and active, and the guard's
-     * clamps and largest clamp so far.
+     * The layers' state for tests and diagnostics: whether configured and active, and what the
+     * guard did so far — its clamps, the largest one and where (bone index and local channel:
+     * x, y, rotation, scale x, scale y, shear x, shear y), and what the layers asked for against
+     * what reached the pose (absolute totals; equal when the guard never acted).
      */
     fun shapeInfo(): ShapeInfo? {
         val out = FloatArray(RigNative.SHAPE_INFO_SIZE)
@@ -247,6 +249,10 @@ class NativeRigRuntime private constructor(
             active = out[1] != 0f,
             clamps = out[2].toLong(),
             largestClamp = out[3],
+            largestBone = out[4].toInt(),
+            largestChannel = out[5].toInt(),
+            requested = out[6],
+            applied = out[7],
         )
     }
 
@@ -255,6 +261,10 @@ class NativeRigRuntime private constructor(
         val active: Boolean,
         val clamps: Long,
         val largestClamp: Float,
+        val largestBone: Int = -1,
+        val largestChannel: Int = -1,
+        val requested: Float = 0f,
+        val applied: Float = 0f,
     )
 
     override fun close() {

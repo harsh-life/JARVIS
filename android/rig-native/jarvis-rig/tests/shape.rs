@@ -1,7 +1,8 @@
 //! The presentation-intensity layers (`shape`) against the character the app bundles: neutral is
 //! bit-identical, posture and motion scale exactly what they should and nothing else, held bones
-//! stay canonical, the guard only limits what was added, attachments never change, nothing jumps,
-//! and gains ramp.
+//! stay canonical, both layers belong to the idles (entries, transitions and long idles play as
+//! authored), the guard only limits what was added and the profile's gains never need it,
+//! attachments never change, nothing jumps, and gains ramp.
 
 use jarvis_rig::rig::Rig;
 use jarvis_rig::shape::{CHANNELS, MAX_GAIN};
@@ -17,10 +18,10 @@ const POSTURE_HOLDS: [&[&str]; 7] = [
     &[],
     &[],
     &[],
-    &["upperarm_r", "upperarm_l"],
-    &["upperarm_r", "upperarm_l"],
+    &["head", "upperarm_r", "upperarm_l"],
+    &["upperarm_r", "upperarm_l", "leg_r", "leg_l"],
     &["upperarm_r", "upperarm_l", "hand_r", "hand_l"],
-    &["upperarm_r", "upperarm_l", "forearm_r", "forearm_l"],
+    &["upperarm_r", "upperarm_l", "forearm_r", "forearm_l", "leg_r", "leg_l"],
 ];
 const MOTION_HOLDS: [&[&str]; 7] = [&[], &[], &[], &[], &[], &["hand_r", "hand_l"], &[]];
 
@@ -163,7 +164,7 @@ fn posture_adds_the_scaled_held_offset_and_holds_its_excluded_bones() {
     frames(&mut [&mut plain, &mut shaped], POSTURE_RAMP + 0.1);
     let held = shaped.shape().unwrap().held(sad).unwrap().to_vec();
     let reference = shaped.shape().unwrap().reference().to_vec();
-    let kept: Vec<usize> = ["upperarm_r", "upperarm_l", "forearm_r", "forearm_l", "face"].iter().map(|n| bone(&plain, n)).collect();
+    let kept: Vec<usize> = ["upperarm_r", "upperarm_l", "forearm_r", "forearm_l", "leg_r", "leg_l", "face"].iter().map(|n| bone(&plain, n)).collect();
     for _ in 0..200 {
         frames(&mut [&mut plain, &mut shaped], FRAME);
         for b in 0..plain.bone_count() {
@@ -182,11 +183,11 @@ fn posture_adds_the_scaled_held_offset_and_holds_its_excluded_bones() {
             }
         }
     }
-    // At 1.4 the guard only trims sad's right leg at the top of its sway, by a twentieth of a
-    // degree: the 2-degree held leg plus 0.8 more reaches past anything the rig authors there.
+    // With the legs held (sad's right leg sits 0.7 degrees inside its authored range; 0.8 more
+    // would cross it), the guard never acts in sad's idle at 1.4.
     let stats = shaped.shape().unwrap().stats();
-    assert_eq!(stats.largest_bone, bone(&plain, "leg_r"), "{stats:?}");
-    assert!(stats.largest < 0.1, "{stats:?}");
+    assert_eq!(stats.clamps, 0, "{stats:?}");
+    assert!((stats.requested - stats.applied).abs() <= 1e-9 * stats.requested, "{stats:?}");
     // The head goes further down: about 1.2 degrees more at 1.4.
     let head = bone(&plain, "head");
     let extra = shaped.local(head).unwrap()[2] - plain.local(head).unwrap()[2];
@@ -250,8 +251,9 @@ fn transitions_long_idles_and_the_overlay_keep_their_authored_motion() {
     let mut plain = rig();
     let mut shaped = configured();
     let happy = idle(&plain, "happy");
-    // Motion only (posture neutral): nothing but a regular idle may change.
-    shaped.set_shape(Some(happy), 1.0, 1.7);
+    // Both layers belong to the idles: with happy at its strongest, nothing but a regular idle
+    // may change.
+    shaped.set_shape(Some(happy), 1.5, 1.7);
     for name in ["to_happy", "long_idle_happy", "trans_happy_to_satisfied"] {
         let a = index(&plain, name);
         both(&mut [&mut plain, &mut shaped], |r| {
@@ -394,6 +396,7 @@ fn changing_expression_intensity_or_clip_never_jumps() {
 fn gains_ramp_smoothly_to_their_target_and_back() {
     let mut r = configured();
     let (happy, sad) = (idle(&r, "happy"), idle(&r, "sad"));
+    r.set_animation(0, happy, true, 0.0);
     assert!(r.set_shape(Some(happy), 1.5, 1.7));
     r.update(FRAME);
     let [p1, m1] = r.shape().unwrap().gains(happy).unwrap();
@@ -412,12 +415,16 @@ fn gains_ramp_smoothly_to_their_target_and_back() {
     r.update(FRAME);
     assert_eq!(r.shape().unwrap().gains(happy).unwrap(), [1.5, 1.7]);
     // Another expression: it ramps in while the previous one ramps out, continuously.
+    r.set_animation(0, sad, true, 0.2);
     assert!(r.set_shape(Some(sad), 1.4, 1.4));
     r.update(FRAME);
     let [hp, _] = r.shape().unwrap().gains(happy).unwrap();
     let [sp, _] = r.shape().unwrap().gains(sad).unwrap();
     assert!(hp < 1.5 && hp > 1.49, "{hp}");
     assert!(sp > 1.0 && sp < 1.01, "{sp}");
+    // Once happy's idle has left track 0 its posture is back at 1 (it no longer shows).
+    r.update(0.25);
+    assert_eq!(r.shape().unwrap().gains(happy).unwrap()[0], 1.0);
     // Retargeting mid-ramp continues from where it is.
     r.update(0.2);
     let [before, _] = r.shape().unwrap().gains(sad).unwrap();
@@ -513,4 +520,97 @@ fn bad_configurations_and_targets_are_refused() {
     }
     assert!(!r.set_shape(Some(enter), 1.2, 1.2), "not a registered idle");
     assert!(!r.shape().unwrap().active(), "refused targets change nothing");
+}
+
+/// Plays `state`'s session like the player: its entry from Default, its idle, its long idle, its
+/// idle again; returns the guard statistics of each phase (entry, idle, long idle, return).
+fn session(r: &mut Rig, state: &str, gains: Option<(f64, f64)>) -> [jarvis_rig::shape::GuardStats; 4] {
+    let (to, idle_, long) = (index(r, &format!("to_{state}")), idle(r, state), index(r, &format!("long_idle_{state}")));
+    let default = idle(r, "default");
+    r.set_animation(0, default, true, 0.0);
+    frames(&mut [&mut *r], 0.5);
+    if let Some((p, m)) = gains {
+        assert!(r.set_shape(Some(idle_), p, m));
+    }
+    r.set_animation(0, to, false, 0.3);
+    r.add_animation(0, idle_, true, 0.2);
+    let mut out = [jarvis_rig::shape::GuardStats::default(); 4];
+    let long_seconds = r.animation_duration(long).unwrap();
+    for (k, seconds) in [1.6, 1.4, long_seconds, 2.0].into_iter().enumerate() {
+        if let Some(s) = r.shape_mut() {
+            s.reset_stats();
+        }
+        if k == 2 {
+            r.set_animation(0, long, false, 0.3);
+            r.add_animation(0, idle_, true, 0.4);
+        }
+        frames(&mut [&mut *r], seconds);
+        out[k] = r.shape().map(|s| s.stats()).unwrap_or_default();
+    }
+    out
+}
+
+#[test]
+fn long_idles_entries_and_transitions_play_exactly_as_authored() {
+    // Sleepy at its strongest posture: once a long idle has fully replaced the idle, the pose is
+    // the canonical one, bit for bit — the layers belong to the idle, not to what plays.
+    let mut plain = rig();
+    let mut shaped = configured();
+    let (sleepy, long) = (idle(&plain, "sleepy"), index(&plain, "long_idle_sleepy"));
+    both(&mut [&mut plain, &mut shaped], |r| {
+        r.set_animation(0, sleepy, true, 0.0);
+    });
+    shaped.set_shape(Some(sleepy), 1.5, 1.4);
+    frames(&mut [&mut plain, &mut shaped], 2.0);
+    both(&mut [&mut plain, &mut shaped], |r| {
+        r.set_animation(0, long, false, 0.3);
+        r.add_animation(0, sleepy, true, 0.4);
+    });
+    // During the 0.3 s crossfade the layered idle blends out; after it nothing is added, until
+    // the queued idle starts mixing back in 0.4 s before the long idle ends.
+    let back = plain.animation_duration(long).unwrap() - 0.4;
+    let mut elapsed = 0.0;
+    while elapsed < back - FRAME / 2.0 {
+        both(&mut [&mut plain, &mut shaped], |r| {
+            r.update(FRAME);
+            r.build().unwrap();
+        });
+        elapsed += FRAME;
+        if elapsed > 0.3 + FRAME {
+            assert_eq!(plain.positions, shaped.positions, "the long idle is authored motion ({elapsed:.3} s)");
+        }
+    }
+    // Back in the idle the posture eases in again from 1: monotone, with no step.
+    let mut previous = 1.0;
+    let mut eased = false;
+    for _ in 0..((0.4 + POSTURE_RAMP + 0.3) / FRAME) as usize {
+        shaped.update(FRAME);
+        let [p, _] = shaped.shape().unwrap().gains(sleepy).unwrap();
+        assert!(p >= previous && p - previous < 0.03, "eases back: {previous} -> {p}");
+        eased |= p > 1.0 && p < 1.5;
+        previous = p;
+    }
+    assert!(eased, "it ramps rather than jumping");
+    assert_eq!(previous, 1.5, "and arrives at the target");
+}
+
+#[test]
+fn the_profiles_extreme_gains_never_need_the_guard() {
+    // Every expression at the bundled profile's strongest and weakest gains (intensities 10 and
+    // 1; Default has no posture of its own), through a whole session: the guard is a boundary
+    // for the unexpected, not a part of the look. What remains is a rounding-size trim of sad's
+    // forearm sway while idle_sad crossfades with its neighbours.
+    let tops = [(1.5, 1.7), (1.35, 1.4), (1.0, 1.3), (1.5, 1.4), (1.25, 1.7), (1.3, 1.35), (1.4, 1.4)];
+    for (i, state) in STATES.iter().enumerate() {
+        let low = if *state == "default" { (1.0, 0.25) } else { (0.6, 0.25) };
+        for gains in [tops[i], low] {
+            let stats = session(&mut configured(), state, Some(gains));
+            for (phase, s) in ["entry", "idle", "long idle", "return"].iter().zip(stats) {
+                assert!(s.largest <= 0.01, "{state} {gains:?} {phase}: {s:?}");
+                if *phase == "idle" {
+                    assert_eq!(s.clamps, 0, "{state} {gains:?} regular idle: {s:?}");
+                }
+            }
+        }
+    }
 }

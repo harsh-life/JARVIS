@@ -5,14 +5,15 @@
 //!
 //! - **Posture emphasis:** `(posture gain - 1) * (held pose - reference pose)`, where an idle's
 //!   *held pose* is its time average over one loop (sampled with the runtime's own sampler) and the
-//!   *reference* is the reference idle's (Default's) held pose. It is applied whatever plays
-//!   (entry, transition, idle, long idle), so changing expression retargets it smoothly instead
-//!   of jumping when a clip ends. The clips stay canonical; the rendered pose during a transition
-//!   is not strictly canonical when a gain is not 1.
-//! - **Idle motion:** `(motion gain - 1) * (idle pose at its time - held pose)`, only for the
-//!   registered idles on track 0, weighted by how much of the pose each one is (its crossfade
-//!   weight), so an idle fading in or out scales with it. Long idles, entries, transitions, the
-//!   entrance and the exit are never scaled.
+//!   *reference* is the reference idle's (Default's) held pose.
+//! - **Idle motion:** `(motion gain - 1) * (idle pose at its time - held pose)`.
+//!
+//! Both belong to the registered idles: each idle's layers are weighted by how much of track 0's
+//! pose that idle is (its crossfade weight). Entries, transitions, long idles, the entrance and the
+//! exit play exactly as authored — their own peaks reach the rig's range, and an offset added on top
+//! of them would only be trimmed by the guard. Leaving an idle, its layers blend out with the
+//! authored crossfade; arriving, an idle's posture starts from 1 and eases in (its ramp only runs
+//! while the idle is on track 0), so it never lands as a step.
 //!
 //! Every gain ramps (smoothstep) to its target; a registered idle that is not the shown one ramps
 //! to 1. With every gain at exactly 1 nothing is touched, so the output is bit-identical to the
@@ -98,6 +99,13 @@ impl Ramp {
     fn neutral(&self) -> bool {
         self.value == 1.0 && self.to == 1.0
     }
+
+    /// Back to 1, keeping the target: the ramp to it starts again from 1 when next advanced.
+    fn restart(&mut self) {
+        self.from = 1.0;
+        self.value = 1.0;
+        self.elapsed = 0.0;
+    }
 }
 
 struct Idle {
@@ -108,6 +116,8 @@ struct Idle {
     motion_weight: Vec<f64>,
     posture: Ramp,
     motion: Ramp,
+    /// This frame's share of track 0's pose (0 when it does not play).
+    share: f64,
 }
 
 /// Statistics of the guard since configuration (or the last [`Shape::reset_stats`]).
@@ -119,6 +129,17 @@ pub struct GuardStats {
     pub largest: f64,
     pub largest_bone: usize,
     pub largest_channel: usize,
+    /// What the layers asked for and what reached the pose after the guard, summed over every
+    /// adjusted channel value (absolute, units or degrees): equal when the guard never acted.
+    pub requested: f64,
+    pub applied: f64,
+}
+
+/// The guard's interventions in one bone channel.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ChannelStats {
+    pub clamps: u64,
+    pub largest: f64,
 }
 
 pub struct Shape {
@@ -129,6 +150,7 @@ pub struct Shape {
     scratch: Pose,
     delta: Vec<Channels>,
     stats: GuardStats,
+    per_channel: Vec<[ChannelStats; CHANNELS]>,
 }
 
 impl Shape {
@@ -210,6 +232,7 @@ impl Shape {
                 motion_weight: motion_weights[i * bones..(i + 1) * bones].iter().map(|&w| w as f64).collect(),
                 posture: Ramp::new(posture_ramp),
                 motion: Ramp::new(motion_ramp),
+                share: 0.0,
             })
             .collect();
         let reference = idle_list.iter().find(|i| i.animation == reference).map(|i| i.held.clone()).unwrap_or_default();
@@ -229,7 +252,16 @@ impl Shape {
                 }
             }
         }
-        Ok(Shape { reference, idles: idle_list, low, high, scratch, delta: vec![[0.0; CHANNELS]; bones], stats: GuardStats::default() })
+        Ok(Shape {
+            reference,
+            idles: idle_list,
+            low,
+            high,
+            scratch,
+            delta: vec![[0.0; CHANNELS]; bones],
+            stats: GuardStats::default(),
+            per_channel: vec![[ChannelStats::default(); CHANNELS]; bones],
+        })
     }
 
     /// Shows `idle`'s expression at these gains (ramping); every other idle ramps to 1. `None`
@@ -281,25 +313,52 @@ impl Shape {
         self.stats
     }
 
+    /// The guard's interventions in `bone`, per channel.
+    pub fn channel_stats(&self, bone: usize) -> Option<&[ChannelStats; CHANNELS]> {
+        self.per_channel.get(bone)
+    }
+
     pub fn reset_stats(&mut self) {
         self.stats = GuardStats::default();
+        self.per_channel.fill([ChannelStats::default(); CHANNELS]);
     }
 
     /// Advances the ramps by `dt` and, unless every gain is exactly 1, adds both layers to the
     /// canonical pose `state` just applied and recomputes the world transforms. Returns whether it
     /// changed the pose.
     pub fn apply(&mut self, data: &SkeletonData, state: &AnimationState, pose: &mut Pose, dt: f64) -> bool {
+        // Each idle's share of track 0: the current entry and the one it is mixing from, with the
+        // same weights the animation state blends them with.
         for i in &mut self.idles {
-            i.posture.advance(dt);
+            i.share = 0.0;
+        }
+        let current = state.current(0);
+        if let Some(entry) = current {
+            match entry.previous.as_deref() {
+                Some(previous) => {
+                    let a = entry.mix() * entry.alpha;
+                    self.add_share(entry.animation, a);
+                    self.add_share(previous.animation, (1.0 - a) * previous.alpha);
+                }
+                None => self.add_share(entry.animation, entry.alpha),
+            }
+        }
+        for i in &mut self.idles {
+            // Posture eases in from 1 each time its idle comes back to track 0.
+            if i.share > 0.0 {
+                i.posture.advance(dt);
+            } else {
+                i.posture.restart();
+            }
             i.motion.advance(dt);
         }
         if !self.active() {
             return false;
         }
         self.delta.fill([0.0; CHANNELS]);
-        // Posture: every idle whose gain is not 1 (the shown one, and one still ramping out).
+        // Posture: every idle on track 0 whose gain is not 1, by its share of the pose.
         for idle in &self.idles {
-            let k = idle.posture.value - 1.0;
+            let k = (idle.posture.value - 1.0) * idle.share;
             if k == 0.0 {
                 continue;
             }
@@ -314,7 +373,7 @@ impl Shape {
             }
         }
         // Motion: the registered idles on track 0, by their share of the pose.
-        if let Some(entry) = state.current(0) {
+        if let Some(entry) = current {
             match entry.previous.as_deref() {
                 Some(previous) => {
                     let a = entry.mix() * entry.alpha;
@@ -337,12 +396,19 @@ impl Shape {
                 let low = self.low[b][c].min(canonical[c]);
                 let high = self.high[b][c].max(canonical[c]);
                 let value = target.clamp(low, high);
-                if (target - value).abs() > NEGLIGIBLE {
+                self.stats.requested += d[c].abs();
+                self.stats.applied += (value - canonical[c]).abs();
+                let amount = (target - value).abs();
+                if amount > NEGLIGIBLE {
                     self.stats.clamps += 1;
-                    let amount = (target - value).abs();
                     if amount > self.stats.largest {
-                        self.stats = GuardStats { clamps: self.stats.clamps, largest: amount, largest_bone: b, largest_channel: c };
+                        self.stats.largest = amount;
+                        self.stats.largest_bone = b;
+                        self.stats.largest_channel = c;
                     }
+                    let per = &mut self.per_channel[b][c];
+                    per.clamps += 1;
+                    per.largest = per.largest.max(amount);
                 }
                 set_channel(local, c, value);
                 changed = true;
@@ -352,6 +418,12 @@ impl Shape {
             pose.update_world(data);
         }
         changed
+    }
+
+    fn add_share(&mut self, animation: usize, weight: f64) {
+        if let Some(i) = self.idles.iter_mut().find(|i| i.animation == animation) {
+            i.share += weight.max(0.0);
+        }
     }
 
     fn add_motion(&mut self, data: &SkeletonData, entry: &TrackEntry, weight: f64) {

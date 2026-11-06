@@ -374,7 +374,8 @@ pub unsafe extern "system" fn Java_com_hypermind_jarvis_presentation_character_r
     flag(guarded(false, || rig.set_shape(idle, posture as f64, motion as f64)))
 }
 
-/// `[configured (0/1), active (0/1), guard clamps, largest clamp]`; false if `out` is too short.
+/// `[configured (0/1), active (0/1), guard clamps, largest clamp, its bone (-1 for none), its
+/// channel, requested total, applied total]` (see `GuardStats`); false if `out` is too short.
 #[no_mangle]
 pub unsafe extern "system" fn Java_com_hypermind_jarvis_presentation_character_rig_RigNative_nativeShapeInfo(
     env: *mut JNIEnv,
@@ -385,10 +386,11 @@ pub unsafe extern "system" fn Java_com_hypermind_jarvis_presentation_character_r
     let Some(rig) = rig(handle) else { return JNI_FALSE };
     let values = guarded(None, || {
         Some(match rig.shape() {
-            None => [0.0, 0.0, 0.0, 0.0],
+            None => [0.0, 0.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0],
             Some(s) => {
                 let g = s.stats();
-                [1.0, if s.active() { 1.0 } else { 0.0 }, g.clamps as f32, g.largest as f32]
+                let (bone, channel) = if g.clamps > 0 { (g.largest_bone as f32, g.largest_channel as f32) } else { (-1.0, -1.0) };
+                [1.0, if s.active() { 1.0 } else { 0.0 }, g.clamps as f32, g.largest as f32, bone, channel, g.requested as f32, g.applied as f32]
             }
         })
     });
