@@ -29,5 +29,9 @@ grounding) · `recognizers.py` (deterministic, model-assisted, hybrid) ·
 `explanations.py` (reason codes, evidence-anchored facts) · `routing.py`
 (answer / action_status / clarify; `admit` is the only path into the ledger) ·
 `intent_eval.py` (`python -m experiments intent-eval [--live|--replay DIR] --out DIR`) ·
-`tasks/intent_v1.yaml` (67, dev) and `tasks/intent_holdout_v1.yaml` (36, held out). Traces go to `results/`
+`tasks/intent_v1.yaml` (67, dev) and `tasks/intent_holdout_v1.yaml` (36, held out). Phase 0.3 (docs/31 §11):
+`suspicion.py` (routing-only side-effect signal) · `conditions.py` · `referents.py` · `rules_v2.py`
+(v2 rules and hybrid; `recognizers.py` stays the Phase 0.2 version) · `intent_eval_v3.py`
+(`python -m experiments phase03-eval [--live|--replay DIR] --out DIR`) · `annotation_tools.py` +
+`annotation/phase03_packet/` (blind packet for a second annotator) · `tasks/intent_holdout_v2.yaml` (140, held out). Traces go to `results/`
 (git-ignored). Tests: `tests/experiments/` (offline, run in CI).
