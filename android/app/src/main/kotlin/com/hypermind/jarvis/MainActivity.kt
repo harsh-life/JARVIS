@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -55,9 +56,11 @@ import com.hypermind.jarvis.overlay.OverlayController
 import com.hypermind.jarvis.permissions.GridSync
 import com.hypermind.jarvis.presentation.PresentationText
 import com.hypermind.jarvis.presentation.VoiceActivity
+import com.hypermind.jarvis.presentation.character.IntensityPolicy
 import com.hypermind.jarvis.presentation.character.PresentationEvent
 import com.hypermind.jarvis.presentation.ui.Character
 import com.hypermind.jarvis.presentation.ui.CharacterGallery
+import com.hypermind.jarvis.presentation.ui.CharacterIntensityPicker
 import com.hypermind.jarvis.push.PushRegistrar
 import com.hypermind.jarvis.reminders.RunOffer
 import com.hypermind.jarvis.tasks.TaskTracker
@@ -327,24 +330,45 @@ class MainActivity : FragmentActivity() {
     /**
      * OD-CHAR-1/2: the character, above the status line. It shows the
      * expression its controller decided (default until the current
-     * interaction or a verified event selects another); the status line
-     * below stays the one account of what JARVIS is doing.
+     * interaction or a verified event selects another), at the intensity
+     * decided with it; the status line below stays the one account of what
+     * JARVIS is doing.
      */
     @Composable
     private fun CharacterPortrait(app: JarvisApplication) {
         val character = app.character
-        val expression by character.expression.collectAsState()
+        val presented by character.presented.collectAsState()
         Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Character(expression = expression, profile = character.profile, settings = character.settings)
+            Character(
+                expression = presented.expression,
+                profile = character.profile,
+                settings = character.settings,
+                intensity = presented.intensity,
+            )
         }
     }
 
-    /** Debug builds only: preview each of the character's states (pinned until reset; nothing else changes). */
+    /**
+     * Debug builds only: preview each of the character's states, at a chosen intensity (5 unless
+     * chosen), on the live character above (pinned until reset; nothing else changes).
+     */
     @Composable
     private fun CharacterPreview(app: JarvisApplication) {
         val character = app.character
-        val expression by character.expression.collectAsState()
-        CharacterGallery(profile = character.profile, selected = expression, onSelect = character::preview)
+        val presented by character.presented.collectAsState()
+        var intensity by remember { mutableIntStateOf(IntensityPolicy.NEUTRAL) }
+        CharacterGallery(
+            profile = character.profile,
+            selected = presented.expression,
+            onSelect = { character.preview(it, intensity) },
+        )
+        CharacterIntensityPicker(
+            selected = presented.intensity,
+            onSelect = {
+                intensity = it
+                character.preview(presented.expression, it)
+            },
+        )
         OutlinedButton(onClick = { character.reset() }) { Text("Back to the live character") }
     }
 

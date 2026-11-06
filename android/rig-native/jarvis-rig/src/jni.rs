@@ -154,7 +154,7 @@ pub unsafe extern "system" fn Java_com_hypermind_jarvis_presentation_character_r
 }
 
 /// `[vertex capacity, index capacity, animation count, min x, min y, max x, max y, page width,
-/// page height]`; false if `out` is too short.
+/// page height, bone count]`; false if `out` is too short.
 #[no_mangle]
 pub unsafe extern "system" fn Java_com_hypermind_jarvis_presentation_character_rig_RigNative_nativeInfo(
     env: *mut JNIEnv,
@@ -166,7 +166,7 @@ pub unsafe extern "system" fn Java_com_hypermind_jarvis_presentation_character_r
     let values = guarded(None, || {
         let b = rig.bounds();
         let p = rig.page_size();
-        Some([rig.vertex_capacity() as f32, rig.index_capacity() as f32, rig.animation_count() as f32, b[0], b[1], b[2], b[3], p[0], p[1]])
+        Some([rig.vertex_capacity() as f32, rig.index_capacity() as f32, rig.animation_count() as f32, b[0], b[1], b[2], b[3], p[0], p[1], rig.bone_count() as f32])
     });
     flag(values.is_some_and(|v| write_floats(env, out, &v)))
 }

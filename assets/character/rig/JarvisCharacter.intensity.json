@@ -1,0 +1,36 @@
+{
+  "schema": "jarvis-character-intensity/1",
+  "reference_state": "default",
+  "ramp_seconds": {"posture": 0.8, "motion": 0.5},
+  "guard": "authored_range",
+  "states": {
+    "happy": {
+      "posture": {"curve": [0.6, 0.65, 0.78, 0.9, 1.0, 1.0, 1.15, 1.28, 1.4, 1.5], "hold_canonical": ["face"]},
+      "motion": {"curve": [0.25, 0.35, 0.55, 0.75, 1.0, 1.0, 1.21, 1.39, 1.56, 1.7], "hold_canonical": ["face"]}
+    },
+    "satisfied": {
+      "posture": {"curve": [0.6, 0.65, 0.78, 0.9, 1.0, 1.0, 1.11, 1.19, 1.28, 1.35], "hold_canonical": ["face"]},
+      "motion": {"curve": [0.25, 0.35, 0.55, 0.75, 1.0, 1.0, 1.12, 1.22, 1.32, 1.4], "hold_canonical": ["face"]}
+    },
+    "default": {
+      "posture": {"curve": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], "hold_canonical": ["face"]},
+      "motion": {"curve": [0.25, 0.35, 0.55, 0.75, 1.0, 1.0, 1.09, 1.17, 1.24, 1.3], "hold_canonical": ["face"]}
+    },
+    "sleepy": {
+      "posture": {"curve": [0.6, 0.65, 0.78, 0.9, 1.0, 1.0, 1.15, 1.28, 1.4, 1.5], "hold_canonical": ["upperarm_r", "upperarm_l", "face"]},
+      "motion": {"curve": [0.25, 0.35, 0.55, 0.75, 1.0, 1.0, 1.12, 1.22, 1.32, 1.4], "hold_canonical": ["face"]}
+    },
+    "surprised": {
+      "posture": {"curve": [0.6, 0.65, 0.78, 0.9, 1.0, 1.0, 1.08, 1.14, 1.2, 1.25], "hold_canonical": ["upperarm_r", "upperarm_l", "face"]},
+      "motion": {"curve": [0.25, 0.35, 0.55, 0.75, 1.0, 1.0, 1.21, 1.39, 1.56, 1.7], "hold_canonical": ["face"]}
+    },
+    "angry": {
+      "posture": {"curve": [0.6, 0.65, 0.78, 0.9, 1.0, 1.0, 1.09, 1.17, 1.24, 1.3], "hold_canonical": ["upperarm_r", "upperarm_l", "hand_r", "hand_l", "face"]},
+      "motion": {"curve": [0.25, 0.35, 0.55, 0.75, 1.0, 1.0, 1.11, 1.19, 1.28, 1.35], "hold_canonical": ["hand_r", "hand_l", "face"]}
+    },
+    "sad": {
+      "posture": {"curve": [0.6, 0.65, 0.78, 0.9, 1.0, 1.0, 1.12, 1.22, 1.32, 1.4], "hold_canonical": ["upperarm_r", "upperarm_l", "forearm_r", "forearm_l", "face"]},
+      "motion": {"curve": [0.25, 0.35, 0.55, 0.75, 1.0, 1.0, 1.12, 1.22, 1.32, 1.4], "hold_canonical": ["face"]}
+    }
+  }
+}

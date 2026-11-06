@@ -23,6 +23,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.hypermind.jarvis.presentation.character.Expression
+import com.hypermind.jarvis.presentation.character.IntensityPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.isActive
@@ -42,9 +43,10 @@ private sealed interface RigState {
 }
 
 /**
- * The animated character in the slot it is given: it shows [expression] — decided elsewhere — with
- * the rig's transitions and idles. Until the rig has loaded, and if it cannot (no native runtime,
- * missing or invalid files), [fallback] (the static images) is shown instead.
+ * The animated character in the slot it is given: it shows [expression] at [intensity] — both
+ * decided elsewhere — with the rig's transitions and idles. Until the rig has loaded, and if it
+ * cannot (no native runtime, missing or invalid files), [fallback] (the static images) is shown
+ * instead. A new [intensity] alone restarts nothing: the player only retargets its gains.
  *
  * - Frames run only while the screen is resumed: in the background time stands still (the player is
  *   paused) and the long-idle count stops; on return nothing jumps.
@@ -58,6 +60,7 @@ fun AnimatedCharacter(
     reducedMotion: Boolean,
     rig: RigLoader,
     modifier: Modifier = Modifier,
+    intensity: Int = IntensityPolicy.NEUTRAL,
     fallback: @Composable () -> Unit,
 ) {
     val assets = LocalContext.current.assets
@@ -75,7 +78,7 @@ fun AnimatedCharacter(
         }
     }
     when (val s = state) {
-        is RigState.Ready -> RigCanvas(s.rig, expression, reducedMotion, modifier)
+        is RigState.Ready -> RigCanvas(s.rig, expression, intensity, reducedMotion, modifier)
         else -> fallback()
     }
 }
@@ -84,6 +87,7 @@ fun AnimatedCharacter(
 private fun RigCanvas(
     loaded: LoadedRig,
     expression: Expression,
+    intensity: Int,
     reducedMotion: Boolean,
     modifier: Modifier,
 ) {
@@ -99,10 +103,10 @@ private fun RigCanvas(
         }
     }
     LaunchedEffect(loaded) {
-        player.start(expression, entrance = true)
+        player.start(expression, intensity, entrance = true)
     }
-    LaunchedEffect(loaded, expression) {
-        player.show(expression)
+    LaunchedEffect(loaded, expression, intensity) {
+        player.show(expression, intensity)
         if (reducedMotion) {
             player.advance(0f)
             if (player.build(geometry)) frame++
