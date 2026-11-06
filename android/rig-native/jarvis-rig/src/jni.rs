@@ -37,6 +37,31 @@ unsafe fn read_bytes(env: *mut JNIEnv, array: jbyteArray) -> Vec<u8> {
     out
 }
 
+/// Reads a whole int array (configuration only: never per frame).
+unsafe fn read_ints(env: *mut JNIEnv, array: jintArray) -> Vec<i32> {
+    let n = array_len(env, array);
+    let mut out = vec![0i32; n];
+    if n > 0 {
+        ((**env).GetIntArrayRegion.unwrap())(env, array, 0, n as jsize, out.as_mut_ptr());
+    }
+    out
+}
+
+/// Reads a whole float array (configuration only: never per frame).
+unsafe fn read_floats(env: *mut JNIEnv, array: jfloatArray) -> Vec<f32> {
+    let n = array_len(env, array);
+    let mut out = vec![0f32; n];
+    if n > 0 {
+        ((**env).GetFloatArrayRegion.unwrap())(env, array, 0, n as jsize, out.as_mut_ptr());
+    }
+    out
+}
+
+/// Non-negative ints as indices, or None if any is negative.
+fn indices(values: &[i32]) -> Option<Vec<usize>> {
+    values.iter().map(|&v| usize::try_from(v).ok()).collect()
+}
+
 unsafe fn write_floats(env: *mut JNIEnv, array: jfloatArray, values: &[f32]) -> bool {
     if values.len() > array_len(env, array) {
         return false;
@@ -289,4 +314,83 @@ pub unsafe extern "system" fn Java_com_hypermind_jarvis_presentation_character_r
         && write_shorts(env, indices, &rig.indices)
         && write_ints(env, counts, &[(rig.positions.len() / 2) as i32, rig.indices.len() as i32]);
     flag(ok)
+}
+
+/// The index of the bone named by the UTF-8 bytes `name`, or -1.
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_hypermind_jarvis_presentation_character_rig_RigNative_nativeBoneIndex(
+    env: *mut JNIEnv,
+    _class: jclass,
+    handle: jlong,
+    name: jbyteArray,
+) -> jint {
+    let Some(rig) = rig(handle) else { return -1 };
+    let name = read_bytes(env, name);
+    guarded(-1, || std::str::from_utf8(&name).ok().and_then(|n| rig.bone_index(n)).map_or(-1, |i| i as jint))
+}
+
+/// Configures the presentation-intensity layers (`Shape::configure`): `idles` and `range` are
+/// animation indices, the weights one value per bone for each idle. Called once, while loading.
+/// False, leaving any previous configuration, if anything is invalid.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "system" fn Java_com_hypermind_jarvis_presentation_character_rig_RigNative_nativeConfigureShape(
+    env: *mut JNIEnv,
+    _class: jclass,
+    handle: jlong,
+    reference: jint,
+    idles: jintArray,
+    range: jintArray,
+    posture_weights: jfloatArray,
+    motion_weights: jfloatArray,
+    posture_ramp: jfloat,
+    motion_ramp: jfloat,
+) -> jboolean {
+    let Some(rig) = rig(handle) else { return JNI_FALSE };
+    let (Ok(reference), Some(idles), Some(range)) = (usize::try_from(reference), indices(&read_ints(env, idles)), indices(&read_ints(env, range))) else {
+        return JNI_FALSE;
+    };
+    let posture = read_floats(env, posture_weights);
+    let motion = read_floats(env, motion_weights);
+    flag(guarded(false, || rig.configure_shape(reference, &idles, &range, &posture, &motion, posture_ramp as f64, motion_ramp as f64).is_ok()))
+}
+
+/// Ramps to the gains of idle animation `idle` (-1: every gain to 1, the exit). No arrays; called
+/// only when the shown expression or intensity changes, never per frame.
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_hypermind_jarvis_presentation_character_rig_RigNative_nativeSetShape(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    handle: jlong,
+    idle: jint,
+    posture: jfloat,
+    motion: jfloat,
+) -> jboolean {
+    let Some(rig) = rig(handle) else { return JNI_FALSE };
+    if idle < -1 {
+        return JNI_FALSE;
+    }
+    let idle = usize::try_from(idle).ok();
+    flag(guarded(false, || rig.set_shape(idle, posture as f64, motion as f64)))
+}
+
+/// `[configured (0/1), active (0/1), guard clamps, largest clamp]`; false if `out` is too short.
+#[no_mangle]
+pub unsafe extern "system" fn Java_com_hypermind_jarvis_presentation_character_rig_RigNative_nativeShapeInfo(
+    env: *mut JNIEnv,
+    _class: jclass,
+    handle: jlong,
+    out: jfloatArray,
+) -> jboolean {
+    let Some(rig) = rig(handle) else { return JNI_FALSE };
+    let values = guarded(None, || {
+        Some(match rig.shape() {
+            None => [0.0, 0.0, 0.0, 0.0],
+            Some(s) => {
+                let g = s.stats();
+                [1.0, if s.active() { 1.0 } else { 0.0 }, g.clamps as f32, g.largest as f32]
+            }
+        })
+    });
+    flag(values.is_some_and(|v| write_floats(env, out, &v)))
 }
