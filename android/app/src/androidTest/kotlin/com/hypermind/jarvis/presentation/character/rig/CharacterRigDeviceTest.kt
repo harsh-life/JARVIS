@@ -215,7 +215,12 @@ class CharacterRigDeviceTest {
         val n = poses.first().size
         val mean = FloatArray(n) { k -> poses.sumOf { it[k].toDouble() }.toFloat() / poses.size }
         var sum = 0.0
-        for (p in poses) for (k in 0 until n step 2) sum += Math.hypot((p[k] - mean[k]).toDouble(), (p[k + 1] - mean[k + 1]).toDouble())
+        for (p in poses) {
+            for (k in 0 until n step 2) {
+                sum +=
+                    Math.hypot((p[k] - mean[k]).toDouble(), (p[k + 1] - mean[k + 1]).toDouble())
+            }
+        }
         return (sum / (poses.size * n / 2)).toFloat()
     }
 
@@ -225,7 +230,12 @@ class CharacterRigDeviceTest {
         val levels = listOf(1, 5, 10)
         val overview = Bitmap.createBitmap(SIZE * levels.size, SIZE * Expression.entries.size, Bitmap.Config.ARGB_8888)
         val sheetCanvas = Canvas(overview).apply { drawColor(Color.WHITE) }
-        val label = Paint().apply { textSize = 22f; color = Color.BLACK; isAntiAlias = true }
+        val label =
+            Paint().apply {
+                textSize = 22f
+                color = Color.BLACK
+                isAntiAlias = true
+            }
         val report = StringBuilder()
         for ((row, e) in Expression.entries.withIndex()) {
             val frames = levels.associateWith { idleFrames(e, it) }
@@ -286,11 +296,25 @@ class CharacterRigDeviceTest {
             val paused = geometry.positions.copyOf(geometry.vertexCount * 2)
             repeat(120) { rig.player.advance(1f / 60f) }
             rig.player.build(geometry)
-            assertArrayEquals("time stands still while paused", paused, geometry.positions.copyOf(geometry.vertexCount * 2), 0f)
+            assertArrayEquals(
+                "time stands still while paused",
+                paused,
+                geometry.positions.copyOf(
+                    geometry.vertexCount * 2,
+                ),
+                0f,
+            )
             rig.player.resume()
             rig.player.advance(1f / 60f)
             rig.player.build(geometry)
-            assertArrayEquals("the first frame after resume does not jump", paused, geometry.positions.copyOf(geometry.vertexCount * 2), 0f)
+            assertArrayEquals(
+                "the first frame after resume does not jump",
+                paused,
+                geometry.positions.copyOf(
+                    geometry.vertexCount * 2,
+                ),
+                0f,
+            )
             repeat(60) { rig.player.advance(1f / 60f) }
             rig.player.build(geometry)
             assertFalse(paused.contentEquals(geometry.positions.copyOf(geometry.vertexCount * 2)))
@@ -313,7 +337,12 @@ class CharacterRigDeviceTest {
         for (i in listOf(1, 10)) {
             intensity.value = i
             compose.waitUntil(TIMEOUT) {
-                compose.onAllNodesWithTag("$CHARACTER_TAG/sad.webp", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+                compose
+                    .onAllNodesWithTag(
+                        "$CHARACTER_TAG/sad.webp",
+                        useUnmergedTree = true,
+                    ).fetchSemanticsNodes()
+                    .isNotEmpty()
             }
         }
     }
