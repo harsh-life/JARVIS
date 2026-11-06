@@ -24,5 +24,10 @@ validator, backends, dispatcher) · `tasks/` (suites) · `scoring.py` (rubric 1)
 from model text) · `claims.py` (the lexical screen, defence in depth) ·
 `axes.py` (A quality / B protocol / C truthfulness) · `compare.py` ·
 `tasks/action_truthfulness_v1.yaml` (14 adversarial prompts × 11 scripted
-execution states). Traces go to `results/`
+execution states). Phase 0.2 (docs/31 §10): `intent.py` (intent contract,
+grounding) · `recognizers.py` (deterministic, model-assisted, hybrid) ·
+`explanations.py` (reason codes, evidence-anchored facts) · `routing.py`
+(answer / action_status / clarify; `admit` is the only path into the ledger) ·
+`intent_eval.py` (`python -m experiments intent-eval [--live|--replay DIR] --out DIR`) ·
+`tasks/intent_v1.yaml` (67, dev) and `tasks/intent_holdout_v1.yaml` (36, held out). Traces go to `results/`
 (git-ignored). Tests: `tests/experiments/` (offline, run in CI).
