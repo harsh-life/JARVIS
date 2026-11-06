@@ -34,6 +34,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from experiments.actions import ActionKind
+from experiments.suspicion import ActionSuspicion
 
 
 class IntentClass(str, Enum):
@@ -57,6 +58,7 @@ class MissingSlot(str, Enum):
     TIME = "time"
     ACTION = "action"              # what the user wants done ("handle the invoice")
     DETAIL = "detail"
+    CONDITION = "condition"        # Phase 0.3: a condition that does not say what is tested
 
 
 Route = Literal["answer", "action_status", "clarify"]
@@ -96,11 +98,22 @@ class ActionCandidate(_M):
     evidence_refs: tuple[str, ...] = ()
     uncertainties: tuple[str, ...] = ()
     needs_clarification: bool = False
+    # Phase 0.3 (rules v2). Where the target came from (explicit, unique,
+    # chain, condition_subject, evidence), whether the request wrote it as a
+    # pronoun, each condition's kind, and whether every condition is complete.
+    target_provenance: str | None = None
+    pronoun_target: bool = False
+    condition_kinds: tuple[str, ...] = ()
+    conditions_complete: bool = True
 
     @model_validator(mode="after")
     def _consistent(self) -> "ActionCandidate":
-        if self.conditional != bool(self.conditions):
+        if self.conditional != bool(self.conditions) and self.conditions_complete:
             raise ValueError("a candidate is conditional exactly when it has conditions")
+        if self.condition_kinds and len(self.condition_kinds) != len(self.conditions):
+            raise ValueError("one kind per condition")
+        if self.mode is RequestMode.EXECUTE and not self.conditions_complete and not self.needs_clarification:
+            raise ValueError("an incomplete condition needs clarification, not a guess")
         if self.target_specified and not self.target:
             raise ValueError("a specified target needs the target text")
         if self.mode is RequestMode.EXECUTE and not self.target_specified and not self.needs_clarification:
@@ -129,6 +142,8 @@ class IntentResult(_M):
     source: Source
     # Model and hybrid only: what was rejected from the model's proposal and why.
     rejected: tuple[str, ...] = ()
+    # Phase 0.3: the routing-only side-effect signal (never a ledger input).
+    suspicion: ActionSuspicion | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> "IntentResult":

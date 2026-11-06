@@ -65,8 +65,10 @@ def admit(ledger: ActionLedger, intent: IntentResult, *,
     for c in intent.executable:
         if not c.target_specified or c.needs_clarification:
             continue
+        kind = c.condition_kinds[0] if c.condition_kinds else None
         spec = ActionSpec(kind=c.action_type, description=describe(c),
-                          condition=c.conditions[0][:200] if c.conditional else None)
+                          condition=c.conditions[0][:200] if c.conditional else None,
+                          condition_kind=kind if kind in ("factual", "temporal", "user_step") else None)
         if fixture is not None:
             admitted[c.candidate_id] = apply_fixture(ledger, spec, fixture)
         elif c.conditional:

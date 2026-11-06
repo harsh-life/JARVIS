@@ -65,7 +65,35 @@ def main(argv: list[str] | None = None) -> int:
     ie.add_argument("--replay", type=Path, help="score a stored live run directory instead of calling a model")
     ie.add_argument("--out", type=Path, required=True)
     ie.add_argument("--label", default="")
+    p3 = sub.add_parser("phase03-eval", help="Phase 0.3: score recognition, routing, extraction and the readiness gates "
+                                            "(deterministic offline; --live / --replay add model and hybrids)")
+    p3.add_argument("--suite", default="intent_holdout_v2")
+    p3.add_argument("--live", action="store_true")
+    p3.add_argument("--snapshot", type=Path)
+    p3.add_argument("--providers", type=Path)
+    p3.add_argument("--replay", type=Path, help="a stored live run directory (model_raw.json)")
+    p3.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
+
+    if args.command == "phase03-eval":
+        from experiments import intent_eval_v3 as v3
+
+        raw = None
+        if args.live:
+            if os.environ.get(LIVE_ENV) != "1" or args.providers is None or args.snapshot is None:
+                print(f"--live needs {LIVE_ENV}=1, --providers and --snapshot", file=sys.stderr)
+                return 2
+            args.replay = v3.run_live(load_snapshot(args.snapshot), ProviderMap.load(args.providers), RESULTS_DIR,
+                                      suite=args.suite, label="phase03")
+            print(f"raw model outputs: {args.replay}")
+        if args.replay is not None:
+            raw = json.loads((args.replay / "model_raw.json").read_text())
+        if args.out.exists():
+            print(f"refusing to overwrite {args.out}", file=sys.stderr)
+            return 2
+        v3.write(v3.evaluate(args.suite, raw), args.out, args.suite)
+        print(f"wrote {args.out}")
+        return 0
 
     if args.command == "intent-eval":
         from experiments import intent_eval

@@ -59,7 +59,8 @@ def status_line(o: ActionOutcome) -> str:
     None of them names a confirmation UI, an app or any mechanism the harness
     does not have."""
 
-    d = o.description if o.condition is None else f"{o.description}, only if “{o.condition}”"
+    joiner = "only after" if o.condition_kind in ("temporal", "user_step") else "only if"
+    d = o.description if o.condition is None else f"{o.description}, {joiner} “{o.condition}”"
     s = o.status
     if s is ActionStatus.NOT_AVAILABLE:
         return f"Not done: {d}. There is no tool or permission for this here, so nothing was carried out."

@@ -1,0 +1,1965 @@
+# First annotator (the suite and recognizer author). Not independent.
+annotator: A (suite author)
+annotations:
+- request_id: R001
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R002
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R003
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: pay
+    target: plumber
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: sends the invoice
+    condition_kind: temporal
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R004
+  classification: action
+  route: clarify
+  actions:
+  - type: booking
+    verb: book
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R005
+  classification: action
+  route: clarify
+  actions:
+  - type: other
+    verb: approve
+    target: ''
+    target_specified: false
+    pronoun: true
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R006
+  classification: action
+  route: action_status
+  actions:
+  - type: message
+    verb: reply
+    target: invite
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: true
+  notes: ''
+- request_id: R007
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R008
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R009
+  classification: action
+  route: action_status
+  actions:
+  - type: other
+    verb: rename
+    target: Drafts 2025
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R010
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: pay
+    target: Priya
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: true
+  quoted: false
+  notes: ''
+- request_id: R011
+  classification: action
+  route: action_status
+  actions:
+  - type: form_submission
+    verb: file
+    target: expense claim
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: true
+  quoted: false
+  notes: ''
+- request_id: R012
+  classification: action
+  route: action_status
+  actions:
+  - type: message
+    verb: send
+    target: reminder
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: fewer than five people have replied
+    condition_kind: factual
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R013
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R014
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R015
+  classification: action
+  route: action_status
+  actions:
+  - type: booking
+    verb: book
+    target: bathroom tap repair
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R016
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R017
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R018
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R019
+  classification: action
+  route: clarify
+  actions:
+  - type: setting_change
+    verb: cancel
+    target: Corvex order
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: ''
+    condition_kind: vague
+    condition_complete: false
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R020
+  classification: action
+  route: action_status
+  actions:
+  - type: purchase
+    verb: buy
+    target: blue sofa
+    target_specified: true
+    pronoun: true
+    conditional: true
+    condition: drops below 600 credits
+    condition_kind: temporal
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R021
+  classification: action
+  route: action_status
+  actions:
+  - type: other
+    verb: print
+    target: boarding pass
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R022
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R023
+  classification: action
+  route: clarify
+  actions:
+  - type: file_deletion
+    verb: delete
+    target: drafts folder
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: ''
+    condition_kind: vague
+    condition_complete: false
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R024
+  classification: action
+  route: action_status
+  actions:
+  - type: booking
+    verb: rebook
+    target: next KL flight
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: delayed more than two hours
+    condition_kind: factual
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R025
+  classification: action
+  route: action_status
+  actions:
+  - type: message
+    verb: send
+    target: signed lease
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R026
+  classification: action
+  route: action_status
+  actions:
+  - type: message
+    verb: email
+    target: summary
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: true
+  quoted: false
+  notes: ''
+- request_id: R027
+  classification: action
+  route: clarify
+  actions:
+  - type: setting_change
+    verb: turn off
+    target: ''
+    target_specified: false
+    pronoun: true
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R028
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: pay
+    target: 450 credit installment
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: true
+  notes: ''
+- request_id: R029
+  classification: action
+  route: action_status
+  actions:
+  - type: invoice_approval
+    verb: approve
+    target: '7311'
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  - type: other
+    verb: archive
+    target: '7312'
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R030
+  classification: action
+  route: action_status
+  actions:
+  - type: file_deletion
+    verb: delete
+    target: duplicate photos
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R031
+  classification: action
+  route: clarify
+  actions:
+  - type: payment
+    verb: transfer
+    target: 100 credits
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: ''
+    condition_kind: vague
+    condition_complete: false
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R032
+  classification: action
+  route: clarify
+  actions:
+  - type: payment
+    verb: pay
+    target: ''
+    target_specified: false
+    pronoun: true
+    conditional: true
+    condition: ''
+    condition_kind: vague
+    condition_complete: false
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R033
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R034
+  classification: action
+  route: action_status
+  actions:
+  - type: booking
+    verb: book
+    target: Lisbon
+    target_specified: true
+    pronoun: true
+    conditional: true
+    condition: under 300 credits
+    condition_kind: factual
+    condition_complete: true
+    approval: false
+    depends: true
+  quoted: false
+  notes: ''
+- request_id: R035
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: pay
+    target: internet bill
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R036
+  classification: action
+  route: action_status
+  actions:
+  - type: file_deletion
+    verb: delete
+    target: installers
+    target_specified: true
+    pronoun: true
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: true
+    depends: true
+  quoted: false
+  notes: ''
+- request_id: R037
+  classification: action
+  route: action_status
+  actions:
+  - type: message
+    verb: email
+    target: team
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  - type: booking
+    verb: cancel
+    target: 2pm room booking
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R038
+  classification: action
+  route: action_status
+  actions:
+  - type: message
+    verb: post
+    target: job ad
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  - type: message
+    verb: reply
+    target: three applicants
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R039
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: pay
+    target: gardener
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: finished the hedges
+    condition_kind: factual
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R040
+  classification: action
+  route: clarify
+  actions:
+  - type: setting_change
+    verb: cancel
+    target: ''
+    target_specified: false
+    pronoun: true
+    conditional: true
+    condition: renews this month
+    condition_kind: factual
+    condition_complete: false
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R041
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R042
+  classification: action
+  route: action_status
+  actions:
+  - type: message
+    verb: share
+    target: holiday album
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  - type: file_deletion
+    verb: remove
+    target: blurry photos
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R043
+  classification: action
+  route: action_status
+  actions:
+  - type: booking
+    verb: reserve
+    target: conference room
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R044
+  classification: action
+  route: action_status
+  actions:
+  - type: message
+    verb: post
+    target: complaint
+    target_specified: true
+    pronoun: true
+    conditional: true
+    condition: I've read it
+    condition_kind: user_step
+    condition_complete: true
+    approval: false
+    depends: true
+  quoted: false
+  notes: ''
+- request_id: R045
+  classification: action
+  route: action_status
+  actions:
+  - type: message
+    verb: forward
+    target: summary
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: true
+  quoted: false
+  notes: ''
+- request_id: R046
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R047
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R048
+  classification: action
+  route: action_status
+  actions:
+  - type: setting_change
+    verb: turn on
+    target: location sharing
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  - type: message
+    verb: send
+    target: flight details
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R049
+  classification: action
+  route: clarify
+  actions:
+  - type: purchase
+    verb: order
+    target: ''
+    target_specified: false
+    pronoun: true
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R050
+  classification: action
+  route: action_status
+  actions:
+  - type: booking
+    verb: book
+    target: cabin
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: Marta objects by Friday
+    condition_kind: factual
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R051
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R052
+  classification: action
+  route: clarify
+  actions:
+  - type: booking
+    verb: book
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R053
+  classification: action
+  route: action_status
+  actions:
+  - type: setting_change
+    verb: cancel
+    target: newsletter subscriptions
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R054
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R055
+  classification: action
+  route: clarify
+  actions:
+  - type: purchase
+    verb: buy
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R056
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R057
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R058
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R059
+  classification: action
+  route: action_status
+  actions:
+  - type: setting_change
+    verb: unsubscribe
+    target: Linden Deals
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  - type: file_deletion
+    verb: delete
+    target: old emails
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R060
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: transfer
+    target: deposit
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: landlord agrees
+    condition_kind: factual
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R061
+  classification: action
+  route: action_status
+  actions:
+  - type: purchase
+    verb: buy
+    target: bus pass
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  - type: payment
+    verb: transfer
+    target: 50 credits
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R062
+  classification: action
+  route: action_status
+  actions:
+  - type: invoice_approval
+    verb: approve
+    target: '9012'
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R063
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R064
+  classification: action
+  route: action_status
+  actions:
+  - type: other
+    verb: archive
+    target: Northpoint Realty
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R065
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R066
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: pay
+    target: library fine
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  - type: file_deletion
+    verb: delete
+    target: reading history
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R067
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R068
+  classification: action
+  route: clarify
+  actions:
+  - type: payment
+    verb: refund
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R069
+  classification: action
+  route: action_status
+  actions:
+  - type: booking
+    verb: reschedule
+    target: Dr. Ames
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  - type: payment
+    verb: pay
+    target: rebooking fee
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R070
+  classification: action
+  route: action_status
+  actions:
+  - type: purchase
+    verb: order
+    target: birthday gift
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R071
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R072
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R073
+  classification: action
+  route: action_status
+  actions:
+  - type: booking
+    verb: reschedule
+    target: dentist appointment
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R074
+  classification: action
+  route: clarify
+  actions:
+  - type: invoice_approval
+    verb: approve
+    target: timesheet
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: ''
+    condition_kind: vague
+    condition_complete: false
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R075
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R076
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R077
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R078
+  classification: action
+  route: action_status
+  actions:
+  - type: setting_change
+    verb: mute
+    target: Parents group
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R079
+  classification: action
+  route: action_status
+  actions:
+  - type: purchase
+    verb: order
+    target: name badges
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R080
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: withdraw
+    target: 200 credits
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R081
+  classification: action
+  route: action_status
+  actions:
+  - type: setting_change
+    verb: cancel
+    target: subscriptions
+    target_specified: true
+    pronoun: true
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: true
+    depends: true
+  quoted: false
+  notes: ''
+- request_id: R082
+  classification: action
+  route: clarify
+  actions:
+  - type: message
+    verb: send
+    target: ''
+    target_specified: false
+    pronoun: true
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R083
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R084
+  classification: action
+  route: action_status
+  actions:
+  - type: file_deletion
+    verb: delete
+    target: test logs
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R085
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R086
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R087
+  classification: action
+  route: action_status
+  actions:
+  - type: other
+    verb: close
+    target: joint account
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  - type: payment
+    verb: wire
+    target: balance
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: true
+  quoted: false
+  notes: ''
+- request_id: R088
+  classification: action
+  route: action_status
+  actions:
+  - type: file_deletion
+    verb: delete
+    target: old project folder
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: backup completes
+    condition_kind: temporal
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R089
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R090
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: transfer
+    target: 40 credits
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R091
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R092
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: transfer
+    target: 340 credits
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R093
+  classification: action
+  route: clarify
+  actions:
+  - type: booking
+    verb: reserve
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R094
+  classification: action
+  route: clarify
+  actions:
+  - type: other
+    verb: move
+    target: ''
+    target_specified: false
+    pronoun: true
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R095
+  classification: action
+  route: action_status
+  actions:
+  - type: message
+    verb: post
+    target: announcement
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: true
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R096
+  classification: action
+  route: action_status
+  actions:
+  - type: form_submission
+    verb: submit
+    target: grant application
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: I've checked it
+    condition_kind: user_step
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R097
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R098
+  classification: action
+  route: clarify
+  actions:
+  - type: message
+    verb: email
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R099
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R100
+  classification: action
+  route: clarify
+  actions:
+  - type: payment
+    verb: transfer
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R101
+  classification: action
+  route: action_status
+  actions:
+  - type: other
+    verb: renew
+    target: parking permit
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R102
+  classification: action
+  route: clarify
+  actions:
+  - type: payment
+    verb: wire
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R103
+  classification: action
+  route: action_status
+  actions:
+  - type: setting_change
+    verb: revoke
+    target: shared links
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R104
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R105
+  classification: action
+  route: clarify
+  actions:
+  - type: purchase
+    verb: buy
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R106
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R107
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: pay
+    target: electricity bill
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: true
+  notes: ''
+- request_id: R108
+  classification: action
+  route: clarify
+  actions:
+  - type: payment
+    verb: pay
+    target: ''
+    target_specified: false
+    pronoun: true
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R109
+  classification: action
+  route: clarify
+  actions:
+  - type: message
+    verb: send
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R110
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R111
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: donate
+    target: Riverbank Food Shelf
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R112
+  classification: action
+  route: clarify
+  actions:
+  - type: booking
+    verb: schedule
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R113
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R114
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R115
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R116
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R117
+  classification: action
+  route: action_status
+  actions:
+  - type: setting_change
+    verb: cancel
+    target: delivery slot
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: courier hasn't arrived by noon
+    condition_kind: factual
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R118
+  classification: action
+  route: action_status
+  actions:
+  - type: setting_change
+    verb: unpin
+    target: Q3 planning
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R119
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R120
+  classification: action
+  route: clarify
+  actions:
+  - type: payment
+    verb: pay
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R121
+  classification: action
+  route: action_status
+  actions:
+  - type: other
+    verb: request
+    target: refund
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: it was lost
+    condition_kind: factual
+    condition_complete: true
+    approval: false
+    depends: true
+  quoted: false
+  notes: ''
+- request_id: R122
+  classification: action
+  route: clarify
+  actions:
+  - type: booking
+    verb: book
+    target: Elm Hall
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: ''
+    condition_kind: vague
+    condition_complete: false
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R123
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R124
+  classification: action
+  route: action_status
+  actions:
+  - type: other
+    verb: renew
+    target: hollowbrook.net
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: expires within 30 days
+    condition_kind: factual
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R125
+  classification: action
+  route: action_status
+  actions:
+  - type: message
+    verb: send
+    target: welcome email
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R126
+  classification: action
+  route: action_status
+  actions:
+  - type: other
+    verb: send
+    target: prescription
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R127
+  classification: action
+  route: clarify
+  actions:
+  - type: message
+    verb: send
+    target: invoice
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: ''
+    condition_kind: vague
+    condition_complete: false
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R128
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R129
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R130
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: refund
+    target: duplicate payment
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R131
+  classification: action
+  route: action_status
+  actions:
+  - type: booking
+    verb: decline
+    target: invitation
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R132
+  classification: action
+  route: action_status
+  actions:
+  - type: payment
+    verb: top up
+    target: transit card
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R133
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R134
+  classification: action
+  route: clarify
+  actions:
+  - type: file_deletion
+    verb: delete
+    target: ''
+    target_specified: false
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R135
+  classification: informational
+  route: answer
+  actions: []
+  quoted: true
+  notes: ''
+- request_id: R136
+  classification: action
+  route: action_status
+  actions:
+  - type: other
+    verb: renew
+    target: library books
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R137
+  classification: informational
+  route: answer
+  actions: []
+  quoted: false
+  notes: ''
+- request_id: R138
+  classification: action
+  route: action_status
+  actions:
+  - type: invoice_approval
+    verb: approve
+    target: timesheet
+    target_specified: true
+    pronoun: false
+    conditional: true
+    condition: under 40 hours
+    condition_kind: factual
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R139
+  classification: action
+  route: action_status
+  actions:
+  - type: other
+    verb: return
+    target: broken monitor
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''
+- request_id: R140
+  classification: action
+  route: action_status
+  actions:
+  - type: other
+    verb: dispute
+    target: late fee
+    target_specified: true
+    pronoun: false
+    conditional: false
+    condition: ''
+    condition_kind: ''
+    condition_complete: true
+    approval: false
+    depends: false
+  quoted: false
+  notes: ''

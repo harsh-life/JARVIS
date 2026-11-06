@@ -92,6 +92,8 @@ class ActionSpec(_M):
     # verbatim span of their request. A conditional action can never execute
     # unless the harness has recorded the condition as checked and holding.
     condition: str | None = Field(default=None, min_length=3, max_length=200)
+    # Phase 0.3: factual ("only if"), temporal or user_step ("only after").
+    condition_kind: Literal["factual", "temporal", "user_step"] | None = None
 
 
 class ConditionRecord(_M):
@@ -164,6 +166,7 @@ class ActionOutcome(_M):
     reason: str | None = None
     proposed_by_model: bool = False
     condition: str | None = None
+    condition_kind: str | None = None
     condition_check: ConditionRecord | None = None
     confirmation: ConfirmationRequest | None = None
     execution: ExecutionRecord | None = None
@@ -350,6 +353,7 @@ class ActionLedger:
             ActionOutcome(action_id=a, kind=spec.kind, description=spec.description,
                           status=self._history[a][-1], history=tuple(self._history[a]), reason=self._reason[a],
                           proposed_by_model=self._proposed[a], condition=spec.condition,
+                          condition_kind=spec.condition_kind,
                           condition_check=self._condition.get(a), confirmation=self._confirm.get(a),
                           execution=self._exec.get(a),
                           verification=self._verify.get(a))

@@ -65,6 +65,7 @@ class ExplanationCode(str, Enum):
     DEPENDS_ON_EARLIER_STEP = "depends_on_earlier_step"
     EVIDENCE_INSUFFICIENT = "evidence_insufficient"
     QUOTED_INSTRUCTION_IGNORED = "quoted_instruction_ignored"
+    WAITS_FOR_USER_STEP = "waits_for_user_step"          # Phase 0.3: "once I've checked it"
 
 
 STATUS_CODES = frozenset({
@@ -91,6 +92,7 @@ _SLOT_QUESTION = {
     MissingSlot.TIME: "When should it be?",
     MissingSlot.ACTION: "What would you like done: should I only look into it, or is there a specific action you want?",
     MissingSlot.DETAIL: "Could you say exactly what you would like done?",
+    MissingSlot.CONDITION: "What exactly should it depend on?",
 }
 
 # Templates. Slots: {d} ledger description; {ref} supplied evidence ids;
@@ -117,6 +119,7 @@ TEMPLATES: dict[ExplanationCode, str] = {
     ExplanationCode.DEPENDS_ON_EARLIER_STEP: "It depends on an earlier step of your request.",
     ExplanationCode.EVIDENCE_INSUFFICIENT: "The request refers to something that was not provided.",
     ExplanationCode.QUOTED_INSTRUCTION_IGNORED: "An instruction found in {ref} was treated as information, not as your request.",
+    ExplanationCode.WAITS_FOR_USER_STEP: "It waits for a step you said you would take; finishing that step is not the same as approving it.",
 }
 
 
@@ -175,6 +178,9 @@ def derived(intent: IntentResult, outcomes_by_candidate: dict[str, ActionOutcome
         if c.requires_user_approval:
             out.append(Explanation(ExplanationCode.APPROVAL_REQUESTED,
                                    _render(ExplanationCode.APPROVAL_REQUESTED, candidate=c), cid, outcome.action_id))
+        if "user_step" in c.condition_kinds:
+            out.append(Explanation(ExplanationCode.WAITS_FOR_USER_STEP,
+                                   _render(ExplanationCode.WAITS_FOR_USER_STEP, candidate=c), cid, outcome.action_id))
         if c.depends_on:
             out.append(Explanation(ExplanationCode.DEPENDS_ON_EARLIER_STEP,
                                    _render(ExplanationCode.DEPENDS_ON_EARLIER_STEP, candidate=c), cid,
