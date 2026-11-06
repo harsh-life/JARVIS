@@ -33,5 +33,14 @@ grounding) · `recognizers.py` (deterministic, model-assisted, hybrid) ·
 `suspicion.py` (routing-only side-effect signal) · `conditions.py` · `referents.py` · `rules_v2.py`
 (v2 rules and hybrid; `recognizers.py` stays the Phase 0.2 version) · `intent_eval_v3.py`
 (`python -m experiments phase03-eval [--live|--replay DIR] --out DIR`) · `annotation_tools.py` +
-`annotation/phase03_packet/` (blind packet for a second annotator) · `tasks/intent_holdout_v2.yaml` (140, held out). Traces go to `results/`
+`annotation/phase03_packet/` (blind packet for a second annotator) · `tasks/intent_holdout_v2.yaml` (140, held out). Phase 0.4
+(docs/31 §12): `rules_v3.py` (phrasal verbs, reported speech, possessives, target resolution with provenance;
+frozen in `annotation/phase04_rules_freeze.json`) · `completeness.py` (type-specific completeness,
+`identifiable()`, semantic target checks) · `interpretation.py` (intent / interpretation / readiness, and the
+`TaskEnvelope`, whose `authorization` is always `"none"`) · `intent_eval_v4.py`
+(`python -m experiments phase04-eval --suite NAME [--replay DIR] --out DIR`; `--independent` refuses until the
+independent set is authored, frozen and doubly annotated) · `tasks/intent_dev_p04.yaml` (44, development only) ·
+`python -m experiments annotation {status,prepare,validate,agreement,adjudicate,ingest,freeze-rules,freeze,verify}
+--set phase03|phase04` · `annotation/phase04_authoring/` (brief and template for a non-author request writer) ·
+`annotation/phase03_SECOND_ANNOTATOR_WORKFLOW.md`. Traces go to `results/`
 (git-ignored). Tests: `tests/experiments/` (offline, run in CI).

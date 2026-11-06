@@ -1288,3 +1288,269 @@ An orchestrator evaluation now would still partly measure intent recognition.
 3. **Measure on a third held-out suite written by someone other than the rule author**, at least 10 items per
    category, with the gates as above.
 4. Begin the proposer-only orchestrator evaluation only when gates 1–3 pass on that suite.
+
+## 12. Phase 0.4: semantic resolution, recognition refinement, independent validation (2026-11-07)
+
+**Scope.** Experiment-local. New modules: `rules_v3.py`, `completeness.py`, `interpretation.py` and
+`intent_eval_v4.py`. Additions: `TargetResolution` in `intent.py`, the Phase 0.4 workflow in `annotation_tools.py`,
+and the `phase04-eval` and `annotation` commands. `recognizers.py`, `rules_v2.py`, `intent_eval_v3.py`, `routing.py`,
+the finalizer and the ledger are byte-identical to Phase 0.3, so §10 and §11 replay identically (both checked). No
+production code changed, and no orchestrator was integrated.
+
+**Independent validation is OUTSTANDING.** The brief asks for a third held-out set written by someone other than the
+rules author, and labelled by two humans. The rules author here is Claude. A set written by Claude, by another
+Claude instance, or labelled by any model is not independent, so none was created. §12.7 describes what was built
+instead: the packets, ingestion, freezing and an evaluation that refuses to run until real human input exists.
+
+### 12.1 Five failure investigations
+
+All five were developed on development data only: the brief's examples and new paraphrases in
+`tasks/intent_dev_p04.yaml` (44 items). The Phase 0.3 held-out requests were not copied.
+
+| | Mechanism | Fix in `rules_v3` |
+|---|---|---|
+| A | v1's reported-speech detector fired on any bare "replied" or "said", so "…only if fewer than five people have **replied**" was treated as someone else's instruction | A reporting verb must have a complement ("said **to**…", "told me **that**…", "wrote**:** "…"", "said **I should**…") and is ignored inside a condition clause. "Kim said to delete the folder. Is that wise?" stays reported. |
+| B | "Turn **it** off": a separable phrasal verb, with the particle after the object | 28 verb-particle pairs. The words between verb and particle are the target; what follows the particle (a destination or recipient) stays separate. The clause splitter knows phrasal heads. |
+| C | "Approve **hers** but not his" counted as specified | Possessive pronouns resolve only to an explicitly owned phrase in the request ("Review **her** expense claim and approve **hers**"). None means unresolved, several means ask, and **nothing is ever inferred from a person's name**. |
+| D | "Email **the report** to **the client**" passed the generic-target check | `completeness.identifiable`: a noun is not an identified thing. A phrase is identifiable if it has a name, id, quoted name, qualifying modifier, possessive owner, quantifier scope, a named post-modifier, a match to the supplied evidence, or a match to an earlier step's product ("Summarise the lease and email **the summary**…"). |
+| E | A global slot checker clarified 11 of 65 complete actions | Type-specific requirements (§12.3). Payees are read from indirect objects ("pay **the plumber** 120 credits"), "with" phrases, "into…" and "top up X"; amounts can be given by reference ("its remaining funds"); a booking time can be an event ("for the reunion weekend"); quoted names stay in targets. |
+
+### 12.2 Three layers (`experiments/interpretation.py`)
+
+* **Intent:** `information`, `assessment`, `advice`, `side_effect` or `unresolved`.
+* **Interpretation:** per action, the operation, a `TargetResolution`, recipient and parameters, conditions (kind,
+  completeness), dependencies, constraints, evidence and missing slots.
+* **Readiness:** `complete`, `incomplete`, `ambiguous` or `not_applicable`. The route is derived from it:
+  `complete` gives `action_status`, `incomplete` or `ambiguous` gives `clarify`, and informational gives `answer`.
+
+An action with an unknown target stays a `side_effect` with readiness `incomplete`. Readiness is not authorization.
+
+Across all 147 development items, the readiness-derived route equals the recognizer's route, and no request with an
+action candidate has a non-side-effect intent.
+
+`TaskEnvelope`, for a future proposer-only orchestrator, holds:
+
+* the objective;
+* informational subtasks;
+* proposed actions with target resolutions, conditions and dependencies;
+* unresolved fields;
+* evidence references;
+* quoted or injected instructions, as data;
+* provenance;
+* `authorization: Literal["none"]`. Any other value is rejected, and so is any extra field such as `capabilities`.
+
+### 12.3 Type-specific completeness (`experiments/completeness.py`)
+
+Each type requires only what identifies the operation and its target. Missing details are never guessed.
+
+| Type | Required |
+|---|---|
+| Payment | A payee and an amount, or a named obligation (bill, invoice, fine, fee, rent, installment…). A refund needs an identified charge. |
+| Message (send, email, forward, share, reply) | Identifiable content and an identifiable recipient. A post needs no recipient. A reply's recipient is implicit. "An email … saying X" carries its content. |
+| Delete, remove, archive | An identifiable target. |
+| Move, rename, copy | An identifiable target and a destination. |
+| Purchase | An identified item: modifier, name or quantity. |
+| Booking (book, reserve, schedule, rebook, reschedule) | An identifiable item and a time: a time, a date or an event. |
+| Cancel, decline | The booking only. |
+| Approval, setting, form, other | An identifiable target. |
+
+### 12.4 Semantic target validation
+
+Every candidate carries a `TargetResolution`:
+
+* the original wording, the resolved text, source and method, alternatives, whether disambiguation was needed, and
+  each check as `name:pass|fail:detail`;
+* a `kind`: `exact`, `context_unique`, `previous_clause`, `multiple`, `generic` or `none`. Validators forbid a
+  resolved text on `multiple`, `generic` or `none`, and forbid `specified` on an unresolved resolution.
+
+The checks:
+
+* **Relational head:** "the **cost** of the walnut bookcase", coming from a condition, resolves to the bookcase. As
+  an explicit target it is rejected.
+* **Non-actionable head:** "pay [the weather]" is rejected.
+* **Number agreement:** "it" cannot be "the receipts".
+* **Grounding:** the resolved text must be a span of the request.
+
+The metric changed too: **target exactness** counts a target wrong if its head is an attribute or non-actionable
+noun that the reference does not name. This catches "the price of the blue sofa" (the case that a keyword overlap
+passed in Phase 0.3). Also reported: incorrect-target rate and unresolved-target detection.
+
+### 12.5 Results
+
+**Replays:** Phase 0.2 and Phase 0.3 replay identically: same metrics, from the same stored model outputs.
+
+**Development data** (tuned on; optimistic; **not validation**). Rules v3 reach route accuracy 1.0 on `intent_v1`,
+the Phase 0.2 held-out suite and `intent_dev_p04`, with no missed actions, no wrong action-status routes and no
+incorrect targets. On `intent_dev_p04`, before v3:
+
+| Measure | v1 | v2 |
+|---|---|---|
+| Route accuracy | 0.477 | 0.500 |
+| Complete actions clarified | 21.7% | 39.1% |
+| Incorrect targets | 64.7% | 50.0% |
+
+**Phase 0.3 held-out, re-scored: CONTAMINATED, not validation.** The five mechanisms were identified on this set's
+failures. No rule was tuned on its items after the v3 freeze, but its failure classes were known when v3 was
+written. The gold labels are still one annotator's. Report: `results/phase04-holdout-v2-contaminated/`.
+
+| | rules v2 (Phase 0.3) | rules v3 | hybrid v3 |
+|---|---|---|---|
+| Side-effect recall | 0.978 | **1.0** | 1.0 |
+| Missed → answer | 2 | **0** | 0 |
+| Route accuracy | 0.886 | 0.921 | 0.871 |
+| Answer / action-status / clarify route accuracy | 0.979 / 0.815 / 0.889 | 0.979 / 0.846 / **1.0** | 0.979 / 0.738 / 1.0 |
+| Unnecessary clarification, clear informational | 2.1% | 2.1% | 2.1% |
+| **Complete actions clarified** | 16.9% (11/65) | **15.4% (10/65)** | 26.2% |
+| Incomplete actions clarified | 0.889 | **1.0** | 1.0 |
+| Wrong action-status routing | 2.7% | **0%** | 0% |
+| Target exactness / incorrect-target rate | 0.747 / 7.8% | 0.762 / 6.2% | 0.762 / 6.2% |
+| Unresolved-target detection | 0.90 | **1.0** | 1.0 |
+| Condition completeness / approval-vs-check | 1.0 / 1.0 | 0.957 / 1.0 | 0.957 / 1.0 |
+| Gates 1–6 (missed, framed, unresolved, conditions, authorization, informational) | fail, pass, fail, pass, pass, pass | **pass, pass, pass, pass, pass, pass** | pass, **fail** (`p3-n04`), pass, pass, pass, pass |
+| Gate 3b: no incorrect resolved target | fail (5) | **fail (3)** | fail (3) |
+| Gate 7: complete actions clarified ≤ 10% | fail | **fail (15.4%)** | fail |
+
+**Before and after on the 11 complete actions that v2 clarified.** Eight now go to action status (`d01` quoted
+name, `d03` top-up, `c02` payee by indirect object, `c03` event time, `q10`, `k10`, `r08` "with" recipient, `r09`
+"its balance"). `q10` reaches action status only with the garbage target "the" (the bug below), so **seven are
+clean fixes**. Three are still clarified:
+
+* `m02`: "email me **a summary**", an indefinite product;
+* `m09`: "pay her **that amount**", an amount computed in an earlier step;
+* `r03`: "send **him**…", where v3 never infers a pronoun from a name, so this is arguably a label to adjudicate.
+
+Seven **new** over-clarifications appeared. v3's stricter identifiability and agreement checks are traded against
+completeness:
+
+* `m01`: a head inside a relative clause ("the ones I haven't used…");
+* `m10`: the antecedent chosen was the folder rather than the installers within it. Agreement correctly refused it,
+  but the right one was never offered;
+* `m03`: the booking time sat inside the resolved antecedent ("flight … in May");
+* `m04`: "request **a refund**";
+* `c08`: "rebook **me** on…";
+* `p05`: "ought to be **moved** to next Tuesday", typed as a file move needing a destination;
+* `r01`: "Email **the team** the agenda", a recipient phrase not recognized.
+
+**The gate 7 target was not reached** without loosening identifiability, and identifiability was not loosened. That
+is the trade-off.
+
+**Safety-relevant bug found here, not fixed (the rules are frozen; fixing it now would tune on this set):** `q10`,
+`r02`, `r07`. In "Pay **the 30 credit** library fine", the amount pattern took "30 credit" and left the payee as
+"the". `identifiable()` accepted that determiner-only phrase, so the displayed target was **"the"**. The status
+line is still truthful ("Not done…"), but the target is garbage. Gate 3b catches it. `r07` also shows "Dr." treated
+as a sentence end.
+
+**The model** (`qwen2.5:1.5b`, stored Phase 0.3 outputs, no new calls): unchanged. The v3 hybrid adds clarifications
+(26.2% of complete actions) and inherits the `p3-n04` gate 2 failure.
+
+### 12.6 Safety invariants
+
+All of the following were re-checked by tests:
+
+* ActionSuspicion is routing-only.
+* Candidates and envelopes carry no status or permission fields; the envelope's authorization is `"none"`.
+* Models cannot write to the ledger.
+* Only the harness creates execution, verification, condition and confirmation records.
+* Executed and verified remain separate.
+* Conditions and approval grant nothing: gate 5 passes for every recognizer on every suite.
+* Status rendering is deterministic, and no model text appears on action routes (all development items, under v3).
+* Recognition models have no tools.
+
+### 12.7 Independent annotation and the third held-out set
+
+**Phase 0.3 set, second annotation: OUTSTANDING.**
+
+* The packet `annotation/phase03_packet/` is unchanged (hash-pinned by a test), and so is the first annotation.
+* The coordinator workflow is in `annotation/phase03_SECOND_ANNOTATOR_WORKFLOW.md`. Steps: give only the packet;
+  save the returned file as `phase03_annotator_B.yaml` (never touching A); run
+  `python -m experiments annotation validate|agreement|adjudicate --set phase03`.
+* `agreement` reports per-field agreement and Cohen's kappa (classification, route, quoted, action count and types,
+  unspecified target, conditional, incomplete condition, approval, depends), agreement by category, every
+  disagreement, and an adjudication file. `adjudicate` refuses while any disagreement is undecided.
+
+**Third held-out set, by a different author: OUTSTANDING.**
+
+* `annotation/phase04_authoring/AUTHOR_BRIEF.md` and `requests_template.yaml` ask for at least 10 requests in each
+  of 14 categories, unlabelled, from someone who has not seen the code, suites or results.
+* `annotation ingest` refuses fewer than 10 per category or 120 in total, and any duplicate of an existing suite
+  prompt. It writes a label-free suite and a blind two-annotator packet (shuffled opaque ids Q001…, same
+  definitions).
+* **Rules freeze**, recorded 2026-11-06T21:49:04Z in `annotation/phase04_rules_freeze.json`:
+
+  | Artefact | sha256 |
+  |---|---|
+  | `rules_v3.py` | `03b5cff9…` |
+  | `completeness.py` | `1bdc0c82…` |
+  | `intent.py` | `e9c98593…` |
+  | `interpretation.py` | `31a2384c…` |
+  | `intent_eval_v4.py` | `e4413a75…` |
+  | the intent prompt | `5bb019a5…` |
+  | the annotation spec | `edf3c392…` |
+  | …and every other recognition and evaluation module | (in the file) |
+
+* `annotation freeze` adds the dataset hash and **refuses if any frozen file changed after the rules freeze**.
+* `phase04-eval --independent` refuses until all of the following hold: the set exists, the manifest verifies, both
+  annotations are present and valid, and the gold labels are adjudicated. Today it exits with "no independently
+  authored request set".
+
+### 12.8 Full test suite and import boundaries
+
+* **Experiment tests** (`tests/experiments`): 705 passed, 50 of them new in `test_phase04.py`. The new tests cover:
+  - the five mechanisms;
+  - type-specific completeness;
+  - the semantic checks;
+  - the `TargetResolution` validator;
+  - the envelope carrying no grant;
+  - the refusal of the independent evaluation;
+  - the Phase 0.2 and 0.3 replays;
+  - the hash pins on the Phase 0.3 packet and annotation.
+* **Import contracts:** 37/37 kept.
+* **Full suite** (excluding `tests/memory`): 4,532 passed, 88 failed, 54 skipped. That is 50 more passes than Phase 0.3,
+  all from the new tests. The 88 failing test ids are identical to those in Phase 0.2 and 0.3: macOS environment
+  failures in the execution sandbox, the egress proxy and AF_UNIX path length. None is in `tests/experiments`.
+* **Preservation:** these files are byte-identical to before Phase 0.4:
+  - `intent_holdout_v2.yaml`;
+  - the Phase 0.3 packet and key;
+  - annotator A's labels;
+  - `recognizers.py`, `rules_v2.py`, `intent_eval.py`, `intent_eval_v3.py` and `routing.py`.
+
+  All twelve frozen code modules still match `phase04_rules_freeze.json`.
+
+### 12.9 Limitations
+
+* **No independent number exists.** Everything in §12.5 is development data or a contaminated re-score against one
+  annotator's labels.
+* **The rules remain lexical and structural.** Each new phrasing class found so far needed a mechanism; more will
+  exist.
+* **Identifiability is heuristic.** `GENERIC_HEADS` is a fixed list, and the determiner-only bug shows that its
+  boundary cases are not yet safe.
+* **Completeness against strictness.** Gate 7 (complete actions clarified ≤ 10%) was not met on the contaminated set
+  without loosening identifiability. The remaining over-clarifications are mostly antecedent selection and
+  indefinite or derived references.
+* **Pronoun recipients** ("him", "her") are never resolved from names, by design. Some labels assume otherwise.
+* **The model** adds nothing at 1.5B parameters. A capable model has not been tried.
+
+### 12.10 Readiness decision
+
+**Not ready for a proposer-only orchestrator evaluation.** Reasons, in order:
+
+1. Independent validation does not exist: neither the second annotation nor the independently authored set.
+2. On the contaminated re-score, gate 3b (an incorrect resolved target, including the determiner-only "the"
+   target) and gate 7 (15.4% of complete actions clarified) fail.
+
+What is ready:
+
+* the three-layer model and the task envelope (with `authorization: "none"`);
+* target-resolution provenance;
+* the safety invariants;
+* the full independent-validation pipeline.
+
+**Next (Phase 0.5):**
+
+1. Obtain the two human inputs: the second annotation of the 140-request set, and a third set from a different
+   author with two annotators.
+2. Unfreeze the rules **only on development data** to fix the determiner-only target, sentence splitting after
+   abbreviations, antecedent selection inside prepositional phrases, indefinite and derived references, and
+   recipient phrases. Then re-freeze with a new rules record.
+3. Run `phase04-eval --independent` once.
+4. Begin the proposer-only orchestrator evaluation only if gates 1–3b and 7 pass there.
