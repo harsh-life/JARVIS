@@ -94,6 +94,35 @@ vault:
   hydration_top_k: 3               # vault chunks added to a task's context (0 = none)
   hydration_max_chars: 3000
 
+# docs/30 — the Intelligence Workbench (Phase 0): the operator catalogue a
+# user's *experiment* profiles select from. Configuration only — nothing here
+# changes the production request path, runs a model, or grants anything. Off
+# by default (`/intelligence/*` answers 503 `workbench`). Without the lists
+# below, the defaults apply: the deterministic-templates and model-planner
+# backends, and the research / assessment / planning specializations.
+# workbench:
+#   enabled: true
+#   models:                       # experiment-only entries: `workbench.<id>`
+#     - id: small-local
+#       provider: ollama
+#       model: qwen2.5:1.5b-instruct
+#       endpoint: http://127.0.0.1:11434
+#   orchestration_backends:
+#     # An entry is a description, not an integration. An adapter the harness
+#     # does not implement (e.g. `letta`) is shown "not integrated", never as
+#     # connected; `endpoint_ref` is an operator label and is never served.
+#     - id: letta.candidate
+#       display_name: Letta (candidate, not integrated)
+#       kind: agentic_runtime
+#       adapter: letta
+#       runtime: letta-app-server
+#       requires_model: true
+#       delegation_mode: jarvis_mediated
+#       state_model: external_persistent   # declared honestly; refused for runs
+#   limits:
+#     max_per_call_budget: 0.05
+#     max_overall_budget: 0.5
+
 # Disabled by default (INTEL-003) — Track B is fully functional this way.
 intelligence:
   enabled: false

@@ -232,6 +232,11 @@ class AuditAction(str, Enum):
     CONFIG_VERSION_ROLLED_BACK = "config.version.rolled_back"
     # Pilot plan C7: a user chose (or cleared) their own primary model.
     MODEL_CONFIG_CHANGED = "config.model.changed"
+    # docs/30: a user created, versioned or deleted one of their own
+    # intelligence experiment profiles (configuration only; grants nothing).
+    INTELLIGENCE_PROFILE_CREATED = "config.intelligence_profile.created"
+    INTELLIGENCE_PROFILE_VERSIONED = "config.intelligence_profile.versioned"
+    INTELLIGENCE_PROFILE_DELETED = "config.intelligence_profile.deleted"
     # A superuser request on the Judge's control path (switches, review queue).
     CONTROL_EVALUATION = "control.evaluation"
 

@@ -53,6 +53,19 @@ M2_ROUTES = {
     ("DELETE", f"{V1}/secrets/{{key_ref}}"),
 }
 
+# docs/30 (Phase 0): the Intelligence Workbench's configuration routes.
+WORKBENCH_ROUTES = {
+    ("GET", f"{V1}/intelligence/catalog"),
+    ("POST", f"{V1}/intelligence/validate"),
+    ("GET", f"{V1}/intelligence/profiles"),
+    ("POST", f"{V1}/intelligence/profiles"),
+    ("GET", f"{V1}/intelligence/profiles/{{profile_id}}"),
+    ("DELETE", f"{V1}/intelligence/profiles/{{profile_id}}"),
+    ("POST", f"{V1}/intelligence/profiles/{{profile_id}}/versions"),
+    ("GET", f"{V1}/intelligence/profiles/{{profile_id}}/versions/{{version}}"),
+    ("GET", f"{V1}/intelligence/profiles/{{profile_id}}/versions/{{version}}/snapshot"),
+}
+
 
 def _routes(app) -> set[tuple[str, str]]:
     routes = {
@@ -72,6 +85,7 @@ async def test_every_route_is_public_by_name_or_refuses_an_anonymous_request(mak
     h = await make_harness(config={"agents": {"enabled": True}, "memory": {"enabled": False}})
     routes = _routes(h.app)
     assert M2_ROUTES <= routes, sorted(M2_ROUTES - routes)
+    assert WORKBENCH_ROUTES <= routes, sorted(WORKBENCH_ROUTES - routes)
     assert PUBLIC <= routes, sorted(PUBLIC - routes)
     leaking = []
     for method, path in sorted(routes - PUBLIC):

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>JARVIS — Intelligence Workbench</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <h1>Intelligence Workbench</h1>
+    <span class="tag tag-warn">Configuration only — the Workbench never runs or authorizes anything</span>
+    <div id="identity" class="identity"></div>
+  </header>
+
+  <section id="signin" class="panel">
+    <h2>Connect</h2>
+    <p class="muted">
+      Browser sign-in (pilot step M3) is not built yet. Paste an access token from one of your
+      registered devices. It is held in this page's memory only — never stored — and is gone when
+      you reload.
+    </p>
+    <form id="signin-form" class="row">
+      <label class="grow">Access token
+        <input id="token" type="password" autocomplete="off" spellcheck="false" required>
+      </label>
+      <button type="submit">Connect</button>
+    </form>
+    <p id="signin-error" class="error" role="alert"></p>
+  </section>
+
+  <nav id="tabs" class="tabs" hidden>
+    <button data-tab="central" class="active">Central intelligence</button>
+    <button data-tab="orchestration">Orchestration</button>
+    <button data-tab="specialists">Specialists</button>
+    <button data-tab="profiles">Experiment profiles</button>
+  </nav>
+
+  <main>
+    <section id="tab-central" class="tab" hidden></section>
+    <section id="tab-orchestration" class="tab" hidden></section>
+    <section id="tab-specialists" class="tab" hidden></section>
+    <section id="tab-profiles" class="tab" hidden></section>
+  </main>
+</body>
+</html>

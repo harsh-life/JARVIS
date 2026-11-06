@@ -34,6 +34,15 @@ and recorded the evidence and the release-gate status in
 **`docs/RELEASE_VALIDATION.md`**. It added no feature. The gate for real user
 data is **not** open (see "Before putting real data anywhere near this" below).
 
+**Phase 0 — Intelligence Workbench** (`feature/intelligence-workbench`,
+`docs/30_INTELLIGENCE_WORKBENCH.md`): a browser client (`web/`, served at
+`/ui`) for the user's production model (M2's `/config/model`, unchanged) and
+for versioned, owner-scoped *experiment* profiles (`/intelligence/*`, off by
+default with `workbench.enabled`). Configuration only: no profile is active in
+production, and selecting a model or orchestration backend grants nothing.
+Browser sign-in (M3) is not built — the page takes a pasted access token, held
+in memory only.
+
 **`foundation`** — the technical substrate: shared data contracts,
 configuration, persistence/migrations, and the API skeleton (versioning,
 request IDs, the error envelope, a health check). See
@@ -427,6 +436,7 @@ it. SQLite stays for development and does not meet #32.
 server/    the modular-monolith FastAPI application (one package per subsystem)
 android/   the Android client (docs/23): :contract (pure-Kotlin wire contract and
            device-side guard) and :app; shares only shared/ with the server
+web/       the browser client (docs/30): plain ES modules, no bundler, served at /ui
 shared/    schemas/  — canonical Pydantic data contracts, importable by both
                         server/ and the android/ client
            android/  — the versioned device mapping table, the conformance
