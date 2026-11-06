@@ -533,6 +533,9 @@ async def test_the_control_modules_are_import_restricted(tmp_path, module, line)
     copy = tmp_path / "repo"
     shutil.copytree(REPO_ROOT / "server", copy / "server", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(REPO_ROOT / "shared", copy / "shared", ignore=shutil.ignore_patterns("__pycache__"))
+    # docs/31: pyproject's import contracts also cover the experiment harness.
+    shutil.copytree(REPO_ROOT / "experiments", copy / "experiments",
+                    ignore=shutil.ignore_patterns("__pycache__", "results"))
     shutil.copy(REPO_ROOT / "pyproject.toml", copy / "pyproject.toml")
     target = copy / module
     target.write_text(line + target.read_text())
@@ -562,6 +565,9 @@ async def test_the_judge_cannot_reach_authority_or_execution(tmp_path, line):
     copy = tmp_path / "repo"
     shutil.copytree(REPO_ROOT / "server", copy / "server", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(REPO_ROOT / "shared", copy / "shared", ignore=shutil.ignore_patterns("__pycache__"))
+    # docs/31: pyproject's import contracts also cover the experiment harness.
+    shutil.copytree(REPO_ROOT / "experiments", copy / "experiments",
+                    ignore=shutil.ignore_patterns("__pycache__", "results"))
     shutil.copy(REPO_ROOT / "pyproject.toml", copy / "pyproject.toml")
     target = copy / "server" / "evaluation" / "__init__.py"
     target.write_text(line + target.read_text())
@@ -577,6 +583,9 @@ async def test_the_runtime_cannot_depend_on_the_judge(tmp_path):
     copy = tmp_path / "repo"
     shutil.copytree(REPO_ROOT / "server", copy / "server", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(REPO_ROOT / "shared", copy / "shared", ignore=shutil.ignore_patterns("__pycache__"))
+    # docs/31: pyproject's import contracts also cover the experiment harness.
+    shutil.copytree(REPO_ROOT / "experiments", copy / "experiments",
+                    ignore=shutil.ignore_patterns("__pycache__", "results"))
     shutil.copy(REPO_ROOT / "pyproject.toml", copy / "pyproject.toml")
     target = copy / "server" / "agent" / "runtime.py"
     target.write_text("import server.evaluation\n" + target.read_text())

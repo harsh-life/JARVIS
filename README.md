@@ -41,7 +41,11 @@ for versioned, owner-scoped *experiment* profiles (`/intelligence/*`, off by
 default with `workbench.enabled`). Configuration only: no profile is active in
 production, and selecting a model or orchestration backend grants nothing.
 Browser sign-in (M3) is not built — the page takes a pasted access token, held
-in memory only.
+in memory only. The **isolated experiment harness** (`experiments/`,
+`docs/31_INTELLIGENCE_EXPERIMENTS.md`) runs those profiles' snapshots on
+synthetic tasks (E0 baseline, E1 Central contract, E2 orchestration backends,
+E3 specialists, E4 synthesis). Production never imports it; it reaches no
+production state; live provider calls are opt-in.
 
 **`foundation`** — the technical substrate: shared data contracts,
 configuration, persistence/migrations, and the API skeleton (versioning,
@@ -437,6 +441,7 @@ server/    the modular-monolith FastAPI application (one package per subsystem)
 android/   the Android client (docs/23): :contract (pure-Kotlin wire contract and
            device-side guard) and :app; shares only shared/ with the server
 web/       the browser client (docs/30): plain ES modules, no bundler, served at /ui
+experiments/  the isolated intelligence experiment harness (docs/31); never imported by server/
 shared/    schemas/  — canonical Pydantic data contracts, importable by both
                         server/ and the android/ client
            android/  — the versioned device mapping table, the conformance

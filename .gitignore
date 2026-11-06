@@ -36,3 +36,6 @@ htmlcov/
 *.db-journal
 *.sqlite
 *.sqlite3
+
+# docs/31: experiment harness traces (may contain model output; never committed)
+experiments/results/
