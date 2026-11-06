@@ -132,14 +132,14 @@ class RigAssetsTest {
             assertTrue("the guard spans every track-0 animation", config.range.size == 26)
             assertTrue(lastRuntime!!.animationIndex("enter") !in config.range)
             assertEquals(Expression.entries.size * bones.size, config.postureWeights.size)
-            // Sad (the last state) keeps its shoulders, forearms and face canonical in posture.
+            // Sad (the last state) keeps its shoulders, forearms, legs and face canonical in posture.
             val sad = config.postureWeights.takeLast(bones.size)
             val held =
                 bones.indices
                     .filter { sad[it] == 0f }
                     .map { bones[it] }
                     .toSet()
-            assertEquals(setOf("upperarm_r", "upperarm_l", "forearm_r", "forearm_l", "face"), held)
+            assertEquals(setOf("upperarm_r", "upperarm_l", "forearm_r", "forearm_l", "leg_r", "leg_l", "face"), held)
             assertEquals(0.8f, config.postureRamp)
             assertEquals(0.5f, config.motionRamp)
             rig.player.start(Expression.SAD, 10, entrance = false)

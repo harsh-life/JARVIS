@@ -79,12 +79,16 @@ class RigIntensityProfileTest {
     }
 
     @Test
-    fun `the held bones are the investigation's, and the face is never adjusted`() {
+    fun `the held bones are the investigation's and the remediation's, and the face is never adjusted`() {
         val shoulders = setOf("upperarm_r", "upperarm_l")
-        assertEquals(shoulders + "face", profile.postureHolds[Expression.SLEEPY])
-        assertEquals(shoulders + "face", profile.postureHolds[Expression.SURPRISED])
+        val legs = setOf("leg_r", "leg_l")
+        // Sleepy's head: its shoulders (held, at their authored extreme) cannot follow a further
+        // turn, which slid the sleeve's cut border onto the hood (docs/CHARACTER_RIG.md §5.5).
+        assertEquals(shoulders + setOf("head", "face"), profile.postureHolds[Expression.SLEEPY])
+        // Surprised's and sad's legs sit next to the edge of their narrow authored range.
+        assertEquals(shoulders + legs + "face", profile.postureHolds[Expression.SURPRISED])
         assertEquals(shoulders + setOf("hand_r", "hand_l", "face"), profile.postureHolds[Expression.ANGRY])
-        assertEquals(shoulders + setOf("forearm_r", "forearm_l", "face"), profile.postureHolds[Expression.SAD])
+        assertEquals(shoulders + legs + setOf("forearm_r", "forearm_l", "face"), profile.postureHolds[Expression.SAD])
         assertEquals(setOf("hand_r", "hand_l", "face"), profile.motionHolds[Expression.ANGRY])
         for (e in Expression.entries) {
             assertTrue("$e posture", "face" in profile.postureHolds.getValue(e))
