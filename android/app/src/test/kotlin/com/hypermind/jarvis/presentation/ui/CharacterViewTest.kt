@@ -19,8 +19,10 @@ import com.hypermind.jarvis.presentation.character.Expression
 import com.hypermind.jarvis.presentation.character.rig.FakeRigRuntime
 import com.hypermind.jarvis.presentation.character.rig.LoadedRig
 import com.hypermind.jarvis.presentation.character.rig.RIG_TAG
+import com.hypermind.jarvis.presentation.character.rig.RigAssets
 import com.hypermind.jarvis.presentation.character.rig.RigAssetsFixture
 import com.hypermind.jarvis.presentation.character.rig.RigCharacterPlayer
+import com.hypermind.jarvis.presentation.character.rig.RigIntensityProfile
 import com.hypermind.jarvis.presentation.character.rig.RigLoader
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
@@ -46,11 +48,13 @@ class CharacterViewTest {
 
     private val profile = CharacterProfile.BUILT_IN
     private val expression = MutableStateFlow(Expression.DEFAULT)
+    private val intensity = MutableStateFlow(5)
 
     private fun show(settings: CharacterSettings = CharacterSettings(transition = CharacterSettings.Transition.NONE)) {
         compose.setContent {
             val shown by expression.collectAsState()
-            Character(expression = shown, profile = profile, settings = settings)
+            val strength by intensity.collectAsState()
+            Character(expression = shown, profile = profile, settings = settings, intensity = strength)
         }
     }
 
@@ -215,9 +219,12 @@ class CharacterViewTest {
 
     private val contract = RigAssetsFixture.contract()
 
-    private fun fakeRig(runtime: FakeRigRuntime): RigLoader =
+    private fun fakeRig(
+        runtime: FakeRigRuntime,
+        intensityProfile: RigIntensityProfile? = null,
+    ): RigLoader =
         RigLoader { _, reducedMotion ->
-            val player = requireNotNull(RigCharacterPlayer.create(runtime, contract, reducedMotion))
+            val player = requireNotNull(RigCharacterPlayer.create(runtime, contract, reducedMotion, intensityProfile))
             LoadedRig(player, Bitmap.createBitmap(512, 512, Bitmap.Config.ARGB_8888), runtime.info)
         }
 
@@ -230,8 +237,17 @@ class CharacterViewTest {
         compose.mainClock.autoAdvance = false
         compose.setContent {
             val shown by expression.collectAsState()
+            val strength by intensity.collectAsState()
             val on by visible.collectAsState()
-            if (on) Character(expression = shown, profile = profile, settings = settings, rig = rig)
+            if (on) {
+                Character(
+                    expression = shown,
+                    profile = profile,
+                    settings = settings,
+                    rig = rig,
+                    intensity = strength,
+                )
+            }
         }
     }
 
@@ -281,6 +297,40 @@ class CharacterViewTest {
             "the same state again restarts nothing",
             starts,
             runtime.calls.count { it.startsWith("set 0 to_happy") },
+        )
+    }
+
+    @Test
+    fun `the static images ignore intensity`() {
+        show()
+        expression.value = Expression.SAD
+        awaitShown("sad.webp")
+        for (i in listOf(1, 10, 5)) {
+            intensity.value = i
+            awaitShown("sad.webp")
+        }
+    }
+
+    @Test
+    fun `an intensity change reaches the rig without restarting its animation`() {
+        val runtime = FakeRigRuntime.forContract(contract)
+        val intensityProfile = requireNotNull(RigIntensityProfile.parse(RigAssetsFixture.text(RigAssets.INTENSITY)))
+        showRig(fakeRig(runtime, intensityProfile))
+        awaitRig()
+        expression.value = Expression.HAPPY
+        pump { runtime.calls.any { it.startsWith("set 0 to_happy") } }
+        val sets = runtime.calls.count { it.startsWith("set ") || it.startsWith("add ") }
+        intensity.value = 9
+        val gains = intensityProfile.gains(Expression.HAPPY, 9)
+        pump { runtime.calls.contains("shape idle_happy posture=${gains.posture} motion=${gains.motion}") }
+        repeat(10) { compose.mainClock.advanceTimeByFrame() }
+        assertEquals(
+            "no animation restarted",
+            sets,
+            runtime.calls.count {
+                it.startsWith("set ") ||
+                    it.startsWith("add ")
+            },
         )
     }
 

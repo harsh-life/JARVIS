@@ -25,7 +25,15 @@ class FakeRigRuntime(
     private val pending = ArrayDeque<IntArray>()
 
     override val info =
-        RigInfo(vertexCapacity = 8, indexCapacity = 12, minX = -100f, minY = 0f, maxX = 100f, maxY = 300f)
+        RigInfo(
+            vertexCapacity = 8,
+            indexCapacity = 12,
+            minX = -100f,
+            minY = 0f,
+            maxX = 100f,
+            maxY = 300f,
+            boneCount = BONES.size,
+        )
 
     override fun animationIndex(name: String): Int = names.indexOf(name)
 
@@ -107,11 +115,83 @@ class FakeRigRuntime(
         return true
     }
 
+    /** The bones of the bundled rig, in its order (the fake knows names, not geometry). */
+    var bones = BONES
+    var acceptShape = true
+
+    /** The last configuration, as the player's loader sent it. */
+    var configured: ShapeConfiguration? = null
+        private set
+
+    data class ShapeConfiguration(
+        val reference: Int,
+        val idles: List<Int>,
+        val range: List<Int>,
+        val postureWeights: List<Float>,
+        val motionWeights: List<Float>,
+        val postureRamp: Float,
+        val motionRamp: Float,
+    )
+
+    override fun boneIndex(name: String): Int = bones.indexOf(name)
+
+    override fun configureShape(
+        reference: Int,
+        idles: IntArray,
+        range: IntArray,
+        postureWeights: FloatArray,
+        motionWeights: FloatArray,
+        postureRampSeconds: Float,
+        motionRampSeconds: Float,
+    ): Boolean {
+        calls += "configure shape"
+        if (!acceptShape) return false
+        configured =
+            ShapeConfiguration(
+                reference,
+                idles.toList(),
+                range.toList(),
+                postureWeights.toList(),
+                motionWeights.toList(),
+                postureRampSeconds,
+                motionRampSeconds,
+            )
+        return true
+    }
+
+    override fun setShape(
+        idle: Int,
+        postureGain: Float,
+        motionGain: Float,
+    ): Boolean {
+        val name = if (idle < 0) "none" else names.getOrNull(idle) ?: return false
+        calls += "shape $name posture=$postureGain motion=$motionGain"
+        return true
+    }
+
     override fun close() {
         closed++
     }
 
     companion object {
+        val BONES =
+            listOf(
+                "root",
+                "body",
+                "hip",
+                "chest",
+                "head",
+                "face",
+                "upperarm_r",
+                "forearm_r",
+                "hand_r",
+                "upperarm_l",
+                "forearm_l",
+                "hand_l",
+                "leg_r",
+                "leg_l",
+            )
+
         /** Every animation of the bundled contract, with its real duration. */
         fun forContract(contract: RigContract): FakeRigRuntime = FakeRigRuntime(contract.durations)
     }

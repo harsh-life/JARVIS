@@ -45,7 +45,8 @@ internal object RigNative {
     }
 
     const val LIBRARY = "jarvis_rig"
-    const val INFO_SIZE = 9
+    const val INFO_SIZE = 10
+    const val SHAPE_INFO_SIZE = 8
     const val ERROR_SIZE = 256
 
     @JvmStatic external fun nativeCreate(
@@ -111,6 +112,37 @@ internal object RigNative {
         indices: ShortArray,
         counts: IntArray,
     ): Boolean
+
+    @JvmStatic external fun nativeBoneIndex(
+        handle: Long,
+        name: ByteArray,
+    ): Int
+
+    // One primitive argument per native parameter (only primitives cross JNI).
+    @Suppress("LongParameterList")
+    @JvmStatic
+    external fun nativeConfigureShape(
+        handle: Long,
+        reference: Int,
+        idles: IntArray,
+        range: IntArray,
+        postureWeights: FloatArray,
+        motionWeights: FloatArray,
+        postureRamp: Float,
+        motionRamp: Float,
+    ): Boolean
+
+    @JvmStatic external fun nativeSetShape(
+        handle: Long,
+        idle: Int,
+        posture: Float,
+        motion: Float,
+    ): Boolean
+
+    @JvmStatic external fun nativeShapeInfo(
+        handle: Long,
+        out: FloatArray,
+    ): Boolean
 }
 
 /**
@@ -175,6 +207,66 @@ class NativeRigRuntime private constructor(
         return ok
     }
 
+    override fun boneIndex(name: String): Int = RigNative.nativeBoneIndex(live(), name.toByteArray(Charsets.UTF_8))
+
+    override fun configureShape(
+        reference: Int,
+        idles: IntArray,
+        range: IntArray,
+        postureWeights: FloatArray,
+        motionWeights: FloatArray,
+        postureRampSeconds: Float,
+        motionRampSeconds: Float,
+    ): Boolean =
+        RigNative.nativeConfigureShape(
+            live(),
+            reference,
+            idles,
+            range,
+            postureWeights,
+            motionWeights,
+            postureRampSeconds,
+            motionRampSeconds,
+        )
+
+    override fun setShape(
+        idle: Int,
+        postureGain: Float,
+        motionGain: Float,
+    ): Boolean = RigNative.nativeSetShape(live(), idle, postureGain, motionGain)
+
+    /**
+     * The layers' state for tests and diagnostics: whether configured and active, and what the
+     * guard did so far — its clamps, the largest one and where (bone index and local channel:
+     * x, y, rotation, scale x, scale y, shear x, shear y), and what the layers asked for against
+     * what reached the pose (absolute totals; equal when the guard never acted).
+     */
+    fun shapeInfo(): ShapeInfo? {
+        val out = FloatArray(RigNative.SHAPE_INFO_SIZE)
+        if (!RigNative.nativeShapeInfo(live(), out)) return null
+        return ShapeInfo(
+            configured = out[0] != 0f,
+            active = out[1] != 0f,
+            clamps = out[2].toLong(),
+            largestClamp = out[3],
+            largestBone = out[4].toInt(),
+            largestChannel = out[5].toInt(),
+            requested = out[6],
+            applied = out[7],
+        )
+    }
+
+    data class ShapeInfo(
+        val configured: Boolean,
+        val active: Boolean,
+        val clamps: Long,
+        val largestClamp: Float,
+        val largestBone: Int = -1,
+        val largestChannel: Int = -1,
+        val requested: Float = 0f,
+        val applied: Float = 0f,
+    )
+
     override fun close() {
         val h = handle
         handle = 0L
@@ -219,6 +311,7 @@ class NativeRigRuntime private constructor(
                     maxY = out[6],
                     pageWidth = out[7],
                     pageHeight = out[8],
+                    boneCount = out[9].toInt(),
                 )
             return Result.success(NativeRigRuntime(handle, info))
         }

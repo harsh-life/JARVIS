@@ -30,6 +30,9 @@ fun interface RigLoader {
  * the rig project's exports, unchanged). Every failure — a missing or malformed file, a contract
  * the rig does not satisfy, no native runtime — is "no rig", never an exception; whatever was
  * opened before the failure is released.
+ *
+ * The intensity profile ([INTENSITY]) is optional: missing, invalid or refused, the rig still
+ * plays — canonically, every intensity at gain 1. In reduced motion it is not applied at all.
  */
 object RigAssets {
     const val DIR_NAME = "rig"
@@ -38,6 +41,7 @@ object RigAssets {
     const val ATLAS = "JarvisCharacter.atlas"
     const val PAGE = "JarvisCharacter.png"
     const val CONTRACT = "JarvisCharacter.contract.json"
+    const val INTENSITY = "JarvisCharacter.intensity.json"
 
     /** The bundled rig on the Rigby2D runtime. */
     val Bundled = RigLoader { open, reducedMotion -> load(open, reducedMotion) }
@@ -51,7 +55,16 @@ object RigAssets {
         // The contract first: a malformed one never opens a native rig.
         val contract = RigContract.parse(files.contract.toString(Charsets.UTF_8)) ?: return null
         val rig = runtime(files.skeleton, files.atlas).getOrNull() ?: return null
-        val player = RigCharacterPlayer.create(rig, contract, reducedMotion) ?: return null
+        val profile =
+            if (reducedMotion) {
+                null
+            } else {
+                read(open, INTENSITY)
+                    ?.toString(Charsets.UTF_8)
+                    ?.let(RigIntensityProfile::parse)
+                    ?.let { RigShaping.configure(rig, contract, it) }
+            }
+        val player = RigCharacterPlayer.create(rig, contract, reducedMotion, profile) ?: return null
         val page =
             decode(files.page)?.takeIf { fits(it, rig.info) } ?: run {
                 player.close()

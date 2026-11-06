@@ -45,6 +45,36 @@ interface RigRuntime : AutoCloseable {
 
     /** Writes the current pose's triangles into [geometry]; false if it cannot (nothing to draw). */
     fun build(geometry: RigGeometry): Boolean
+
+    /** The bone's index, or -1. */
+    fun boneIndex(name: String): Int
+
+    /**
+     * Prepares the presentation-intensity layers once, while loading (docs/CHARACTER_RIG.md §5):
+     * [idles] are the regular idles' animation indices (one per expression), [reference] one of
+     * them, [range] the animations whose reach bounds the guard, and the weights one value in 0..1
+     * per bone for each idle (0 keeps that bone canonical in that layer). False if refused; the
+     * rig then plays canonically.
+     */
+    fun configureShape(
+        reference: Int,
+        idles: IntArray,
+        range: IntArray,
+        postureWeights: FloatArray,
+        motionWeights: FloatArray,
+        postureRampSeconds: Float,
+        motionRampSeconds: Float,
+    ): Boolean
+
+    /**
+     * Ramps the layers to these gains for idle animation [idle] (its expression); -1 ramps every
+     * gain back to 1. Called only when the shown expression or intensity changes, never per frame.
+     */
+    fun setShape(
+        idle: Int,
+        postureGain: Float,
+        motionGain: Float,
+    ): Boolean
 }
 
 /** What a loaded rig needs to be drawn: worst-case buffer sizes and its setup-pose frame (world units, Y up). */
@@ -58,6 +88,7 @@ data class RigInfo(
     val animationCount: Int = 0,
     val pageWidth: Float = 512f,
     val pageHeight: Float = 512f,
+    val boneCount: Int = 0,
 )
 
 /**

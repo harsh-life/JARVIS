@@ -14,14 +14,18 @@ class RigContractTest {
     private val contract = RigAssetsFixture.contract()
 
     @Test
-    fun `the bundled files are the canonical export, byte for byte`() {
+    fun `the bundled files are the canonical export, byte for byte, and the profile is pinned too`() {
         val pins =
             RigAssetsFixture
                 .text("SHA256SUMS")
                 .lines()
                 .filter { it.isNotBlank() }
                 .associate { line -> line.substringAfter("  ") to line.substringBefore("  ") }
-        assertEquals(setOf(RigAssets.SKELETON, RigAssets.ATLAS, RigAssets.PAGE, RigAssets.CONTRACT), pins.keys)
+        // The rig project's four exports, unchanged, and JARVIS's own intensity profile beside them.
+        assertEquals(
+            setOf(RigAssets.SKELETON, RigAssets.ATLAS, RigAssets.PAGE, RigAssets.CONTRACT, RigAssets.INTENSITY),
+            pins.keys,
+        )
         for ((name, sha) in pins) {
             val digest = MessageDigest.getInstance("SHA-256").digest(RigAssetsFixture.bytes(name))
             assertEquals(name, sha, digest.joinToString("") { "%02x".format(it) })

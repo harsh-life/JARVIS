@@ -1,18 +1,23 @@
 package com.hypermind.jarvis.presentation.character.rig
 
 import com.hypermind.jarvis.presentation.character.Expression
+import com.hypermind.jarvis.presentation.character.IntensityPolicy
 
 /**
  * Plays the animated character: the replaceable boundary between the character screen and an
- * animation runtime. It is told which [Expression] to show — by `CharacterController`, through the
- * screen — and only animates it: it never chooses a state, and nothing it does reaches tasks,
- * status, approvals or execution.
+ * animation runtime. It is told which [Expression] to show and at which intensity (1–10) — both
+ * decided by `CharacterController`, through the screen — and only animates them: it never chooses
+ * a state or an intensity, never sees what was said, infers nothing, and nothing it does reaches
+ * tasks, status, approvals or execution.
  *
  * Confined to one thread (the main thread). After [close] every call is a no-op.
  */
 interface CharacterAnimationPlayer : AutoCloseable {
     /** The state being shown (or transitioned into). */
     val expression: Expression
+
+    /** How strongly [expression] is presented (1–10; 5 and 6 are the canonical animation). */
+    val intensity: Int
 
     /** True while [pause]d: time stands still. */
     val paused: Boolean
@@ -23,17 +28,22 @@ interface CharacterAnimationPlayer : AutoCloseable {
     /** True after [close]. */
     val released: Boolean
 
-    /** Starts on [initial]'s idle, with the entrance if [entrance]. */
+    /** Starts on [initial]'s idle at [intensity], with the entrance if [entrance]. */
     fun start(
         initial: Expression,
+        intensity: Int = IntensityPolicy.NEUTRAL,
         entrance: Boolean,
     )
 
     /**
-     * Shows [expression]: its transition, then its idle. The same expression again restarts
-     * nothing; a new one interrupts whatever plays (a transition, a long idle).
+     * Shows [expression] at [intensity]: its transition, then its idle. The same expression again
+     * restarts nothing (a new intensity only retargets how strongly it is presented, ramping); a
+     * new one interrupts whatever plays (a transition, a long idle). The same pair again is a no-op.
      */
-    fun show(expression: Expression)
+    fun show(
+        expression: Expression,
+        intensity: Int = IntensityPolicy.NEUTRAL,
+    )
 
     /**
      * Plays the shown state's long-idle action once, then its idle again. Refused (false) during a

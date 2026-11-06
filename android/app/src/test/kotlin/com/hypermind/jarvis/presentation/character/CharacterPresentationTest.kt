@@ -127,4 +127,31 @@ class CharacterPresentationTest {
         character.reset()
         assertEquals(Expression.SLEEPY, character.expression.value)
     }
+
+    @Test
+    fun `the presented flow carries the intensity, and the expression flow stays its state alone`() {
+        val character = presentation()
+        assertEquals(PresentedCharacter(Expression.DEFAULT, 5), character.presented.value)
+        character.onUtterance("yay, amazing") // the cue scorer's 8, at HAPPY's threshold of 7
+        scope.runCurrent()
+        assertEquals(PresentedCharacter(Expression.HAPPY, 6), character.presented.value)
+        assertEquals(Expression.HAPPY, character.expression.value)
+        character.onEvent(PresentationEvent.TaskCompleted) // a different state waits out the minimum display
+        scope.advanceTimeBy(1_001)
+        assertEquals(PresentedCharacter(Expression.SATISFIED, 6), character.presented.value)
+        scope.advanceTimeBy(60_001)
+        assertEquals(PresentedCharacter(Expression.SLEEPY, 2), character.presented.value)
+        assertEquals(Expression.SLEEPY, character.expression.value)
+    }
+
+    @Test
+    fun `a preview can choose its intensity`() {
+        val character = presentation()
+        character.preview(Expression.SAD, intensity = 10)
+        assertEquals(PresentedCharacter(Expression.SAD, 10), character.presented.value)
+        character.preview(Expression.SAD)
+        assertEquals(PresentedCharacter(Expression.SAD, 5), character.presented.value)
+        character.reset()
+        assertEquals(PresentedCharacter(Expression.DEFAULT, 5), character.presented.value)
+    }
 }

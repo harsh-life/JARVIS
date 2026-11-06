@@ -16,6 +16,11 @@ import kotlinx.serialization.json.longOrNull
  * `shared/schemas/presentation.py` `CharacterPresentationSettings`; defaults in
  * `assets/character/presentation.json`). The thresholds and timings are
  * product parameters to be tuned, not validated measurements of anything.
+ *
+ * The optional `intensity` block parameterises [IntensityPolicy]: the intensity a selection at its
+ * state's threshold presents at (`floor`), the dead band for a repeated selection of the shown
+ * state, and the fixed intensities of the two baseline states. A document without it takes these
+ * defaults.
  */
 data class CharacterSettings(
     val visible: Boolean = true,
@@ -30,6 +35,9 @@ data class CharacterSettings(
     val idleTimeoutMillis: Long = 300_000,
     val interruptScore: Int = 9,
     val maxResultAgeMillis: Long = 5_000,
+    val intensityFloor: Int = IntensityPolicy.DEFAULT_FLOOR,
+    val intensityDeadBand: Int = IntensityPolicy.DEFAULT_DEAD_BAND,
+    val baselineIntensities: Map<Expression, Int> = IntensityPolicy.DEFAULT_BASELINES,
 ) {
     enum class Transition(
         val wire: String,
@@ -57,12 +65,19 @@ data class CharacterSettings(
         require(idleTimeoutMillis in IDLE_RANGE) { "idle_timeout_ms" }
         require(interruptScore in SCORE_RANGE) { "interrupt_score" }
         require(maxResultAgeMillis in AGE_RANGE) { "max_result_age_ms" }
+        require(intensityFloor in IntensityPolicy.RANGE) { "intensity.floor" }
+        require(intensityDeadBand in DEAD_BAND_RANGE) { "intensity.dead_band" }
+        require(baselineIntensities.keys == BASELINE_STATES) { "intensity.baseline" }
+        require(baselineIntensities.values.all { it in IntensityPolicy.RANGE }) { "intensity.baseline" }
     }
 
     fun threshold(expression: Expression): Int = thresholds.getValue(expression)
 
     /** How long a selected state stays before the baseline returns; the baseline itself has none. */
     fun hold(expression: Expression): Long = holdMillis[expression] ?: Long.MAX_VALUE
+
+    /** The fixed intensity of a baseline state ([Expression.DEFAULT] or [Expression.SLEEPY]). */
+    fun baselineIntensity(expression: Expression): Int = baselineIntensities[expression] ?: IntensityPolicy.NEUTRAL
 
     companion object {
         const val FILE = "presentation.json"
@@ -72,6 +87,10 @@ data class CharacterSettings(
         private val HOLD_RANGE = 500L..60_000L
         private val IDLE_RANGE = 10_000L..86_400_000L
         private val AGE_RANGE = 100L..60_000L
+        private val DEAD_BAND_RANGE = 0..9
+
+        /** The states the controller returns to without a selection: they have a fixed intensity, never a score. */
+        val BASELINE_STATES = setOf(Expression.DEFAULT, Expression.SLEEPY)
 
         /** Every state but the baseline [Expression.DEFAULT] has a hold. */
         val HOLD_STATES = Expression.entries.toSet() - Expression.DEFAULT
@@ -107,6 +126,7 @@ data class CharacterSettings(
                 "min_confidence",
                 "thresholds",
                 "timing",
+                "intensity",
             )
         private val TIMING_FIELDS =
             setOf(
@@ -117,6 +137,7 @@ data class CharacterSettings(
                 "interrupt_score",
                 "max_result_age_ms",
             )
+        private val INTENSITY_FIELDS = setOf("floor", "dead_band", "baseline")
 
         /**
          * A settings document, validated as strictly as the server's schema;
@@ -131,6 +152,8 @@ data class CharacterSettings(
                 root["schema_version"]?.let { require(int(it) == 1) { "schema" } }
                 val timing = root["timing"]?.jsonObject ?: JsonObject(emptyMap())
                 require(timing.keys.all { it in TIMING_FIELDS }) { "unknown timing field" }
+                val intensity = root["intensity"]?.jsonObject ?: JsonObject(emptyMap())
+                require(intensity.keys.all { it in INTENSITY_FIELDS }) { "unknown intensity field" }
                 val defaults = CharacterSettings()
                 CharacterSettings(
                     visible = root["visible"]?.let(::bool) ?: defaults.visible,
@@ -155,6 +178,11 @@ data class CharacterSettings(
                     idleTimeoutMillis = timing["idle_timeout_ms"]?.let(::long) ?: defaults.idleTimeoutMillis,
                     interruptScore = timing["interrupt_score"]?.let(::int) ?: defaults.interruptScore,
                     maxResultAgeMillis = timing["max_result_age_ms"]?.let(::long) ?: defaults.maxResultAgeMillis,
+                    intensityFloor = intensity["floor"]?.let(::int) ?: defaults.intensityFloor,
+                    intensityDeadBand = intensity["dead_band"]?.let(::int) ?: defaults.intensityDeadBand,
+                    baselineIntensities =
+                        intensity["baseline"]?.let { byState(it, defaults.baselineIntensities) { v -> int(v) } }
+                            ?: defaults.baselineIntensities,
                 )
             } catch (ignored: SerializationException) {
                 null

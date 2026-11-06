@@ -6,9 +6,14 @@
 //!
 //! Geometry is flattened once per frame into buffers sized at load time for the worst case (every
 //! slot showing its largest attachment), so playback never allocates after the first frame.
+//!
+//! An optional [`Shape`] (presentation intensity) adds posture and idle-motion layers over the
+//! canonical pose; until it is configured and given a gain other than 1, nothing changes.
 
 use rigby_runtime::model::{AttachmentKind, Blend};
 use rigby_runtime::{load_skeleton, AnimationState, Atlas, Pose, RegionLookup, RenderOutput, SkeletonData, StateEventKind};
+
+use crate::shape::{Shape, CHANNELS};
 
 /// A track callback, as plain numbers for the JNI side: `[kind, track, animation]`.
 pub const EVENT_START: i32 = 0;
@@ -36,6 +41,7 @@ pub struct Rig {
     events: Vec<[i32; 3]>,
     flat_events: Vec<i32>,
     bounds: [f32; 4],
+    shape: Option<Shape>,
 }
 
 impl Rig {
@@ -77,6 +83,7 @@ impl Rig {
             events: Vec::with_capacity(MAX_EVENTS),
             flat_events: Vec::with_capacity(MAX_EVENTS * 3),
             bounds: [0.0; 4],
+            shape: None,
             data,
         };
         rig.pose.reset(&rig.data);
@@ -134,12 +141,60 @@ impl Rig {
     }
 
     /// Advances playback by `dt` seconds (clamped to 0..0.25 so a stall never jumps ahead) and
-    /// poses the skeleton.
+    /// poses the skeleton: the canonical pose, then the intensity layers if a [`Shape`] is active.
     pub fn update(&mut self, dt: f64) {
         let dt = if dt.is_finite() { dt.clamp(0.0, 0.25) } else { 0.0 };
         self.state.update(&self.data, dt);
         self.state.apply(&self.data, &mut self.pose);
+        if let Some(shape) = &mut self.shape {
+            shape.apply(&self.data, &self.state, &mut self.pose, dt);
+        }
         self.collect_events();
+    }
+
+    pub fn bone_count(&self) -> usize {
+        self.data.bones.len()
+    }
+
+    /// The index of the bone named `name`, or None.
+    pub fn bone_index(&self, name: &str) -> Option<usize> {
+        self.data.find_bone(name)
+    }
+
+    /// Prepares the intensity layers (see [`Shape::configure`]): computes the idles' held poses,
+    /// the reference and the authored range once, here. Replaces any previous configuration.
+    #[allow(clippy::too_many_arguments)]
+    pub fn configure_shape(
+        &mut self,
+        reference: usize,
+        idles: &[usize],
+        range: &[usize],
+        posture_weights: &[f32],
+        motion_weights: &[f32],
+        posture_ramp: f64,
+        motion_ramp: f64,
+    ) -> Result<(), String> {
+        let shape = Shape::configure(&self.data, reference, idles, range, posture_weights, motion_weights, posture_ramp, motion_ramp)?;
+        self.shape = Some(shape);
+        Ok(())
+    }
+
+    /// Ramps to `idle`'s gains (see [`Shape::set_target`]); false without a configured shape.
+    pub fn set_shape(&mut self, idle: Option<usize>, posture: f64, motion: f64) -> bool {
+        self.shape.as_mut().is_some_and(|s| s.set_target(idle, posture, motion))
+    }
+
+    pub fn shape(&self) -> Option<&Shape> {
+        self.shape.as_ref()
+    }
+
+    pub fn shape_mut(&mut self) -> Option<&mut Shape> {
+        self.shape.as_mut()
+    }
+
+    /// A bone's current local transform as `[x, y, rotation, scale x, scale y, shear x, shear y]`.
+    pub fn local(&self, bone: usize) -> Option<[f64; CHANNELS]> {
+        self.pose.local.get(bone).map(|t| [t.x, t.y, t.rotation, t.scale_x, t.scale_y, t.shear_x, t.shear_y])
     }
 
     /// Track callbacks since the last call, oldest first, flattened as `[kind, track, animation]`

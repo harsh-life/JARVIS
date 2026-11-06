@@ -142,6 +142,8 @@ def test_presentation_settings_are_separate_from_the_mapping():
     assert settings.profile_id == "default"
     assert settings.transition is CharacterTransition.CROSSFADE
     # Settings name a profile; they never carry a state→image mapping or a state.
+    # `intensity` holds only the intensity policy's parameters (floor, dead band,
+    # the two baselines' fixed values), never a selected state or an intensity.
     assert set(CharacterPresentationSettings.model_fields) == {
         "schema_version",
         "visible",
@@ -151,9 +153,12 @@ def test_presentation_settings_are_separate_from_the_mapping():
         "min_confidence",
         "thresholds",
         "timing",
+        "intensity",
     }
     with pytest.raises(ValidationError):
         CharacterPresentationSettings.model_validate_json(json.dumps({"expression": "happy"}))
+    with pytest.raises(ValidationError):
+        CharacterPresentationSettings.model_validate_json(json.dumps({"intensity": {"expression": "happy"}}))
 
 
 # --- the approved artwork ---------------------------------------------------

@@ -27,8 +27,14 @@ val bundleSharedMapping by tasks.registering(Copy::class) {
 val bundleCharacterAssets by tasks.registering(Sync::class) {
     from(characterAssetsDir) {
         include("presentation.json", "*/profile.json", "*/*.png", "*/*.webp")
-        // The animated character (docs/CHARACTER_RIG.md): the rig project's exports.
-        include("rig/JarvisCharacter.skel", "rig/JarvisCharacter.atlas", "rig/JarvisCharacter.contract.json")
+        // The animated character (docs/CHARACTER_RIG.md): the rig project's exports, and the
+        // intensity profile beside them (optional at run time).
+        include(
+            "rig/JarvisCharacter.skel",
+            "rig/JarvisCharacter.atlas",
+            "rig/JarvisCharacter.contract.json",
+            "rig/JarvisCharacter.intensity.json",
+        )
     }
     into(layout.buildDirectory.dir("generated/characterAssets/character"))
 }

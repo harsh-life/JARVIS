@@ -28,5 +28,13 @@
     "idle_timeout_ms": 300000,
     "interrupt_score": 9,
     "max_result_age_ms": 5000
+  },
+  "intensity": {
+    "floor": 4,
+    "dead_band": 2,
+    "baseline": {
+      "default": 5,
+      "sleepy": 2
+    }
   }
 }

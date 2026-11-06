@@ -24,13 +24,22 @@ tablet, desktop and the configuration website later) shares:
 * `select_expression` — the reference implementation of the deterministic
   selection policy. Every client implements the same policy and is held to
   it by `shared/android/presentation_selection_vectors.json`.
+* `presentation_intensity` — how strongly the *selected* expression is
+  presented (1–10), derived deterministically from its suitability score and
+  its state's threshold; the two baseline states take fixed intensities
+  instead (they are not selected, so they have no score). Held to it by
+  `shared/android/presentation_intensity_vectors.json`. Suitability and
+  intensity are different things: the score says how appropriate an
+  expression is, the intensity how strongly the chosen one is animated.
+  Neither is a measurement of anyone's emotions, and confidence is neither —
+  confidence only gates selection.
 
 An expression is **presentation only**: it is not an agent mood (EMO-001), not
 a trait system (EMO-003), never a first-person statement of feeling (EMO-004),
 never stored as a memory or a profile of the user, and never an operational
 status. It grants nothing. No authority package imports this module
 (import-linter contract "Character presentation never reaches authority"), so
-no expression or score can influence authentication, membership, capabilities,
+no expression, score or intensity can influence authentication, membership, capabilities,
 policy, risk tiers, confirmation, budgets or tool execution. Deliberately
 **not** re-exported from `shared.schemas`, so importing the data contracts
 never pulls it in.
@@ -55,6 +64,11 @@ ASSET_NAME_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}\.(png|webp)$"
 
 SCORE_MIN = 1
 SCORE_MAX = 10
+
+INTENSITY_MIN = 1
+INTENSITY_MAX = 10
+# The canonical animation, exactly as authored (intensities 5 and 6 both present it).
+INTENSITY_NEUTRAL = 5
 
 
 class Expression(str, Enum):
@@ -199,6 +213,37 @@ class HoldDurations(BaseModel):
     sad: int = Field(default=5_000, ge=500, le=60_000)
 
 
+class BaselineIntensities(BaseModel):
+    """The fixed intensities of the two baseline states. They are returned to
+    by the idle policy, never selected, so they have no score to derive one
+    from."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    default: int = Field(default=INTENSITY_NEUTRAL, ge=INTENSITY_MIN, le=INTENSITY_MAX)
+    sleepy: int = Field(default=2, ge=INTENSITY_MIN, le=INTENSITY_MAX)
+
+    def of(self, expression: Expression) -> int:
+        if expression is Expression.DEFAULT:
+            return self.default
+        if expression is Expression.SLEEPY:
+            return self.sleepy
+        raise ValueError("not a baseline state")
+
+
+class IntensitySettings(BaseModel):
+    """Parameters of `presentation_intensity` (product parameters, like the
+    thresholds). Optional in a document: absent, these defaults apply."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    # The intensity of a selection that only just meets its state's threshold.
+    floor: int = Field(default=4, ge=INTENSITY_MIN, le=INTENSITY_MAX)
+    # The shown state selected again changes intensity only by at least this.
+    dead_band: int = Field(default=2, ge=0, le=9)
+    baseline: BaselineIntensities = BaselineIntensities()
+
+
 class PresentationTiming(BaseModel):
     """Transition and idle/reset policy (ms)."""
 
@@ -229,6 +274,7 @@ class CharacterPresentationSettings(BaseModel):
     min_confidence: float = Field(default=0.6, ge=0.0, le=1.0, allow_inf_nan=False)
     thresholds: ActivationThresholds = ActivationThresholds()
     timing: PresentationTiming = PresentationTiming()
+    intensity: IntensitySettings = IntensitySettings()
 
 
 # --- the selection policy ---------------------------------------------------
@@ -271,3 +317,49 @@ def select_expression(
         if best is None or score > result.score(best):
             best = expression
     return best or Expression.DEFAULT
+
+
+# --- the intensity policy ---------------------------------------------------
+
+
+def presentation_intensity(score: int, threshold: int, floor: int) -> int:
+    """How strongly a selected expression is presented (1–10), from its
+    suitability `score` and its state's `threshold` — the same mapping for
+    every state:
+
+        floor + round_half_up((score - threshold) * (10 - floor) / (10 - threshold))
+
+    A score at the threshold presents at `floor`, a score of 10 at 10; a
+    threshold of 10 admits only 10, which presents at 10. Integer arithmetic
+    only. Raises `ValueError` for a value out of range or a score below its
+    threshold (the selector never selects one).
+    """
+
+    for name, value, low, high in (
+        ("score", score, SCORE_MIN, SCORE_MAX),
+        ("threshold", threshold, SCORE_MIN, SCORE_MAX),
+        ("floor", floor, INTENSITY_MIN, INTENSITY_MAX),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            raise ValueError(f"{name} out of range")
+    if score < threshold:
+        raise ValueError("the score does not meet its threshold")
+    if threshold == SCORE_MAX:
+        return INTENSITY_MAX
+    span = SCORE_MAX - threshold
+    numerator = (score - threshold) * (INTENSITY_MAX - floor)
+    return floor + (2 * numerator + span) // (2 * span)
+
+
+def baseline_intensity(expression: Expression, settings: CharacterPresentationSettings) -> int:
+    """The fixed intensity of a baseline state (`DEFAULT` or `SLEEPY`); no
+    score is involved."""
+
+    return settings.intensity.baseline.of(expression)
+
+
+def retained_intensity(current: int, candidate: int, dead_band: int) -> int:
+    """The shown state selected again: the candidate intensity replaces the
+    current one only if it differs by at least `dead_band`."""
+
+    return candidate if abs(candidate - current) >= dead_band else current

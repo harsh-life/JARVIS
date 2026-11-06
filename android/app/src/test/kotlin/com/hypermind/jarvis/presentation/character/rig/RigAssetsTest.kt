@@ -1,5 +1,6 @@
 package com.hypermind.jarvis.presentation.character.rig
 
+import com.hypermind.jarvis.presentation.character.Expression
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -21,15 +22,17 @@ import java.io.InputStream
 class RigAssetsTest {
     private val contract = RigAssetsFixture.contract()
     private var runtimeOpened = 0
+    private var lastRuntime: FakeRigRuntime? = null
     private val fakeRuntime: (ByteArray, ByteArray) -> Result<RigRuntime> = { _, _ ->
         runtimeOpened++
-        Result.success(FakeRigRuntime.forContract(contract))
+        Result.success(FakeRigRuntime.forContract(contract).also { lastRuntime = it })
     }
 
     private fun load(
         open: (String) -> InputStream = RigAssetsFixture::open,
         runtime: (ByteArray, ByteArray) -> Result<RigRuntime> = fakeRuntime,
-    ): LoadedRig? = RigAssets.load(open, reducedMotion = false, runtime = runtime)
+        reducedMotion: Boolean = false,
+    ): LoadedRig? = RigAssets.load(open, reducedMotion = reducedMotion, runtime = runtime)
 
     private fun without(name: String): (String) -> InputStream = { path ->
         if (path.endsWith("/$name")) throw FileNotFoundException(path) else RigAssetsFixture.open(path)
@@ -112,5 +115,80 @@ class RigAssetsTest {
         // Robolectric has no Android .so; the production loader must notice, not throw.
         assertTrue(!RigNative.available)
         assertNull(RigAssets.load(RigAssetsFixture::open, reducedMotion = false))
+    }
+
+    // --- the optional intensity profile -----------------------------------------------------
+
+    private fun shapeCalls() = lastRuntime!!.calls.filter { it.startsWith("shape") }
+
+    @Test
+    fun `the bundled profile is applied to the rig while loading`() {
+        load()!!.use { rig ->
+            val config = requireNotNull(lastRuntime!!.configured)
+            val bones = FakeRigRuntime.BONES
+            val idles = Expression.entries.map { contract.idle.getValue(it) }
+            assertEquals(idles.map(lastRuntime!!::animationIndex), config.idles)
+            assertEquals(lastRuntime!!.animationIndex("idle_default"), config.reference)
+            assertTrue("the guard spans every track-0 animation", config.range.size == 26)
+            assertTrue(lastRuntime!!.animationIndex("enter") !in config.range)
+            assertEquals(Expression.entries.size * bones.size, config.postureWeights.size)
+            // Sad (the last state) keeps its shoulders, forearms, legs and face canonical in posture.
+            val sad = config.postureWeights.takeLast(bones.size)
+            val held =
+                bones.indices
+                    .filter { sad[it] == 0f }
+                    .map { bones[it] }
+                    .toSet()
+            assertEquals(setOf("upperarm_r", "upperarm_l", "forearm_r", "forearm_l", "leg_r", "leg_l", "face"), held)
+            assertEquals(0.8f, config.postureRamp)
+            assertEquals(0.5f, config.motionRamp)
+            rig.player.start(Expression.SAD, 10, entrance = false)
+            assertEquals(1, shapeCalls().size)
+        }
+    }
+
+    @Test
+    fun `a missing, invalid or refused profile still plays the rig, canonically`() {
+        for (open in listOf(
+            without(RigAssets.INTENSITY),
+            replacing(RigAssets.INTENSITY, "{\"schema\": 1}".toByteArray()),
+        )) {
+            load(open = open)!!.use { rig ->
+                assertNull(lastRuntime!!.configured)
+                rig.player.start(Expression.HAPPY, 10, entrance = false)
+                assertEquals(emptyList<String>(), shapeCalls())
+            }
+        }
+        val refusing: (ByteArray, ByteArray) -> Result<RigRuntime> = { _, _ ->
+            Result.success(
+                FakeRigRuntime.forContract(contract).also {
+                    it.acceptShape = false
+                    lastRuntime = it
+                },
+            )
+        }
+        load(runtime = refusing)!!.use { rig ->
+            rig.player.start(Expression.HAPPY, 10, entrance = false)
+            assertEquals(emptyList<String>(), shapeCalls())
+        }
+        val unknownBone: (ByteArray, ByteArray) -> Result<RigRuntime> = { _, _ ->
+            Result.success(
+                FakeRigRuntime.forContract(contract).also {
+                    it.bones = FakeRigRuntime.BONES - "face"
+                    lastRuntime =
+                        it
+                },
+            )
+        }
+        load(runtime = unknownBone)!!.use { assertNull("a bone the rig lacks: not applied", lastRuntime!!.configured) }
+    }
+
+    @Test
+    fun `reduced motion never applies the profile`() {
+        load(reducedMotion = true)!!.use { rig ->
+            assertNull(lastRuntime!!.configured)
+            rig.player.start(Expression.SAD, 10, entrance = false)
+            assertEquals(emptyList<String>(), shapeCalls())
+        }
     }
 }
