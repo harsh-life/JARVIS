@@ -57,6 +57,15 @@ class RigCharacterPlayerIntensityTest {
     }
 
     @Test
+    fun `a dead-band step for the shown expression reaches the layers`() {
+        // The controller moved happy from 4 (score 7) to 6 (score 8): the player retargets.
+        player.start(Expression.HAPPY, 4, entrance = false)
+        runtime.calls.clear()
+        player.show(Expression.HAPPY, 6)
+        assertEquals(listOf(shape(Expression.HAPPY, 6)), runtime.calls)
+    }
+
+    @Test
     fun `intensities with the same gains send nothing`() {
         player.start(Expression.ANGRY, 7, entrance = false)
         player.show(Expression.ANGRY, 5)

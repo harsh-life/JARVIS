@@ -105,3 +105,16 @@ def test_the_shipped_settings_carry_the_intensity_defaults():
     shipped = json.loads(DEFAULTS_FILE.read_text())
     assert shipped["intensity"] == CharacterPresentationSettings().model_dump(mode="json")["intensity"]
     assert shipped["schema_version"] == 1
+
+
+def test_a_threshold_7_state_at_score_7_then_8_moves_from_4_to_6():
+    """The dead band is "at least": 4 -> 6 is exactly 2 apart, so it moves."""
+
+    first = presentation_intensity(7, 7, 4)
+    second = presentation_intensity(8, 7, 4)
+    assert (first, second) == (4, 6)
+    assert retained_intensity(first, second, 2) == 6
+    # With the default floor every score step of a threshold-7 or -8 state moves at least 2.
+    for threshold in (7, 8):
+        steps = [presentation_intensity(s, threshold, 4) for s in range(threshold, 11)]
+        assert all(b - a >= 2 for a, b in zip(steps, steps[1:])), steps

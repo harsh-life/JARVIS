@@ -2,6 +2,7 @@ package com.hypermind.jarvis.presentation.character
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** OD-CHAR-2: the central controller's timing rules, on a virtual clock. */
@@ -245,6 +246,21 @@ class CharacterControllerTest {
         assertEquals(presented(Expression.HAPPY, 6), narrow.presented)
         narrow.onSelection(Selection(Expression.HAPPY, 10), 200) // 10: outside
         assertEquals(presented(Expression.HAPPY, 10), narrow.presented)
+    }
+
+    @Test
+    fun `a threshold-7 state at score 7 then 8 moves from 4 to 6 - the dead band is at least 2`() {
+        select(Expression.HAPPY, score = 7) // threshold 7: at the floor
+        assertEquals(presented(Expression.HAPPY, 4), controller.presented)
+        at(300)
+        select(Expression.HAPPY, score = 8) // 6: exactly the dead band away, so it moves
+        assertEquals(presented(Expression.HAPPY, 6), controller.presented)
+        // With the default floor every score step of a threshold-7 or -8 state moves at least 2,
+        // so the default band of 2 never holds back a real change of score.
+        for (threshold in listOf(7, 8)) {
+            val steps = (threshold..10).map { IntensityPolicy.forSelection(it, threshold) }
+            assertTrue("$steps", steps.zipWithNext().all { (a, b) -> b - a >= IntensityPolicy.DEFAULT_DEAD_BAND })
+        }
     }
 
     @Test
