@@ -135,8 +135,10 @@ CENTRAL_PROMPT_PROFILES: dict[str, frozenset[str]] = {
     # E0: the production runtime's own prompt, unchanged.
     "central.baseline": frozenset({"1"}),
     # E1: the Central prompt contract (intent, objective, constraints,
-    # clarification, evidence, synthesis, honest uncertainty).
-    "central.contract": frozenset({"1"}),
+    # clarification, evidence, synthesis, honest uncertainty). v2 (Phase 0.1,
+    # docs/31 §9) adds the action lifecycle and the harness's ACTION RECORD;
+    # it is a prompt version label only: no action-outcome type lives here.
+    "central.contract": frozenset({"1", "2"}),
 }
 
 

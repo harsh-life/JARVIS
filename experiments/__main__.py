@@ -9,6 +9,9 @@
     # run live against the providers named in a provider map (opt-in)
     python -m experiments run central --snapshot snap.json --live --providers providers.yaml
 
+    # Phase 0.1: re-finalize stored runs and report axes A/B/C (no model calls)
+    python -m experiments compare results/<run-a> results/<run-b> --out results/compare-<label>
+
 Results go to experiments/results/ (not committed) unless --no-write.
 """
 
@@ -47,7 +50,28 @@ def main(argv: list[str] | None = None) -> int:
     rn.add_argument("--no-write", action="store_true")
     rs = sub.add_parser("rescore", help="re-score a stored run under the current rubric (no model calls)")
     rs.add_argument("directory", type=Path)
+    cp = sub.add_parser("compare", help="re-finalize stored runs and write the A/B/C comparison to a NEW directory "
+                                        "(no model calls; run directories are never modified)")
+    cp.add_argument("directories", type=Path, nargs="+")
+    cp.add_argument("--out", type=Path, required=True)
+    se = sub.add_parser("screen-eval", help="false-positive / false-negative rates of the lexical claim screen "
+                                            "on the held-out corpus (no model calls)")
+    se.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
+
+    if args.command == "screen-eval":
+        from experiments.screen_eval import main as screen_eval
+
+        result = screen_eval(args.out)
+        print(json.dumps({k: result[k] for k in ("items", "overall", "by_policy")}, indent=2))
+        return 0
+
+    if args.command == "compare":
+        from experiments.compare import compare
+
+        report = compare(list(args.directories), args.out)
+        print(f"wrote {args.out}/compare.md and compare.json ({len(report['runs'])} runs)")
+        return 0
 
     if args.command == "rescore":
         result = rescore(args.directory)
