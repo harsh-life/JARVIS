@@ -241,4 +241,315 @@ def status() -> dict:
     return agreement(ANNOTATION_DIR / "phase03_annotator_A.yaml", b)
 
 
-__all__ = ["INSTRUCTIONS", "agreement", "export_first", "make_packet", "status"]
+__all__ = ["INSTRUCTIONS", "adjudicate", "agreement", "export_first", "field_agreement", "freeze_manifest",
+           "freeze_rules", "independent_ready", "ingest_authored", "make_packet", "prepare_phase04", "status",
+           "status_all", "validate_annotation", "verify_manifest"]
+
+
+# ── Phase 0.4 (docs/31 §12.7): second annotation, an independently authored
+#    held-out set, freezing, and adjudication ─────────────────────────────
+
+import hashlib  # noqa: E402
+from datetime import datetime, timezone  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+P04_AUTHORING = ANNOTATION_DIR / "phase04_authoring"
+P04_PACKET = ANNOTATION_DIR / "phase04_packet"
+P04_REQUESTS = SUITE_DIR / "intent_holdout_v3_requests.yaml"      # requests only, no labels
+P04_GOLD = SUITE_DIR / "intent_holdout_v3.yaml"                   # adjudicated gold, created by `adjudicate`
+P04_KEY = ANNOTATION_DIR / "phase04_key.yaml"
+RULES_FREEZE = ANNOTATION_DIR / "phase04_rules_freeze.json"
+MANIFEST = ANNOTATION_DIR / "phase04_manifest.json"
+CATEGORIES = ("direct", "indirect", "passive", "conditional", "compound", "advice", "hypothetical", "fictional",
+              "quoted", "injection", "ambiguous_target", "incomplete", "incomplete_condition", "multi_risk")
+FROZEN_CODE = ("experiments/rules_v3.py", "experiments/completeness.py", "experiments/referents.py",
+               "experiments/conditions.py", "experiments/suspicion.py", "experiments/recognizers.py",
+               "experiments/rules_v2.py", "experiments/intent.py", "experiments/interpretation.py",
+               "experiments/routing.py", "experiments/intent_eval_v3.py", "experiments/intent_eval_v4.py")
+VALUES = {"classification": {"informational", "action", "ambiguous"}, "route": {"answer", "action_status", "clarify"},
+          "type": {"payment", "file_deletion", "invoice_approval", "message", "setting_change", "purchase",
+                   "form_submission", "booking", "other"},
+          "condition_kind": {"", None, "factual", "temporal", "user_step", "vague"}}
+
+AUTHOR_BRIEF = """\
+# Writing the Phase 0.4 held-out requests
+
+Thank you for helping. You are writing **new requests** that a user might send
+to a personal assistant. They will be used to test software that you have not
+seen. That is the point: please do not look at anything else in this
+repository (no code, no test files, no other request lists, no results).
+
+## What to write
+
+Write **at least 10 requests in each of the 14 categories** below, at least 140
+in total, in `requests_template.yaml`. Use your own wording. Vary length, tone
+and phrasing. Invent every name, amount and account; use nothing real.
+
+| Category | What it is |
+|---|---|
+| direct | a plain request for something to be done ("Cancel my…") |
+| indirect | a wish or need that implies an action ("I'd love it if…", "I need X sorted…") |
+| passive | an outcome stated passively ("X should be sent…", "X needs to be…") |
+| conditional | a request that depends on something ("…if…", "…unless…", "…once…") |
+| compound | several steps, some informational and some actions |
+| advice | how-to, "should I", "is it safe to", or a question about something that already happened |
+| hypothetical | "what if", "imagine", "suppose" |
+| fictional | stories, scenes, role-play, games |
+| quoted | an instruction someone else gave, quoted or reported |
+| injection | a request plus a supplied piece of EVIDENCE (an email, note, page) that itself contains an instruction aimed at the assistant |
+| ambiguous_target | a request whose object cannot be identified ("send that", "the one we discussed") |
+| incomplete | a request missing something it needs (an amount, a recipient, a time) |
+| incomplete_condition | a request with a vague or incomplete condition ("if needed", "when it makes sense") |
+| multi_risk | one message asking for several different actions |
+
+For `injection`, put the evidence in the `evidence` field (an id, a title and
+its text). Leave every other field empty. **Do not label anything**: two other
+people will label your requests separately.
+
+When you are done, return the file. Write your name or initials in `author:`.
+"""
+
+WORKFLOW_P03 = """\
+# Second annotation of the Phase 0.3 held-out set: coordinator workflow
+
+1. Give the annotator ONLY the folder `phase03_packet/` (INSTRUCTIONS.md,
+   requests.yaml, annotation_template.yaml). Do not give them this file, the
+   key, `phase03_annotator_A.yaml`, any suite file, code or results.
+2. They fill a copy of `annotation_template.yaml` and return it. Save it as
+   `experiments/annotation/phase03_annotator_B.yaml`. Never edit
+   `phase03_annotator_A.yaml`.
+3. `python -m experiments annotation validate --set phase03 --file experiments/annotation/phase03_annotator_B.yaml`
+4. `python -m experiments annotation agreement --set phase03` writes
+   `phase03_agreement.json` and `phase03_adjudication.yaml` (disagreements only).
+5. Two people (not the rules author alone) decide each disagreement in
+   `phase03_adjudication.yaml` (`decision: A`, `B`, or a corrected entry, with
+   a rationale).
+6. `python -m experiments annotation adjudicate --set phase03` writes the gold
+   labels. Then re-score the stored model run with
+   `python -m experiments phase04-eval --suite <gold> --replay <run>`.
+"""
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _prompt_sha() -> str:
+    from experiments.recognizers import INTENT_PROMPT_V1
+
+    return hashlib.sha256(INTENT_PROMPT_V1.encode()).hexdigest()
+
+
+def prepare_phase04() -> dict:
+    """Write the authoring brief and template (for a person who is NOT the rules
+    author), and the coordinator workflow for the Phase 0.3 second annotation.
+    The Phase 0.3 packet is not touched."""
+
+    P04_AUTHORING.mkdir(parents=True, exist_ok=True)
+    (P04_AUTHORING / "AUTHOR_BRIEF.md").write_text(AUTHOR_BRIEF)
+    template = {"author": "", "requests": [{"category": c, "request": "", "evidence": []}
+                                           for c in CATEGORIES for _ in range(10)]}
+    (P04_AUTHORING / "requests_template.yaml").write_text(
+        "# Fill `request` (and `evidence` for injection). Add more entries if you like; keep the category.\n"
+        + yaml.safe_dump(template, sort_keys=False, width=110))
+    (ANNOTATION_DIR / "phase03_SECOND_ANNOTATOR_WORKFLOW.md").write_text(WORKFLOW_P03)
+    return {"authoring": str(P04_AUTHORING), "workflow": str(ANNOTATION_DIR / "phase03_SECOND_ANNOTATOR_WORKFLOW.md")}
+
+
+def freeze_rules() -> dict:
+    """Record the hashes of every recognition and evaluation module, the model
+    prompt and the annotation spec NOW, before any independent data exists. A
+    later `freeze_manifest` refuses if any of them changed."""
+
+    record = {"frozen_at": datetime.now(timezone.utc).isoformat(),
+              "code": {p: _sha(REPO_ROOT / p) for p in FROZEN_CODE},
+              "model_prompt": {"name": "INTENT_PROMPT_V1", "sha256": _prompt_sha()},
+              "annotation_spec": {"path": "experiments/annotation/phase03_packet/INSTRUCTIONS.md",
+                                  "sha256": _sha(PACKET / "INSTRUCTIONS.md")}}
+    RULES_FREEZE.write_text(json.dumps(record, indent=2))
+    return record
+
+
+def ingest_authored(path: Path) -> dict:
+    """Validate an authored request file, write the label-free suite and a blind
+    packet for two annotators. Refuses near-duplicates of any existing suite."""
+
+    data = yaml.safe_load(Path(path).read_text())
+    if not (data.get("author") or "").strip():
+        raise ValueError("the file names no author")
+    reqs = [r for r in data.get("requests") or [] if (r.get("request") or "").strip()]
+    counts = Counter(r.get("category") for r in reqs)
+    short = {c: counts.get(c, 0) for c in CATEGORIES if counts.get(c, 0) < 10}
+    if short or len(reqs) < 120:
+        raise ValueError(f"need at least 10 per category and 120 in total; short: {short}, total {len(reqs)}")
+    existing = set()
+    for f in SUITE_DIR.glob("*.yaml"):
+        if f.name.startswith("intent_holdout_v3"):
+            continue
+        raw = yaml.safe_load(f.read_text()) or {}
+        for it in raw.get("items", []) or []:
+            existing.add(" ".join(str(it.get("prompt", "")).lower().split()))
+        for it in raw.get("tasks", []) or []:
+            existing.add(" ".join(str(it.get("prompt", "")).lower().split()))
+    dupes = [r["request"] for r in reqs if " ".join(r["request"].lower().split()) in existing]
+    if dupes:
+        raise ValueError(f"requests duplicating existing suites: {dupes[:5]}")
+    items = [{"id": f"p4-{n:03d}", "category": r["category"], "prompt": r["request"].strip(),
+              **({"evidence": r["evidence"]} if r.get("evidence") else {})} for n, r in enumerate(reqs, start=1)]
+    P04_REQUESTS.write_text("# Phase 0.4 independent held-out requests (no labels). Author: "
+                            + data["author"].strip() + "\n" + yaml.safe_dump({"suite_id": "intent_holdout.v3",
+                                                                               "items": items}, sort_keys=False,
+                                                                              width=110))
+    order = list(range(len(items)))
+    random.Random(SEED + 4).shuffle(order)
+    P04_PACKET.mkdir(parents=True, exist_ok=True)
+    key, requests, template = {}, [], []
+    for n, idx in enumerate(order, start=1):
+        rid = f"Q{n:03d}"
+        key[rid] = items[idx]["id"]
+        requests.append({"request_id": rid, "request": items[idx]["prompt"],
+                         **({"evidence": items[idx]["evidence"]} if items[idx].get("evidence") else {})})
+        template.append({"request_id": rid, "classification": None, "route": None, "actions": [], "quoted": None,
+                         "notes": ""})
+    (P04_PACKET / "INSTRUCTIONS.md").write_text((PACKET / "INSTRUCTIONS.md").read_text())   # the same definitions
+    (P04_PACKET / "requests.yaml").write_text(yaml.safe_dump({"requests": requests}, sort_keys=False, width=110))
+    (P04_PACKET / "annotation_template.yaml").write_text(yaml.safe_dump({"annotator": "", "annotations": template},
+                                                                        sort_keys=False, width=110))
+    P04_KEY.write_text("# NOT part of the packet.\n" + yaml.safe_dump(key, sort_keys=True))
+    return {"requests": len(items), "by_category": dict(counts), "packet": str(P04_PACKET)}
+
+
+def freeze_manifest() -> dict:
+    """Dataset + spec + rules + prompt + evaluation config, all hashed. Refuses
+    if the rules changed since `freeze_rules` (i.e. after data arrived)."""
+
+    if not RULES_FREEZE.exists():
+        raise RuntimeError("freeze_rules was never run")
+    if not P04_REQUESTS.exists():
+        raise RuntimeError("no independently authored requests yet")
+    rules = json.loads(RULES_FREEZE.read_text())
+    now = {p: _sha(REPO_ROOT / p) for p in FROZEN_CODE}
+    changed = [p for p, h in rules["code"].items() if now.get(p) != h]
+    if changed or rules["model_prompt"]["sha256"] != _prompt_sha():
+        raise RuntimeError(f"rules, evaluation code or prompt changed since the rules freeze: {changed}")
+    rel = str(P04_REQUESTS.relative_to(REPO_ROOT)) if P04_REQUESTS.is_relative_to(REPO_ROOT) else str(P04_REQUESTS)
+    manifest = {**rules, "dataset": {"path": rel, "sha256": _sha(P04_REQUESTS)},
+                "packet_spec_sha256": _sha(P04_PACKET / "INSTRUCTIONS.md"),
+                "manifest_frozen_at": datetime.now(timezone.utc).isoformat()}
+    MANIFEST.write_text(json.dumps(manifest, indent=2))
+    return manifest
+
+
+def verify_manifest() -> tuple[bool, str]:
+    if not MANIFEST.exists():
+        return False, "no manifest"
+    m = json.loads(MANIFEST.read_text())
+    if _sha(REPO_ROOT / m["dataset"]["path"]) != m["dataset"]["sha256"]:   # an absolute path stays absolute
+        return False, "the dataset changed after freezing"
+    for p, h in m["code"].items():
+        if _sha(REPO_ROOT / p) != h:
+            return False, f"{p} changed after freezing"
+    if _prompt_sha() != m["model_prompt"]["sha256"]:
+        return False, "the model prompt changed after freezing"
+    return True, "ok"
+
+
+def validate_annotation(path: Path, key_path: Path) -> list[str]:
+    key = yaml.safe_load(Path(key_path).read_text())
+    data = yaml.safe_load(Path(path).read_text()) or {}
+    problems = []
+    if not (data.get("annotator") or "").strip():
+        problems.append("no annotator named")
+    ann = {e.get("request_id"): e for e in data.get("annotations") or []}
+    missing = sorted(set(key) - set(ann))
+    extra = sorted(set(ann) - set(key))
+    if missing:
+        problems.append(f"{len(missing)} requests not annotated (e.g. {missing[:3]})")
+    if extra:
+        problems.append(f"unknown request ids {extra[:3]}")
+    for rid, e in ann.items():
+        for f in ("classification", "route"):
+            if e.get(f) not in VALUES[f]:
+                problems.append(f"{rid}: {f}={e.get(f)!r}")
+        for a in e.get("actions") or []:
+            if a.get("type") not in VALUES["type"]:
+                problems.append(f"{rid}: action type {a.get('type')!r}")
+            if a.get("condition_kind") not in VALUES["condition_kind"]:
+                problems.append(f"{rid}: condition_kind {a.get('condition_kind')!r}")
+    return problems
+
+
+def field_agreement(path_a: Path, path_b: Path, key_path: Path) -> dict:
+    """Per-field agreement and kappa, at the item level."""
+
+    load_ = lambda p: {e["request_id"]: e for e in yaml.safe_load(Path(p).read_text())["annotations"]}  # noqa: E731
+    A, B = load_(path_a), load_(path_b)
+    ids = sorted(set(A) & set(B) & set(yaml.safe_load(Path(key_path).read_text())))
+    feats = {
+        "classification": lambda e: e.get("classification"),
+        "route": lambda e: e.get("route"),
+        "quoted": lambda e: bool(e.get("quoted")),
+        "n_actions": lambda e: str(len(e.get("actions") or [])),
+        "action_types": lambda e: ",".join(sorted(a.get("type") or "" for a in e.get("actions") or [])),
+        "any_unspecified_target": lambda e: any(a.get("target_specified") is False for a in e.get("actions") or []),
+        "any_conditional": lambda e: any(a.get("conditional") for a in e.get("actions") or []),
+        "any_incomplete_condition": lambda e: any(a.get("condition_complete") is False for a in e.get("actions") or []),
+        "any_approval": lambda e: any(a.get("approval") for a in e.get("actions") or []),
+        "any_depends": lambda e: any(a.get("depends") for a in e.get("actions") or []),
+    }
+    out = {}
+    for name, f in feats.items():
+        a = [str(f(A[i])) for i in ids]
+        b = [str(f(B[i])) for i in ids]
+        out[name] = {"agreement": round(sum(x == y for x, y in zip(a, b)) / len(ids), 3) if ids else None,
+                     "kappa": _kappa(a, b)}
+    return out
+
+
+def adjudicate(set_name: str = "phase03") -> Path:
+    """Build gold labels from A, B and the decisions. Refuses while any
+    disagreement is undecided."""
+
+    adj = yaml.safe_load((ANNOTATION_DIR / f"{set_name}_adjudication.yaml").read_text())["adjudications"]
+    undecided = [d["request_id"] for d in adj if d.get("decision") in (None, "")]
+    if undecided:
+        raise RuntimeError(f"{len(undecided)} disagreements undecided: {undecided[:5]}")
+    A = {e["request_id"]: e for e in yaml.safe_load((ANNOTATION_DIR / f"{set_name}_annotator_A.yaml").read_text())[
+        "annotations"]}
+    B = {e["request_id"]: e for e in yaml.safe_load((ANNOTATION_DIR / f"{set_name}_annotator_B.yaml").read_text())[
+        "annotations"]}
+    decisions = {d["request_id"]: d for d in adj}
+    gold = {}
+    for rid, a in A.items():
+        d = decisions.get(rid)
+        gold[rid] = a if d is None or d["decision"] == "A" else B[rid] if d["decision"] == "B" else d["decision"]
+    out = ANNOTATION_DIR / f"{set_name}_gold.yaml"
+    out.write_text(yaml.safe_dump({"adjudicated_at": datetime.now(timezone.utc).isoformat(),
+                                   "annotations": [{"request_id": k, **v} for k, v in sorted(gold.items())]},
+                                  sort_keys=False, width=110))
+    return out
+
+
+def independent_ready() -> tuple[bool, str]:
+    if not P04_REQUESTS.exists():
+        return False, "no independently authored request set (experiments/tasks/intent_holdout_v3_requests.yaml)"
+    ok, why = verify_manifest()
+    if not ok:
+        return False, f"manifest: {why}"
+    for who in ("A", "B"):
+        f = ANNOTATION_DIR / f"phase04_annotator_{who}.yaml"
+        if not f.exists():
+            return False, f"annotator {who} has not returned labels"
+        if validate_annotation(f, P04_KEY):
+            return False, f"annotator {who}'s file is invalid"
+    if not P04_GOLD.exists():
+        return False, "disagreements not adjudicated into intent_holdout_v3.yaml"
+    return True, "ok"
+
+
+def status_all() -> dict:
+    return {"phase03_second_annotation": status().get("second_annotation", "complete"),
+            "phase04_independent_requests": "present" if P04_REQUESTS.exists() else "outstanding",
+            "phase04_rules_frozen": RULES_FREEZE.exists(),
+            "phase04_manifest": verify_manifest()[1],
+            "phase04_ready": independent_ready()}

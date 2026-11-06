@@ -73,7 +73,72 @@ def main(argv: list[str] | None = None) -> int:
     p3.add_argument("--providers", type=Path)
     p3.add_argument("--replay", type=Path, help="a stored live run directory (model_raw.json)")
     p3.add_argument("--out", type=Path, required=True)
+    p4 = sub.add_parser("phase04-eval", help="Phase 0.4: score rules v1/v2/v3 (+ model and hybrids with --replay); "
+                                            "--independent scores the independently authored suite, only when ready")
+    p4.add_argument("--suite", default="intent_dev_p04")
+    p4.add_argument("--replay", type=Path)
+    p4.add_argument("--independent", action="store_true")
+    p4.add_argument("--note", default="")
+    p4.add_argument("--out", type=Path, required=True)
+    an = sub.add_parser("annotation", help="independent annotation workflow (Phase 0.3 second annotation; Phase 0.4 "
+                                           "independent set)")
+    an.add_argument("action", choices=["status", "prepare", "validate", "agreement", "adjudicate", "ingest",
+                                       "freeze-rules", "freeze", "verify"])
+    an.add_argument("--set", default="phase03", choices=["phase03", "phase04"])
+    an.add_argument("--file", type=Path)
     args = parser.parse_args(argv)
+
+    if args.command == "annotation":
+        from experiments import annotation_tools as at
+
+        key = at.ANNOTATION_DIR / f"{args.set}_key.yaml"
+        if args.action == "status":
+            print(json.dumps(at.status_all(), indent=2, default=str))
+        elif args.action == "prepare":
+            print(json.dumps(at.prepare_phase04(), indent=2))
+        elif args.action == "validate":
+            problems = at.validate_annotation(args.file, key)
+            print("valid" if not problems else "\n".join(problems))
+            return 0 if not problems else 1
+        elif args.action == "agreement":
+            a_, b_ = at.ANNOTATION_DIR / f"{args.set}_annotator_A.yaml", at.ANNOTATION_DIR / f"{args.set}_annotator_B.yaml"
+            if not b_.exists():
+                print(f"outstanding: no second annotation at {b_}", file=sys.stderr)
+                return 1
+            result = at.agreement(a_, b_, key, adjudication_out=at.ANNOTATION_DIR / f"{args.set}_adjudication.yaml")
+            result["fields"] = at.field_agreement(a_, b_, key)
+            (at.ANNOTATION_DIR / f"{args.set}_agreement.json").write_text(json.dumps(result, indent=2))
+            print(json.dumps({k: v for k, v in result.items() if k != "disagreements"}, indent=2))
+        elif args.action == "adjudicate":
+            print(at.adjudicate(args.set))
+        elif args.action == "ingest":
+            print(json.dumps(at.ingest_authored(args.file), indent=2))
+        elif args.action == "freeze-rules":
+            print(json.dumps(at.freeze_rules(), indent=2))
+        elif args.action == "freeze":
+            print(json.dumps(at.freeze_manifest(), indent=2))
+        else:
+            print(at.verify_manifest())
+        return 0
+
+    if args.command == "phase04-eval":
+        from experiments import intent_eval_v4 as v4
+
+        raw = json.loads((args.replay / "model_raw.json").read_text()) if args.replay else None
+        if args.out.exists():
+            print(f"refusing to overwrite {args.out}", file=sys.stderr)
+            return 2
+        if args.independent:
+            try:
+                report = v4.evaluate_independent(raw)
+            except RuntimeError as exc:
+                print(str(exc), file=sys.stderr)
+                return 3
+            v4.write(report, args.out, "intent_holdout_v3", note=args.note)
+        else:
+            v4.write(v4.evaluate(args.suite, raw), args.out, args.suite, note=args.note)
+        print(f"wrote {args.out}")
+        return 0
 
     if args.command == "phase03-eval":
         from experiments import intent_eval_v3 as v3

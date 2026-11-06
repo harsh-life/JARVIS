@@ -80,6 +80,39 @@ class Subtask(_M):
     text: str
 
 
+class TargetKind(str, Enum):
+    """Phase 0.4: how a target was established (docs/31 §12.4)."""
+
+    EXACT = "exact"                      # supplied by the user, and identifiable
+    CONTEXT_UNIQUE = "context_unique"    # the unique referent in the supplied context (evidence, a condition's subject)
+    PREVIOUS_CLAUSE = "previous_clause"  # an antecedent from an earlier step of the request
+    MULTIPLE = "multiple"                # several possible referents: must ask
+    GENERIC = "generic"                  # a noun, but not an identified thing ("the report")
+    NONE = "none"                        # no target available (an unresolved pronoun, an unseen conversation)
+
+
+RESOLVED_KINDS = frozenset({TargetKind.EXACT, TargetKind.CONTEXT_UNIQUE, TargetKind.PREVIOUS_CLAUSE})
+
+
+class TargetResolution(_M):
+    original: str | None                 # the user's wording, verbatim
+    resolved: str | None                 # what it was resolved to, verbatim from the supplied context
+    kind: TargetKind
+    source: str = "request"              # request | step:<id> | evidence:<id> | condition
+    method: str = "explicit"             # explicit | unique_antecedent | chain | condition_subject | possessive | …
+    alternatives: tuple[str, ...] = ()
+    disambiguation_needed: bool = False
+    checks: tuple[str, ...] = ()         # semantic and relational checks, "name:pass|fail:detail"
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "TargetResolution":
+        if (self.resolved is not None) != (self.kind in RESOLVED_KINDS):
+            raise ValueError("a target is resolved exactly when its kind is exact, context_unique or previous_clause")
+        if self.kind is TargetKind.MULTIPLE and not (self.disambiguation_needed and len(self.alternatives) >= 2):
+            raise ValueError("multiple referents need the alternatives and a disambiguation")
+        return self
+
+
 class ActionCandidate(_M):
     """One side effect the request may be asking for, as interpreted."""
 
@@ -105,6 +138,10 @@ class ActionCandidate(_M):
     pronoun_target: bool = False
     condition_kinds: tuple[str, ...] = ()
     conditions_complete: bool = True
+    # Phase 0.4 (rules v3): the full target resolution, and the slots the
+    # type-specific completeness check found missing.
+    target_resolution: TargetResolution | None = None
+    missing_slots: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _consistent(self) -> "ActionCandidate":
@@ -114,6 +151,9 @@ class ActionCandidate(_M):
             raise ValueError("one kind per condition")
         if self.mode is RequestMode.EXECUTE and not self.conditions_complete and not self.needs_clarification:
             raise ValueError("an incomplete condition needs clarification, not a guess")
+        if self.target_resolution is not None and self.target_specified and \
+                self.target_resolution.kind not in RESOLVED_KINDS:
+            raise ValueError("a target cannot be specified while its resolution is unresolved")
         if self.target_specified and not self.target:
             raise ValueError("a specified target needs the target text")
         if self.mode is RequestMode.EXECUTE and not self.target_specified and not self.needs_clarification:
@@ -198,5 +238,5 @@ def grounded_span(candidate: str | None, request: str) -> str | None:
     return flat[idx: idx + len(needle)] if idx >= 0 else needle
 
 
-__all__ = ["ActionCandidate", "IntentClass", "IntentResult", "Missing", "MissingSlot", "QuotedInstruction",
+__all__ = ["RESOLVED_KINDS", "TargetKind", "TargetResolution", "ActionCandidate", "IntentClass", "IntentResult", "Missing", "MissingSlot", "QuotedInstruction",
            "RequestMode", "Route", "Subtask", "grounded_span"]
