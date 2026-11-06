@@ -7,7 +7,10 @@ for the future configuration website.
 
 The character is an expressive interface. Its expression is a UI choice, not
 evidence that JARVIS has feelings, and a score is an estimate that a state is
-an appropriate *presentation* — not a measurement of anyone's emotions.
+an appropriate *presentation* — not a measurement of anyone's emotions. The
+same holds for the **intensity** at which the chosen expression is presented
+(§3a): it is derived from that score by a fixed rule, not judged by a model,
+and it says how strongly to animate, nothing about the user.
 
 ## 1. Six separate parts
 
@@ -25,8 +28,8 @@ an appropriate *presentation* — not a measurement of anyone's emotions.
 | Asset profile | which image shows each state | `CharacterProfile`, `CharacterAssets` | `CharacterProfile`, `assets/character/<id>/profile.json` |
 | Inference provider | scores the 7 states for the current interaction | `PresentationInferenceProvider`; pilot: `LocalCueScorer` | `PresentationInference` |
 | Selector | validates a result and picks a state, deterministically | `StateSelector` | `select_expression` + `shared/android/presentation_selection_vectors.json` |
-| Controller | when to show, hold, return to baseline, sleep and wake | `CharacterController`, run by `CharacterPresentation` | `PresentationTiming` |
-| Renderer | draws the chosen state: the animated rig (`docs/CHARACTER_RIG.md`), or the image with a cross-fade or instant swap when the rig is unavailable | `presentation/ui/Character.kt`, `presentation/character/rig/` | `transition`, `transition_ms`, `reduced_motion` |
+| Controller | when to show, hold, return to baseline, sleep and wake; commits the expression with its intensity | `CharacterController` (+ `IntensityPolicy`), run by `CharacterPresentation` | `PresentationTiming`, `IntensitySettings` + `shared/android/presentation_intensity_vectors.json` |
+| Renderer | draws the chosen state at its intensity: the animated rig (`docs/CHARACTER_RIG.md`), or the image with a cross-fade or instant swap when the rig is unavailable (images ignore intensity) | `presentation/ui/Character.kt`, `presentation/character/rig/` | `transition`, `transition_ms`, `reduced_motion`; the rig's intensity profile |
 | Operational status | what JARVIS is actually doing | `Presenter` → `StatusIndicator` (untouched) | — |
 
 None of these is an authority. No server authority package imports the
@@ -70,6 +73,51 @@ baseline returns by itself when the shown state's hold ends.
 - **Reduced motion:** with `reduced_motion: always`, or `system` while the
   device has animations off, images swap without a fade.
 
+## 3a. Presentation intensity
+
+Two different numbers, kept apart on purpose:
+
+- **Suitability** — the provider's 1–10 score for each state: how appropriate
+  that expression is for the current interaction. The selector uses it, with
+  the thresholds and the confidence floor, to choose.
+- **Intensity** — 1–10, how strongly the *chosen* expression is presented.
+  The controller derives it and commits it together with the expression, as a
+  `PresentedCharacter(expression, intensity)`.
+
+Confidence is neither: it only gates selection (§2). No model judges
+intensity, and nothing that authenticates, authorizes, confirms, budgets or
+executes reads it — the same boundary as the expression.
+
+**Mapping** (`IntensityPolicy`; `presentation_intensity` in
+`shared/schemas/presentation.py`), one rule for every state, using that
+state's own threshold:
+
+    intensity = floor + round_half_up((score − threshold) × (10 − floor) / (10 − threshold))
+
+integers only, `floor` 4; a threshold of 10 admits only a 10, which presents
+at 10. A score below its threshold, or any value out of range, is rejected.
+
+| Score | Threshold 7 (happy, satisfied, surprised) | Threshold 8 (sleepy, angry, sad) |
+|---:|---:|---:|
+| 7 | 4 | not eligible |
+| 8 | 6 | 4 |
+| 9 | 8 | 7 |
+| 10 | 10 | 10 |
+
+The pilot scorer's usual 7 or 8 therefore presents at 4–6, around the
+canonical animation.
+
+- **Baselines have no score**, so they take fixed intensities: `default` 5,
+  `sleepy` (from inactivity) 2. A `sleepy` selected by score takes its mapped
+  intensity instead. No score is made up for a baseline.
+- **The shown state selected again** keeps its intensity unless the new one
+  differs by at least `dead_band` (2); either way nothing restarts.
+- **A waiting candidate** (minimum display, §3) carries its own intensity.
+- **The debug preview** pins at 5 unless another intensity is chosen.
+
+The rig turns an intensity into posture emphasis and idle-motion gains
+(`docs/CHARACTER_RIG.md` §5); 5 and 6 are the canonical animation exactly.
+
 ## 4. What the configuration website will configure
 
 Two independent documents, both validated by `shared/schemas/presentation.py`
@@ -93,6 +141,12 @@ rejected whole and the client keeps its built-in defaults):
 | `timing.idle_timeout_ms` | 300000 | 10000–86400000 |
 | `timing.interrupt_score` | 9 | 1–10 |
 | `timing.max_result_age_ms` | 5000 | 100–60000 |
+| `intensity.floor` | 4 | 1–10 |
+| `intensity.dead_band` | 2 | 0–9 |
+| `intensity.baseline.default`, `.sleepy` | 5, 2 | 1–10 |
+
+`intensity` is optional (schema version 1): a document without it takes these
+defaults, so every stored document stays valid.
 
 **Asset profile** (`CharacterProfile`): `profile_id`, `fallback`, and a
 `states` map from state to a bare `.png`/`.webp` file name in that profile's
