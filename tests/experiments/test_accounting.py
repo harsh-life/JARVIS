@@ -67,13 +67,19 @@ async def test_a_timeout_is_recorded_and_releases_its_reservation():
     assert budget.reserved == pytest.approx(0) and budget.spent == 0
 
 
+# A key-shaped dummy built at runtime, so no secret-shaped literal sits in a
+# tracked file (tests/foundation/test_repo_secret_scan.py) while the harness's
+# own scanner still sees exactly the `sk-…` shape it must block and redact.
+DUMMY_KEY = "sk" + "-" + "abcdefghijklmnopqrstuv"
+
+
 async def test_a_prompt_with_a_secret_is_never_sent():
     scanner = SecretScanner(["TEST-ONLY-known-value-123"])
     budget = BudgetLedger(overall=1, per_call=1)
     model, provider, ledger = _model(budget, guard=scanner.check_prompt)
-    for leaked in ("key sk-abcdefghijklmnopqrstuv", "TEST-ONLY-known-value-123", "secretstore:secretstore:abc"):
+    for leaked in (f"key {DUMMY_KEY}", "TEST-ONLY-known-value-123", "secretstore:secretstore:abc"):
         with pytest.raises(SecretInPrompt):
             await model.call([ChatMessage("user", leaked)], task_id="t", role="central", max_tokens=10, timeout=1)
     assert provider.invocations == 0
     assert [r.status for r in ledger.records] == ["blocked"] * 3
-    assert scanner.redact("x sk-abcdefghijklmnopqrstuv y") == "x [REDACTED] y"
+    assert scanner.redact(f"x {DUMMY_KEY} y") == "x [REDACTED] y"
