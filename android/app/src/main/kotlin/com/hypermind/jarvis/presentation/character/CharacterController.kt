@@ -18,6 +18,13 @@ package com.hypermind.jarvis.presentation.character
  * - **Urgent:** a selection scoring at least `interruptScore` replaces the
  *   shown state at once, even mid-transition.
  * - **Wake:** activity while idle-sleepy returns to DEFAULT at once.
+ * - **Intensity:** what it commits is a [PresentedCharacter], the expression *and* how strongly to
+ *   present it, decided together. A selected state's intensity comes from its suitability score
+ *   through [IntensityPolicy] (threshold-relative); a waiting candidate carries its own. A
+ *   baseline state has no score, so it takes its fixed intensity from the settings (DEFAULT 5,
+ *   SLEEPY 2) — no score is made up for it. The shown state selected again keeps its intensity
+ *   unless the new one differs by at least the dead band. A selection whose score does not meet
+ *   its own threshold (the selector never makes one) changes nothing.
  *
  * It holds no task, connection or error state and decides nothing else.
  */
@@ -25,12 +32,18 @@ class CharacterController(
     private val settings: CharacterSettings,
     now: Long,
 ) {
-    var shown: Expression = Expression.DEFAULT
+    /** The committed expression and its intensity. */
+    var presented: PresentedCharacter =
+        PresentedCharacter(Expression.DEFAULT, settings.baselineIntensity(Expression.DEFAULT))
         private set
+
+    /** The committed expression ([presented]'s). */
+    val shown: Expression get() = presented.expression
+
     private var shownSince = now
     private var selected = false
     private var lastActivity = now
-    private var pending: Selection? = null
+    private var pending: PresentedCharacter? = null
     private var pinned = false
 
     /** DEFAULT, or SLEEPY after the idle timeout. */
@@ -40,7 +53,7 @@ class CharacterController(
     /** The user did something meaningful (a request, voice, opening the app). */
     fun onActivity(now: Long) {
         lastActivity = now
-        if (!pinned && !selected && shown == Expression.SLEEPY) show(Expression.DEFAULT, now, selected = false)
+        if (!pinned && !selected && shown == Expression.SLEEPY) showBaseline(Expression.DEFAULT, now)
     }
 
     fun onSelection(
@@ -48,13 +61,23 @@ class CharacterController(
         now: Long,
     ) {
         if (pinned || selection.expression == Expression.DEFAULT) return
+        val intensity =
+            IntensityPolicy.forSelectionOrNull(
+                selection.score,
+                settings.threshold(selection.expression),
+                settings.intensityFloor,
+            ) ?: return
         val urgent = selection.score >= settings.interruptScore
         val settled = !selected || now - shownSince >= settings.minDisplayMillis
-        if (urgent || settled || selection.expression == shown) {
+        if (selection.expression == shown) {
             pending = null
-            show(selection.expression, now, selected = true)
+            val kept = IntensityPolicy.retained(presented.intensity, intensity, settings.intensityDeadBand)
+            show(PresentedCharacter(shown, kept), now, selected = true)
+        } else if (urgent || settled) {
+            pending = null
+            show(PresentedCharacter(selection.expression, intensity), now, selected = true)
         } else {
-            pending = selection
+            pending = PresentedCharacter(selection.expression, intensity)
         }
     }
 
@@ -68,13 +91,13 @@ class CharacterController(
         // behind the baseline).
         if (waiting != null && (held >= settings.minDisplayMillis || held >= settings.hold(shown))) {
             pending = null
-            show(waiting.expression, now, selected = true)
+            show(waiting, now, selected = true)
             return
         }
         if (selected && held >= settings.hold(shown)) {
-            show(baseline(now), now, selected = false)
+            showBaseline(baseline(now), now)
         } else if (!selected && shown != baseline(now)) {
-            show(baseline(now), now, selected = false)
+            showBaseline(baseline(now), now)
         }
     }
 
@@ -88,27 +111,36 @@ class CharacterController(
         ).minOrNull()
     }
 
-    /** Development preview: show [expression] until [unpin]; nothing else changes it meanwhile. */
+    /**
+     * Development preview: show [expression] at [intensity] (neutral unless chosen) until [unpin];
+     * nothing else changes it meanwhile.
+     */
     fun pin(
         expression: Expression,
         now: Long,
+        intensity: Int = IntensityPolicy.NEUTRAL,
     ) {
         pinned = true
         pending = null
-        show(expression, now, selected = false)
+        show(PresentedCharacter(expression, intensity), now, selected = false)
     }
 
     fun unpin(now: Long) {
         pinned = false
-        show(baseline(now), now, selected = false)
+        showBaseline(baseline(now), now)
     }
 
-    private fun show(
+    private fun showBaseline(
         expression: Expression,
+        now: Long,
+    ) = show(PresentedCharacter(expression, settings.baselineIntensity(expression)), now, selected = false)
+
+    private fun show(
+        next: PresentedCharacter,
         now: Long,
         selected: Boolean,
     ) {
-        shown = expression
+        presented = next
         shownSince = now
         this.selected = selected
     }

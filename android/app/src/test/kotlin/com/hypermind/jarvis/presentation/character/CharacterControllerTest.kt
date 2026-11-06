@@ -197,4 +197,99 @@ class CharacterControllerTest {
         controller.unpin(now)
         assertEquals(Expression.SLEEPY, controller.shown)
     }
+
+    // --- intensity: committed with the expression ------------------------------------------
+
+    private fun presented(
+        expression: Expression,
+        intensity: Int,
+    ) = PresentedCharacter(expression, intensity)
+
+    @Test
+    fun `the baselines take their fixed intensities, never a score`() {
+        assertEquals(presented(Expression.DEFAULT, 5), controller.presented)
+        assertEquals(presented(Expression.SLEEPY, 2), at(60_000).presented)
+        controller.onActivity(now)
+        assertEquals("waking: default at its own intensity", presented(Expression.DEFAULT, 5), controller.presented)
+    }
+
+    @Test
+    fun `a selected state's intensity comes from its score and its threshold`() {
+        select(Expression.HAPPY, score = 8) // threshold 7
+        assertEquals(presented(Expression.HAPPY, 6), controller.presented)
+        assertEquals("then the baseline, at its fixed intensity", presented(Expression.DEFAULT, 5), at(5_000).presented)
+        select(Expression.SAD, score = 8) // threshold 8: at the floor
+        assertEquals(presented(Expression.SAD, 4), controller.presented)
+    }
+
+    @Test
+    fun `a selection below its own threshold changes nothing`() {
+        select(Expression.ANGRY, score = 7) // threshold 8: the selector would never choose it
+        assertEquals(presented(Expression.DEFAULT, 5), controller.presented)
+        select(Expression.ANGRY, score = 11)
+        assertEquals(presented(Expression.DEFAULT, 5), controller.presented)
+    }
+
+    @Test
+    fun `the same state again keeps its intensity inside the dead band and moves outside it`() {
+        select(Expression.HAPPY, score = 8) // 6
+        at(500)
+        select(Expression.HAPPY, score = 7) // 4: two away, replaces
+        assertEquals(presented(Expression.HAPPY, 4), controller.presented)
+        at(900)
+        select(Expression.HAPPY, score = 8) // 6: two away, replaces
+        assertEquals(presented(Expression.HAPPY, 6), controller.presented)
+        val narrow = CharacterController(settings.copy(intensityDeadBand = 3), 0)
+        narrow.onSelection(Selection(Expression.HAPPY, 8), 0) // 6
+        narrow.onSelection(Selection(Expression.HAPPY, 9), 100) // 8: inside a band of 3
+        assertEquals(presented(Expression.HAPPY, 6), narrow.presented)
+        narrow.onSelection(Selection(Expression.HAPPY, 10), 200) // 10: outside
+        assertEquals(presented(Expression.HAPPY, 10), narrow.presented)
+    }
+
+    @Test
+    fun `a waiting candidate carries its own intensity and goes up with it`() {
+        select(Expression.HAPPY, score = 10)
+        at(200)
+        select(Expression.SAD, score = 8)
+        at(400)
+        select(Expression.SURPRISED, score = 8) // the latest wins, at its own intensity
+        assertEquals(presented(Expression.HAPPY, 10), controller.presented)
+        assertEquals(presented(Expression.SURPRISED, 6), at(1_000).presented)
+    }
+
+    @Test
+    fun `an urgent interruption commits the new state with its own intensity`() {
+        select(Expression.HAPPY, score = 7)
+        at(100)
+        select(Expression.SURPRISED, score = 9)
+        assertEquals(presented(Expression.SURPRISED, 8), controller.presented)
+    }
+
+    @Test
+    fun `a selected sleepy differs from the idle sleepy`() {
+        select(Expression.SLEEPY, score = 9) // threshold 8
+        assertEquals(presented(Expression.SLEEPY, 7), controller.presented)
+        assertEquals(presented(Expression.DEFAULT, 5), at(5_000).presented)
+        assertEquals(presented(Expression.SLEEPY, 2), at(65_000).presented)
+    }
+
+    @Test
+    fun `a preview pins at intensity 5 unless another is chosen`() {
+        controller.pin(Expression.SAD, now)
+        assertEquals(presented(Expression.SAD, 5), controller.presented)
+        controller.pin(Expression.SAD, now, intensity = 10)
+        assertEquals(presented(Expression.SAD, 10), controller.presented)
+        controller.unpin(now)
+        assertEquals(presented(Expression.DEFAULT, 5), controller.presented)
+    }
+
+    @Test
+    fun `baseline intensities follow the settings`() {
+        val baselines = mapOf(Expression.DEFAULT to 6, Expression.SLEEPY to 3)
+        val tuned = CharacterController(settings.copy(baselineIntensities = baselines), 0)
+        assertEquals(presented(Expression.DEFAULT, 6), tuned.presented)
+        tuned.tick(60_000)
+        assertEquals(presented(Expression.SLEEPY, 3), tuned.presented)
+    }
 }

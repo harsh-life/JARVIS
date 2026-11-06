@@ -17,7 +17,9 @@ import kotlin.coroutines.CoroutineContext
 /**
  * The character's runtime (OD-CHAR-1/2): the current interaction and verified
  * events go to the [provider], its result through [StateSelector], and the
- * selection into the [CharacterController], whose decision is [expression].
+ * selection into the [CharacterController], whose decision is [presented]: the expression and
+ * how strongly to present it ([IntensityPolicy]). [expression] is the same decision without the
+ * intensity, for screens that only need the state.
  *
  * - Everything is in memory only: no utterance, score or expression is
  *   persisted, logged or sent anywhere, and nothing here builds a profile of
@@ -42,13 +44,18 @@ class CharacterPresentation(
     private val inferenceContext: CoroutineContext = Dispatchers.Default,
 ) {
     private val controller = CharacterController(settings, clock())
-    private val current = MutableStateFlow(controller.shown)
+    private val current = MutableStateFlow(controller.presented)
+    private val currentExpression = MutableStateFlow(controller.shown)
     private val wake = Channel<Unit>(Channel.CONFLATED)
     private val recent = ArrayDeque<String>()
     private var generation = 0L
     private var inference: Job? = null
 
-    val expression: StateFlow<Expression> = current.asStateFlow()
+    /** The committed expression and intensity. Equal values are not re-emitted. */
+    val presented: StateFlow<PresentedCharacter> = current.asStateFlow()
+
+    /** [presented]'s expression alone. */
+    val expression: StateFlow<Expression> = currentExpression.asStateFlow()
 
     init {
         scope.launch { drive() }
@@ -75,9 +82,12 @@ class CharacterPresentation(
     /** A verified application event. */
     fun onEvent(event: PresentationEvent) = infer(InferenceInput(context = recent.toList(), events = listOf(event)))
 
-    /** Development preview: show [expression] until [reset]. */
-    fun preview(expression: Expression) {
-        controller.pin(expression, clock())
+    /** Development preview: show [expression] at [intensity] (neutral unless chosen) until [reset]. */
+    fun preview(
+        expression: Expression,
+        intensity: Int = IntensityPolicy.NEUTRAL,
+    ) {
+        controller.pin(expression, clock(), intensity)
         changed()
     }
 
@@ -107,8 +117,13 @@ class CharacterPresentation(
     }
 
     private fun changed() {
-        current.value = controller.shown
+        publish()
         wake.trySend(Unit)
+    }
+
+    private fun publish() {
+        current.value = controller.presented
+        currentExpression.value = controller.shown
     }
 
     private suspend fun drive() {
@@ -121,7 +136,7 @@ class CharacterPresentation(
                 if (wait > 0) withTimeoutOrNull(wait) { wake.receive() }
             }
             controller.tick(clock())
-            current.value = controller.shown
+            publish()
         }
     }
 
