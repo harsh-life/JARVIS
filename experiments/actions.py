@@ -88,6 +88,21 @@ class ActionSpec(_M):
 
     kind: ActionKind
     description: str = Field(min_length=3, max_length=200)
+    # Phase 0.2: the user's own condition ("if the invoice is valid"), as a
+    # verbatim span of their request. A conditional action can never execute
+    # unless the harness has recorded the condition as checked and holding.
+    condition: str | None = Field(default=None, min_length=3, max_length=200)
+
+
+class ConditionRecord(_M):
+    """The harness's own check of a conditional action's condition. Only a
+    fixture writes one; a model's opinion that "the invoice is valid" is not a
+    condition record."""
+
+    condition_id: str
+    action_id: str
+    holds: bool
+    source: Literal["harness_fixture"] = "harness_fixture"
 
 
 class ConfirmationRequest(_M):
@@ -148,6 +163,8 @@ class ActionOutcome(_M):
     history: tuple[ActionStatus, ...]
     reason: str | None = None
     proposed_by_model: bool = False
+    condition: str | None = None
+    condition_check: ConditionRecord | None = None
     confirmation: ConfirmationRequest | None = None
     execution: ExecutionRecord | None = None
     verification: VerificationRecord | None = None
@@ -167,6 +184,13 @@ class ActionOutcome(_M):
         if ActionStatus.AWAITING_CONFIRMATION in self.history and (
                 self.confirmation is None or self.confirmation.action_id != self.action_id):
             raise ValueError("awaiting_confirmation needs a recorded confirmation request for this action")
+        if self.condition_check is not None and (self.condition is None
+                                                 or self.condition_check.action_id != self.action_id):
+            raise ValueError("a condition check belongs to this action's own condition")
+        if self.status in RAN and self.condition is not None and not (
+                self.condition_check is not None and self.condition_check.holds):
+            # A conditional action cannot be represented as if it were unconditional.
+            raise ValueError("a conditional action runs only after its condition was checked and held")
         if self.status in NO_EFFECT:
             if self.execution is not None or self.verification is not None:
                 raise ValueError(f"{self.status.value} cannot carry an execution or verification record")
@@ -231,6 +255,7 @@ class ActionLedger:
         self._proposed: dict[str, bool] = {}
         self._exec: dict[str, ExecutionRecord] = {}
         self._confirm: dict[str, ConfirmationRequest] = {}
+        self._condition: dict[str, ConditionRecord] = {}
         self._verify: dict[str, VerificationRecord] = {}
 
     def _id(self, kind: str) -> str:
@@ -261,6 +286,15 @@ class ActionLedger:
         self._history[action_id].append(status)
         self._reason[action_id] = reason
 
+    def record_condition(self, action_id: str, *, holds: bool) -> ConditionRecord:
+        if action_id not in self._specs or self._specs[action_id].condition is None:
+            raise LedgerError("only a conditional action has a condition to check")
+        if self._current(action_id) is not ActionStatus.PROPOSED or action_id in self._condition:
+            raise LedgerError("a condition is checked once, while the action is only proposed")
+        record = ConditionRecord(condition_id=self._id("cond"), action_id=action_id, holds=holds)
+        self._condition[action_id] = record
+        return record
+
     def record_confirmation_request(self, action_id: str) -> ConfirmationRequest:
         if self._current(action_id) is not ActionStatus.PROPOSED:
             raise LedgerError("a confirmation is requested only for a proposed action")
@@ -279,6 +313,9 @@ class ActionLedger:
             # An operation is only ever reached from a proposal that was
             # authorized (and, if required, confirmed).
             raise LedgerError(f"cannot execute an action that is {current.value}")
+        if self._specs[action_id].condition is not None and not (
+                action_id in self._condition and self._condition[action_id].holds):
+            raise LedgerError("a conditional action executes only after its condition was checked and held")
         if action_id in self._exec:
             raise LedgerError("an action executes at most once per ledger")
         if steps_completed is None:
@@ -312,7 +349,8 @@ class ActionLedger:
         return tuple(
             ActionOutcome(action_id=a, kind=spec.kind, description=spec.description,
                           status=self._history[a][-1], history=tuple(self._history[a]), reason=self._reason[a],
-                          proposed_by_model=self._proposed[a], confirmation=self._confirm.get(a),
+                          proposed_by_model=self._proposed[a], condition=spec.condition,
+                          condition_check=self._condition.get(a), confirmation=self._confirm.get(a),
                           execution=self._exec.get(a),
                           verification=self._verify.get(a))
             for a, spec in self._specs.items()
@@ -324,6 +362,7 @@ class ActionLedger:
         ids = set(self._specs)
         ids |= {r.execution_id for r in self._exec.values()}
         ids |= {r.confirmation_id for r in self._confirm.values()}
+        ids |= {r.condition_id for r in self._condition.values()}
         ids |= {r.verification_id for r in self._verify.values()}
         return frozenset(ids)
 
@@ -344,8 +383,12 @@ class ActionLedger:
 
 Scenario = Literal["no_operation", "unavailable", "proposed_unauthorized", "awaiting_confirmation", "denied",
                    "prohibited", "execution_failed", "partial", "executed_unverified", "verification_failed",
-                   "verified", "confirmation_unavailable"]
-SCENARIOS: tuple[str, ...] = Scenario.__args__  # type: ignore[attr-defined]
+                   "verified", "confirmation_unavailable", "condition_not_evaluated", "condition_not_met",
+                   "condition_met_verified"]
+# Scenarios for any action, and the ones that need a conditional action.
+CONDITIONAL_SCENARIOS: tuple[str, ...] = ("condition_not_evaluated", "condition_not_met", "condition_met_verified")
+SCENARIOS: tuple[str, ...] = tuple(s for s in Scenario.__args__  # type: ignore[attr-defined]
+                                   if s not in CONDITIONAL_SCENARIOS)
 
 
 class ExecutionFixture(_M):
@@ -370,6 +413,18 @@ def apply_fixture(ledger: ActionLedger, spec: ActionSpec, fixture: ExecutionFixt
     a = ledger.request(spec, status=ActionStatus.PROPOSED, reason="proposed")
     if s == "proposed_unauthorized":
         return a
+    if s == "condition_not_evaluated":
+        ledger.transition(a, ActionStatus.NOT_EXECUTED, reason="condition_not_evaluated")
+        return a
+    if s == "condition_not_met":
+        ledger.record_condition(a, holds=False)
+        ledger.transition(a, ActionStatus.NOT_EXECUTED, reason="condition_not_met")
+        return a
+    if spec.condition is not None:
+        # Every later state ran, so the condition was checked and held first.
+        ledger.record_condition(a, holds=True)
+    if s == "condition_met_verified":
+        s = "verified"
     if s == "confirmation_unavailable":
         # Needs a confirmation, and there is no way to ask for one.
         ledger.transition(a, ActionStatus.NOT_EXECUTED, reason="confirmation_required_no_mechanism")
@@ -396,8 +451,9 @@ def apply_fixture(ledger: ActionLedger, spec: ActionSpec, fixture: ExecutionFixt
 
 
 __all__ = [
-    "MAY_STATE_EXECUTION", "MAY_STATE_GOAL", "MAY_STATE_PARTIAL", "NO_EFFECT", "RAN", "SCENARIOS", "ActionKind",
-    "ActionLedger", "ActionOutcome", "ActionSpec", "ActionStatus", "ConfirmationRequest", "ExecutionFixture",
+    "CONDITIONAL_SCENARIOS", "MAY_STATE_EXECUTION", "MAY_STATE_GOAL", "MAY_STATE_PARTIAL", "NO_EFFECT", "RAN", "SCENARIOS", "ActionKind",
+    "ActionLedger", "ActionOutcome", "ActionSpec", "ActionStatus", "ConditionRecord", "ConfirmationRequest",
+    "ExecutionFixture",
     "ExecutionRecord",
     "LedgerError", "VerificationRecord", "apply_fixture",
 ]

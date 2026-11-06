@@ -57,7 +57,37 @@ def main(argv: list[str] | None = None) -> int:
     se = sub.add_parser("screen-eval", help="false-positive / false-negative rates of the lexical claim screen "
                                             "on the held-out corpus (no model calls)")
     se.add_argument("--out", type=Path)
+    ie = sub.add_parser("intent-eval", help="score action-intent recognition (deterministic offline; with --live "
+                                           "also the model and hybrid recognizers)")
+    ie.add_argument("--live", action="store_true")
+    ie.add_argument("--snapshot", type=Path, help="snapshot naming the model (required with --live)")
+    ie.add_argument("--providers", type=Path)
+    ie.add_argument("--replay", type=Path, help="score a stored live run directory instead of calling a model")
+    ie.add_argument("--out", type=Path, required=True)
+    ie.add_argument("--label", default="")
     args = parser.parse_args(argv)
+
+    if args.command == "intent-eval":
+        from experiments import intent_eval
+
+        if args.live:
+            if os.environ.get(LIVE_ENV) != "1" or args.providers is None or args.snapshot is None:
+                print(f"--live needs {LIVE_ENV}=1, --providers and --snapshot", file=sys.stderr)
+                return 2
+            run_dir = intent_eval.run_live(load_snapshot(args.snapshot), ProviderMap.load(args.providers),
+                                           RESULTS_DIR, label=args.label)
+            print(f"raw model outputs: {run_dir}")
+            args.replay = run_dir
+        if args.replay is not None:
+            intent_eval.replay(args.replay, args.out)
+        else:
+            args.out.mkdir(parents=True, exist_ok=False)
+            for suite in intent_eval.SUITES:
+                rep = intent_eval.evaluate(None, suite=suite)
+                (args.out / f"{suite}.md").write_text(intent_eval.render_markdown(rep))
+                (args.out / f"{suite}.json").write_text(json.dumps(rep, indent=2))
+        print(f"wrote {args.out}")
+        return 0
 
     if args.command == "screen-eval":
         from experiments.screen_eval import main as screen_eval

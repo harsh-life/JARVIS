@@ -59,10 +59,14 @@ def status_line(o: ActionOutcome) -> str:
     None of them names a confirmation UI, an app or any mechanism the harness
     does not have."""
 
-    d = o.description
+    d = o.description if o.condition is None else f"{o.description}, only if “{o.condition}”"
     s = o.status
     if s is ActionStatus.NOT_AVAILABLE:
         return f"Not done: {d}. There is no tool or permission for this here, so nothing was carried out."
+    if s is ActionStatus.NOT_EXECUTED and o.reason == "condition_not_met":
+        return f"Not done: {d}. Your condition was checked and was not met, so nothing was carried out."
+    if s is ActionStatus.NOT_EXECUTED and o.reason == "condition_not_evaluated":
+        return f"Not done: {d}. Your condition has not been checked, so nothing was carried out."
     if s is ActionStatus.NOT_EXECUTED and o.reason == "confirmation_required_no_mechanism":
         return f"Not done: {d}. It would need your confirmation, and there is no way to give it here, so nothing was carried out."
     if s is ActionStatus.NOT_EXECUTED or s is ActionStatus.NOT_REQUESTED:
