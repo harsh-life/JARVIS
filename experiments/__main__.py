@@ -91,34 +91,40 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "annotation":
         from experiments import annotation_tools as at
 
-        key = at.ANNOTATION_DIR / f"{args.set}_key.yaml"
-        if args.action == "status":
-            print(json.dumps(at.status_all(), indent=2, default=str))
-        elif args.action == "prepare":
-            print(json.dumps(at.prepare_phase04(), indent=2))
-        elif args.action == "validate":
-            problems = at.validate_annotation(args.file, key)
-            print("valid" if not problems else "\n".join(problems))
-            return 0 if not problems else 1
-        elif args.action == "agreement":
-            a_, b_ = at.ANNOTATION_DIR / f"{args.set}_annotator_A.yaml", at.ANNOTATION_DIR / f"{args.set}_annotator_B.yaml"
-            if not b_.exists():
-                print(f"outstanding: no second annotation at {b_}", file=sys.stderr)
-                return 1
-            result = at.agreement(a_, b_, key, adjudication_out=at.ANNOTATION_DIR / f"{args.set}_adjudication.yaml")
-            result["fields"] = at.field_agreement(a_, b_, key)
-            (at.ANNOTATION_DIR / f"{args.set}_agreement.json").write_text(json.dumps(result, indent=2))
-            print(json.dumps({k: v for k, v in result.items() if k != "disagreements"}, indent=2))
-        elif args.action == "adjudicate":
-            print(at.adjudicate(args.set))
-        elif args.action == "ingest":
-            print(json.dumps(at.ingest_authored(args.file), indent=2))
-        elif args.action == "freeze-rules":
-            print(json.dumps(at.freeze_rules(), indent=2))
-        elif args.action == "freeze":
-            print(json.dumps(at.freeze_manifest(), indent=2))
-        else:
-            print(at.verify_manifest())
+        key = at.set_paths(args.set)["key"]
+        try:
+            if args.action == "status":
+                print(json.dumps(at.status_all(), indent=2, default=str))
+            elif args.action == "prepare":
+                print(json.dumps(at.prepare_phase04(), indent=2))
+            elif args.action == "validate":
+                if args.file is None:
+                    raise ValueError("--file is required")
+                problems = at.validate_annotation(args.file, key)
+                print("valid" if not problems else "\n".join(problems))
+                return 0 if not problems else 1
+            elif args.action == "agreement":
+                result = at.agreement_for_set(args.set)
+                print(json.dumps({k: v for k, v in result.items() if k != "disagreements"}, indent=2))
+            elif args.action == "adjudicate":
+                print(at.adjudicate(args.set))
+                if args.set == "phase04":
+                    print(at.P04_GOLD)
+            elif args.action == "ingest":
+                if args.file is None:
+                    raise ValueError("--file is required")
+                print(json.dumps(at.ingest_authored(args.file), indent=2))
+            elif args.action == "freeze-rules":
+                print(json.dumps(at.freeze_rules(), indent=2))
+            elif args.action == "freeze":
+                print(json.dumps(at.freeze_manifest(), indent=2))
+            else:
+                ok, why = at.verify_manifest()
+                print((ok, why))
+                return 0 if ok else 1
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         return 0
 
     if args.command == "phase04-eval":

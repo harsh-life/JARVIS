@@ -182,12 +182,75 @@ def _kappa(a: list[str], b: list[str]) -> float | None:
     return round((po - pe) / (1 - pe), 3) if pe < 1 else 1.0
 
 
+def _load(path: Path):
+    """yaml.safe_load, through libyaml's C safe loader when it is installed."""
+
+    return yaml.load(Path(path).read_text(), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+
+
+def _annotation_entries(path: Path) -> dict[str, dict]:
+    """request_id → entry. Refuses an entry without an id and a duplicated id:
+    an annotation is never dropped, or one copy kept, silently."""
+
+    data = _load(Path(path)) or {}
+    entries = data.get("annotations")
+    if not isinstance(entries, list):
+        raise ValueError(f"{path}: no `annotations` list")
+    out: dict[str, dict] = {}
+    dupes, unnamed = [], 0
+    for e in entries:
+        rid = e.get("request_id") if isinstance(e, dict) else None
+        if not rid:
+            unnamed += 1
+            continue
+        if rid in out:
+            dupes.append(rid)
+        out[rid] = e
+    problems = ([f"{unnamed} entries have no request_id"] if unnamed else []) + \
+               ([f"duplicate request ids {sorted(set(dupes))[:5]}"] if dupes else [])
+    if problems:
+        raise ValueError(f"{path}: " + "; ".join(problems))
+    return out
+
+
+def _keywords(value) -> tuple[str, ...]:
+    """An annotator's target/condition (a phrase, or a list of phrases) as the
+    reference keyword tuple: the annotator's own words, whitespace-trimmed."""
+
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value.strip(),) if value.strip() else ()
+    return tuple(str(v).strip() for v in value if str(v).strip())
+
+
+def _canonical_actions(entry: dict) -> list[tuple]:
+    norm = lambda s: " ".join(str(s or "").lower().split())  # noqa: E731
+    return sorted((str(a.get("type")), norm(a.get("verb")), tuple(norm(k) for k in _keywords(a.get("target"))),
+                   str(a.get("target_specified")), str(a.get("pronoun")), str(a.get("conditional")),
+                   tuple(norm(k) for k in _keywords(a.get("condition"))), str(a.get("condition_kind") or ""),
+                   str(a.get("condition_complete")), str(a.get("approval")), str(a.get("depends")))
+                  for a in entry.get("actions") or [])
+
+
 def agreement(path_a: Path, path_b: Path, key_path: Path = ANNOTATION_DIR / "phase03_key.yaml",
-              adjudication_out: Path | None = None) -> dict:
-    key = yaml.safe_load(key_path.read_text())
-    cats = {it["id"]: it["category"] for it in _items()}
-    load = lambda p: {e["request_id"]: e for e in yaml.safe_load(Path(p).read_text())["annotations"]}  # noqa: E731
-    A, B = load(path_a), load(path_b)
+              adjudication_out: Path | None = None, *, categories: dict[str, str] | None = None,
+              full: bool = False) -> dict:
+    """`categories` maps suite ids to categories (default: the Phase 0.3 suite).
+    `full` (Phase 0.4) also compares every field that enters the gold labels
+    (verb, target and condition words, pronoun, condition kind, and how they
+    pair up), so no difference between the annotators is resolved silently."""
+
+    key = _load(key_path)
+    cats = categories if categories is not None else {it["id"]: it["category"] for it in _items()}
+    unmapped = sorted(rid for rid, sid in key.items() if sid not in cats)
+    if unmapped:
+        raise ValueError(f"key entries with no request or category: {unmapped[:5]}")
+    A, B = _annotation_entries(path_a), _annotation_entries(path_b)
+    for who, ann in (("A", A), ("B", B)):
+        unknown = sorted(set(ann) - set(key))
+        if unknown:
+            raise ValueError(f"annotator {who}: request ids not in the key: {unknown[:5]}")
     common = sorted(set(A) & set(B))
     complete = [r for r in common if B[r].get("classification") and A[r].get("classification")]
     by_cat: dict[str, list[bool]] = defaultdict(list)
@@ -208,6 +271,10 @@ def agreement(path_a: Path, path_b: Path, key_path: Path = ANNOTATION_DIR / "pha
             fb = sorted(str(x.get(f)) for x in b.get("actions") or [])
             if fa != fb:
                 diffs[f] = (fa, fb)
+        if full:
+            ca, cb = _canonical_actions(a), _canonical_actions(b)
+            if ca != cb:
+                diffs["actions"] = ([list(x) for x in ca], [list(x) for x in cb])
         for f in diffs:
             fields[f] += 1
         sid = key[rid]
@@ -241,9 +308,10 @@ def status() -> dict:
     return agreement(ANNOTATION_DIR / "phase03_annotator_A.yaml", b)
 
 
-__all__ = ["INSTRUCTIONS", "adjudicate", "agreement", "export_first", "field_agreement", "freeze_manifest",
-           "freeze_rules", "independent_ready", "ingest_authored", "make_packet", "prepare_phase04", "status",
-           "status_all", "validate_annotation", "verify_manifest"]
+__all__ = ["INSTRUCTIONS", "adjudicate", "agreement", "agreement_for_set", "derive_independent_suite",
+           "export_first", "field_agreement", "freeze_manifest", "freeze_rules", "gold_to_ref", "independent_ready",
+           "ingest_authored", "make_packet", "prepare_phase04", "set_paths", "status", "status_all",
+           "validate_annotation", "verify_manifest"]
 
 
 # ── Phase 0.4 (docs/31 §12.7): second annotation, an independently authored
@@ -370,14 +438,39 @@ def freeze_rules() -> dict:
     return record
 
 
+def _rel(path: Path) -> str:
+    return str(path.relative_to(REPO_ROOT)) if path.is_relative_to(REPO_ROOT) else str(path)
+
+
 def ingest_authored(path: Path) -> dict:
     """Validate an authored request file, write the label-free suite and a blind
-    packet for two annotators. Refuses near-duplicates of any existing suite."""
+    packet for two annotators. Refuses near-duplicates of any existing suite,
+    entries with a missing or unknown category, evidence the evaluator could not
+    read, and a second ingestion over an existing request set (the set, its key
+    and its packet are written once)."""
 
-    data = yaml.safe_load(Path(path).read_text())
+    from experiments.contracts import EvidenceItem
+
+    if P04_REQUESTS.exists():
+        raise RuntimeError(f"{_rel(P04_REQUESTS)} already exists: an ingested set is never replaced in place")
+    data = _load(Path(path)) or {}
     if not (data.get("author") or "").strip():
         raise ValueError("the file names no author")
-    reqs = [r for r in data.get("requests") or [] if (r.get("request") or "").strip()]
+    entries = data.get("requests") or []
+    reqs = [r for r in entries if (r.get("request") or "").strip()]
+    bad_cat = [f"#{n} ({r.get('category')!r})" for n, r in enumerate(entries, start=1)
+               if (r.get("request") or "").strip() and r.get("category") not in CATEGORIES]
+    if bad_cat:
+        raise ValueError(f"entries with a missing or unknown category: {bad_cat[:5]}")
+    bad_ev = []
+    for n, r in enumerate(entries, start=1):
+        for e in r.get("evidence") or []:
+            try:
+                EvidenceItem.model_validate(e)
+            except Exception as exc:  # pydantic's ValidationError, or a non-mapping
+                bad_ev.append(f"#{n}: {str(exc).splitlines()[0]}")
+    if bad_ev:
+        raise ValueError(f"evidence must be {{id, title, content}} (id like E1): {bad_ev[:5]}")
     counts = Counter(r.get("category") for r in reqs)
     short = {c: counts.get(c, 0) for c in CATEGORIES if counts.get(c, 0) < 10}
     if short or len(reqs) < 120:
@@ -386,7 +479,7 @@ def ingest_authored(path: Path) -> dict:
     for f in SUITE_DIR.glob("*.yaml"):
         if f.name.startswith("intent_holdout_v3"):
             continue
-        raw = yaml.safe_load(f.read_text()) or {}
+        raw = _load(f) or {}
         for it in raw.get("items", []) or []:
             existing.add(" ".join(str(it.get("prompt", "")).lower().split()))
         for it in raw.get("tasks", []) or []:
@@ -396,10 +489,13 @@ def ingest_authored(path: Path) -> dict:
         raise ValueError(f"requests duplicating existing suites: {dupes[:5]}")
     items = [{"id": f"p4-{n:03d}", "category": r["category"], "prompt": r["request"].strip(),
               **({"evidence": r["evidence"]} if r.get("evidence") else {})} for n, r in enumerate(reqs, start=1)]
+    synthetic = data.get("synthetic") is True
+    P04_REQUESTS.parent.mkdir(parents=True, exist_ok=True)
     P04_REQUESTS.write_text("# Phase 0.4 independent held-out requests (no labels). Author: "
-                            + data["author"].strip() + "\n" + yaml.safe_dump({"suite_id": "intent_holdout.v3",
-                                                                               "items": items}, sort_keys=False,
-                                                                              width=110))
+                            + data["author"].strip() + "\n" + yaml.safe_dump(
+                                {"suite_id": "intent_holdout.v3", "author": data["author"].strip(),
+                                 **({"synthetic": True} if synthetic else {}), "items": items},
+                                sort_keys=False, width=110))
     order = list(range(len(items)))
     random.Random(SEED + 4).shuffle(order)
     P04_PACKET.mkdir(parents=True, exist_ok=True)
@@ -416,24 +512,31 @@ def ingest_authored(path: Path) -> dict:
     (P04_PACKET / "annotation_template.yaml").write_text(yaml.safe_dump({"annotator": "", "annotations": template},
                                                                         sort_keys=False, width=110))
     P04_KEY.write_text("# NOT part of the packet.\n" + yaml.safe_dump(key, sort_keys=True))
-    return {"requests": len(items), "by_category": dict(counts), "packet": str(P04_PACKET)}
+    return {"requests": len(items), "by_category": dict(counts), "blank_entries_skipped": len(entries) - len(reqs),
+            "synthetic": synthetic, "packet": str(P04_PACKET)}
 
 
 def freeze_manifest() -> dict:
-    """Dataset + spec + rules + prompt + evaluation config, all hashed. Refuses
-    if the rules changed since `freeze_rules` (i.e. after data arrived)."""
+    """Dataset + key + packet + spec + rules + prompt + evaluation config, all
+    hashed. Refuses if the rules changed since `freeze_rules` (i.e. after data
+    arrived), and refuses to re-freeze: a manifest is written once."""
 
     if not RULES_FREEZE.exists():
         raise RuntimeError("freeze_rules was never run")
     if not P04_REQUESTS.exists():
         raise RuntimeError("no independently authored requests yet")
+    if MANIFEST.exists():
+        raise RuntimeError(f"{_rel(MANIFEST)} already exists: the set is frozen once")
     rules = json.loads(RULES_FREEZE.read_text())
     now = {p: _sha(REPO_ROOT / p) for p in FROZEN_CODE}
     changed = [p for p, h in rules["code"].items() if now.get(p) != h]
     if changed or rules["model_prompt"]["sha256"] != _prompt_sha():
         raise RuntimeError(f"rules, evaluation code or prompt changed since the rules freeze: {changed}")
-    rel = str(P04_REQUESTS.relative_to(REPO_ROOT)) if P04_REQUESTS.is_relative_to(REPO_ROOT) else str(P04_REQUESTS)
-    manifest = {**rules, "dataset": {"path": rel, "sha256": _sha(P04_REQUESTS)},
+    _phase04_index()   # the key is a bijection onto the request set, every request has one category
+    manifest = {**rules, "dataset": {"path": _rel(P04_REQUESTS), "sha256": _sha(P04_REQUESTS)},
+                "key": {"path": _rel(P04_KEY), "sha256": _sha(P04_KEY)},
+                "packet": {name: _sha(P04_PACKET / name)
+                           for name in ("INSTRUCTIONS.md", "requests.yaml", "annotation_template.yaml")},
                 "packet_spec_sha256": _sha(P04_PACKET / "INSTRUCTIONS.md"),
                 "manifest_frozen_at": datetime.now(timezone.utc).isoformat()}
     MANIFEST.write_text(json.dumps(manifest, indent=2))
@@ -446,6 +549,11 @@ def verify_manifest() -> tuple[bool, str]:
     m = json.loads(MANIFEST.read_text())
     if _sha(REPO_ROOT / m["dataset"]["path"]) != m["dataset"]["sha256"]:   # an absolute path stays absolute
         return False, "the dataset changed after freezing"
+    if not (REPO_ROOT / m["key"]["path"]).exists() or _sha(REPO_ROOT / m["key"]["path"]) != m["key"]["sha256"]:
+        return False, "the packet key changed after freezing"
+    for name, h in m["packet"].items():
+        if not (P04_PACKET / name).exists() or _sha(P04_PACKET / name) != h:
+            return False, f"the annotation packet's {name} changed after freezing"
     for p, h in m["code"].items():
         if _sha(REPO_ROOT / p) != h:
             return False, f"{p} changed after freezing"
@@ -454,13 +562,105 @@ def verify_manifest() -> tuple[bool, str]:
     return True, "ok"
 
 
+# ── annotation files, keys and per-set paths ───────────────────────────
+
+ENTRY_FIELDS = {"request_id", "classification", "route", "actions", "quoted", "notes"}
+ACTION_BOOLS = ("target_specified", "pronoun", "conditional", "condition_complete", "approval", "depends")
+ACTION_FIELDS = {"type", "verb", "target", "condition", "condition_kind", *ACTION_BOOLS}
+
+
+def set_paths(set_name: str) -> dict[str, Path]:
+    d = ANNOTATION_DIR
+    return {"key": P04_KEY if set_name == "phase04" else d / f"{set_name}_key.yaml",
+            "A": d / f"{set_name}_annotator_A.yaml", "B": d / f"{set_name}_annotator_B.yaml",
+            "adjudication": d / f"{set_name}_adjudication.yaml", "agreement": d / f"{set_name}_agreement.json",
+            "gold": d / f"{set_name}_gold.yaml"}
+
+
+def _p04_items() -> list[dict]:
+    return (_load(P04_REQUESTS) or {}).get("items") or []
+
+
+def _phase04_index() -> tuple[dict[str, str], dict[str, dict]]:
+    """(packet id → request id, request id → request), after checking that the
+    key is a bijection onto the request set and every request has exactly one
+    known category."""
+
+    if not P04_REQUESTS.exists():
+        raise FileNotFoundError(f"no independently authored request set ({_rel(P04_REQUESTS)})")
+    if not P04_KEY.exists():
+        raise FileNotFoundError(f"no packet key ({_rel(P04_KEY)})")
+    problems, by_id = [], {}
+    for it in _p04_items():
+        iid = it.get("id")
+        if not iid:
+            problems.append("a request has no id")
+            continue
+        if iid in by_id:
+            problems.append(f"duplicate request id {iid}")
+        by_id[iid] = it
+        if it.get("category") not in CATEGORIES:
+            problems.append(f"{iid}: category {it.get('category')!r} is missing or unknown")
+    key = _load(P04_KEY) or {}
+    problems += [f"the key maps {n} packet ids to {sid}" for sid, n in Counter(key.values()).items() if n > 1]
+    problems += [f"key entry {q} → {sid} names no request" for q, sid in sorted(key.items()) if sid not in by_id]
+    unkeyed = sorted(set(by_id) - set(key.values()))
+    if unkeyed:
+        problems.append(f"requests missing from the key: {unkeyed[:5]}")
+    if problems:
+        raise ValueError("the key and the request set do not match: " + "; ".join(problems[:10]))
+    return key, by_id
+
+
+def _entry_problems(rid: str, e) -> list[str]:
+    """Everything a label needs to enter the gold suite unchanged; nothing else
+    (no model or recognizer output) may ride along."""
+
+    if not isinstance(e, dict):
+        return [f"{rid}: not a mapping"]
+    out = [f"{rid}: unexpected field {k!r}" for k in sorted(set(e) - ENTRY_FIELDS)]
+    for f in ("classification", "route"):
+        if e.get(f) not in VALUES[f]:
+            out.append(f"{rid}: {f}={e.get(f)!r}")
+    if not isinstance(e.get("quoted"), bool):
+        out.append(f"{rid}: quoted must be true or false, not {e.get('quoted')!r}")
+    actions = e.get("actions") or []
+    if not isinstance(actions, list):
+        return out + [f"{rid}: actions must be a list"]
+    for n, a in enumerate(actions, start=1):
+        if not isinstance(a, dict):
+            out.append(f"{rid} action {n}: not a mapping")
+            continue
+        out += [f"{rid} action {n}: unexpected field {k!r}" for k in sorted(set(a) - ACTION_FIELDS)]
+        if a.get("type") not in VALUES["type"]:
+            out.append(f"{rid}: action type {a.get('type')!r}")
+        if a.get("condition_kind") not in VALUES["condition_kind"]:
+            out.append(f"{rid}: condition_kind {a.get('condition_kind')!r}")
+        out += [f"{rid} action {n}: {f} must be true or false, not {a.get(f)!r}" for f in ACTION_BOOLS
+                if not isinstance(a.get(f), bool)]
+        for f in ("verb", "target", "condition"):
+            v = a.get(f)
+            if not (v is None or isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, str) for x in v))):
+                out.append(f"{rid} action {n}: {f} must be text")
+    return out
+
+
 def validate_annotation(path: Path, key_path: Path) -> list[str]:
-    key = yaml.safe_load(Path(key_path).read_text())
-    data = yaml.safe_load(Path(path).read_text()) or {}
+    key = _load(Path(key_path))
+    data = _load(Path(path)) or {}
     problems = []
     if not (data.get("annotator") or "").strip():
         problems.append("no annotator named")
-    ann = {e.get("request_id"): e for e in data.get("annotations") or []}
+    entries = data.get("annotations")
+    if not isinstance(entries, list):
+        return problems + ["no `annotations` list"]
+    ids = [e.get("request_id") if isinstance(e, dict) else None for e in entries]
+    if None in ids or "" in ids:
+        problems.append(f"{sum(1 for i in ids if not i)} entries have no request_id")
+    dupes = sorted(i for i, n in Counter(i for i in ids if i).items() if n > 1)
+    if dupes:
+        problems.append(f"duplicate request ids {dupes[:5]}")
+    ann = {e["request_id"]: e for e in entries if isinstance(e, dict) and e.get("request_id")}
     missing = sorted(set(key) - set(ann))
     extra = sorted(set(ann) - set(key))
     if missing:
@@ -468,23 +668,15 @@ def validate_annotation(path: Path, key_path: Path) -> list[str]:
     if extra:
         problems.append(f"unknown request ids {extra[:3]}")
     for rid, e in ann.items():
-        for f in ("classification", "route"):
-            if e.get(f) not in VALUES[f]:
-                problems.append(f"{rid}: {f}={e.get(f)!r}")
-        for a in e.get("actions") or []:
-            if a.get("type") not in VALUES["type"]:
-                problems.append(f"{rid}: action type {a.get('type')!r}")
-            if a.get("condition_kind") not in VALUES["condition_kind"]:
-                problems.append(f"{rid}: condition_kind {a.get('condition_kind')!r}")
+        problems += _entry_problems(rid, e)
     return problems
 
 
 def field_agreement(path_a: Path, path_b: Path, key_path: Path) -> dict:
     """Per-field agreement and kappa, at the item level."""
 
-    load_ = lambda p: {e["request_id"]: e for e in yaml.safe_load(Path(p).read_text())["annotations"]}  # noqa: E731
-    A, B = load_(path_a), load_(path_b)
-    ids = sorted(set(A) & set(B) & set(yaml.safe_load(Path(key_path).read_text())))
+    A, B = _annotation_entries(path_a), _annotation_entries(path_b)
+    ids = sorted(set(A) & set(B) & set(_load(Path(key_path))))
     feats = {
         "classification": lambda e: e.get("classification"),
         "route": lambda e: e.get("route"),
@@ -506,50 +698,229 @@ def field_agreement(path_a: Path, path_b: Path, key_path: Path) -> dict:
     return out
 
 
-def adjudicate(set_name: str = "phase03") -> Path:
-    """Build gold labels from A, B and the decisions. Refuses while any
-    disagreement is undecided."""
+def _set_agreement(set_name: str, adjudication_out: Path | None = None) -> dict:
+    p = set_paths(set_name)
+    if set_name != "phase04":
+        return agreement(p["A"], p["B"], p["key"], adjudication_out=adjudication_out)
+    ok, why = verify_manifest()
+    if not ok:
+        raise RuntimeError(f"the Phase 0.4 set is not frozen: {why}")
+    _, by_id = _phase04_index()
+    for who in ("A", "B"):
+        if not p[who].exists():
+            raise FileNotFoundError(f"annotator {who} has not returned labels ({_rel(p[who])})")
+        problems = validate_annotation(p[who], p["key"])
+        if problems:
+            raise ValueError(f"annotator {who}'s file is invalid: " + "; ".join(problems[:10]))
+    return agreement(p["A"], p["B"], p["key"], adjudication_out=adjudication_out,
+                     categories={sid: it["category"] for sid, it in by_id.items()}, full=True)
 
-    adj = yaml.safe_load((ANNOTATION_DIR / f"{set_name}_adjudication.yaml").read_text())["adjudications"]
-    undecided = [d["request_id"] for d in adj if d.get("decision") in (None, "")]
+
+def agreement_for_set(set_name: str) -> dict:
+    """`annotation agreement`: write `<set>_agreement.json` and the adjudication
+    template. Phase 0.4 categories come from the frozen request set via its
+    key. Refuses to overwrite an adjudication file that holds decisions."""
+
+    p = set_paths(set_name)
+    if not p["B"].exists():
+        raise FileNotFoundError(f"outstanding: no second annotation at {p['B']}")
+    if p["adjudication"].exists():
+        prior = (_load(p["adjudication"]) or {}).get("adjudications") or []
+        if any(d.get("decision") not in (None, "") for d in prior):
+            raise RuntimeError(f"{_rel(p['adjudication'])} already holds decisions; move it aside before "
+                               "recomputing agreement")
+    result = _set_agreement(set_name, adjudication_out=p["adjudication"])
+    result["fields"] = field_agreement(p["A"], p["B"], p["key"])
+    p["agreement"].write_text(json.dumps(result, indent=2))
+    return result
+
+
+def _decided_gold(set_name: str) -> tuple[dict[str, dict], dict[str, str]]:
+    """Gold labels from A, B and the decisions, and the hashes of their sources.
+    Refuses while any disagreement is undecided, when a decision is not A, B or
+    a valid corrected entry, when the decisions do not answer exactly the
+    current disagreements, and while either annotation is incomplete."""
+
+    p = set_paths(set_name)
+    if not p["adjudication"].exists():
+        raise FileNotFoundError(f"no adjudication file ({_rel(p['adjudication'])}); run `annotation agreement`")
+    adj = (_load(p["adjudication"]) or {}).get("adjudications")
+    if not isinstance(adj, list):
+        raise ValueError(f"{_rel(p['adjudication'])}: no `adjudications` list")
+    undecided = [d.get("request_id") for d in adj if d.get("decision") in (None, "")]
     if undecided:
         raise RuntimeError(f"{len(undecided)} disagreements undecided: {undecided[:5]}")
-    A = {e["request_id"]: e for e in yaml.safe_load((ANNOTATION_DIR / f"{set_name}_annotator_A.yaml").read_text())[
-        "annotations"]}
-    B = {e["request_id"]: e for e in yaml.safe_load((ANNOTATION_DIR / f"{set_name}_annotator_B.yaml").read_text())[
-        "annotations"]}
-    decisions = {d["request_id"]: d for d in adj}
+    ids = [d.get("request_id") for d in adj]
+    dupes = sorted(i for i, n in Counter(ids).items() if n > 1)
+    if dupes or None in ids:
+        raise ValueError(f"adjudication entries without an id or decided twice: {dupes[:5]}")
+    bad = [f"{d['request_id']}: decision {d['decision']!r}" for d in adj
+           if not (d["decision"] in ("A", "B") or isinstance(d["decision"], dict))]
+    bad += [x for d in adj if isinstance(d["decision"], dict)
+            for x in _entry_problems(d["request_id"], {**d["decision"], "request_id": d["request_id"]})]
+    if bad:
+        raise ValueError("decisions must be A, B or a complete corrected entry: " + "; ".join(bad[:5]))
+    current = _set_agreement(set_name)
+    if current["status"] != "complete":
+        raise RuntimeError("both annotators must label every request before adjudication")
+    open_ = {d["request_id"] for d in current["disagreements"]}
+    if open_ != set(ids):
+        raise RuntimeError(f"the adjudication file is stale: it decides {sorted(set(ids) - open_)[:5]} that are "
+                           f"not disagreements now and misses {sorted(open_ - set(ids))[:5]}")
+    A, B = _annotation_entries(p["A"]), _annotation_entries(p["B"])
+    key = _load(p["key"])
+    decisions = {d["request_id"]: d["decision"] for d in adj}
     gold = {}
-    for rid, a in A.items():
+    for rid in sorted(key):
         d = decisions.get(rid)
-        gold[rid] = a if d is None or d["decision"] == "A" else B[rid] if d["decision"] == "B" else d["decision"]
-    out = ANNOTATION_DIR / f"{set_name}_gold.yaml"
-    out.write_text(yaml.safe_dump({"adjudicated_at": datetime.now(timezone.utc).isoformat(),
-                                   "annotations": [{"request_id": k, **v} for k, v in sorted(gold.items())]},
-                                  sort_keys=False, width=110))
+        gold[rid] = A[rid] if d is None or d == "A" else B[rid] if d == "B" else {**d, "request_id": rid}
+    sources = {"annotator_A": _sha(p["A"]), "annotator_B": _sha(p["B"]), "adjudication": _sha(p["adjudication"]),
+               "key": _sha(p["key"])}
+    if set_name == "phase04":
+        sources["requests"] = _sha(P04_REQUESTS)
+    return gold, sources
+
+
+def _gold_annotations(gold: dict[str, dict]) -> list[dict]:
+    return [{"request_id": k, **{f: v for f, v in e.items() if f != "request_id"}} for k, e in sorted(gold.items())]
+
+
+def adjudicate(set_name: str = "phase03") -> Path:
+    """Build `<set>_gold.yaml` from A, B and the decisions. For Phase 0.4, also
+    convert the gold labels into the evaluator's suite (`intent_holdout_v3.yaml`)."""
+
+    if set_name == "phase04":
+        ok, why = verify_manifest()
+        if not ok:
+            raise RuntimeError(f"the Phase 0.4 set is not frozen: {why}")
+    gold, sources = _decided_gold(set_name)
+    out = set_paths(set_name)["gold"]
+    out.write_text(yaml.safe_dump({"adjudicated_at": datetime.now(timezone.utc).isoformat(), "sources": sources,
+                                   "annotations": _gold_annotations(gold)}, sort_keys=False, width=110))
+    if set_name == "phase04":
+        P04_GOLD.write_text(derive_independent_suite())
     return out
 
 
+# ── adjudicated gold → the evaluator's suite (Phase 0.4) ───────────────
+
+
+def _ref_action(a: dict) -> dict:
+    return {"type": a["type"], "verb": a.get("verb"), "target": list(_keywords(a.get("target"))),
+            "target_specified": a["target_specified"], "pronoun": a["pronoun"], "conditional": a["conditional"],
+            "condition": list(_keywords(a.get("condition"))), "condition_kind": a.get("condition_kind"),
+            "condition_complete": a["condition_complete"], "approval": a["approval"], "depends": a["depends"]}
+
+
+def gold_to_ref(e: dict) -> dict:
+    """One adjudicated label as the evaluator's `ref`. Fields the annotation
+    format does not carry (`subtasks`, `clear_informational`) are left at the
+    evaluator's "not labelled" defaults; nothing is inferred."""
+
+    return {"classification": e["classification"], "route": e["route"], "quoted": e["quoted"],
+            "actions": [_ref_action(a) for a in e.get("actions") or []]}
+
+
+def derive_independent_suite() -> str:
+    """The suite text, derived deterministically from the adjudicated gold file
+    and the frozen request set (through the key) and nothing else, and checked
+    against the evaluator's own item schema."""
+
+    from experiments.intent_eval_v3 import Item3
+
+    key, by_id = _phase04_index()
+    gold_path = set_paths("phase04")["gold"]
+    if not gold_path.exists():
+        raise FileNotFoundError(f"no adjudicated gold labels ({_rel(gold_path)})")
+    entries = {}
+    raw = (_load(gold_path) or {}).get("annotations") or []
+    for e in raw:
+        rid = e.get("request_id")
+        if rid in entries:
+            raise ValueError(f"the gold file labels {rid} twice")
+        entries[rid] = e
+    if set(entries) != set(key):
+        raise ValueError(f"the gold file does not cover the key: missing {sorted(set(key) - set(entries))[:5]}, "
+                         f"unknown {sorted(set(entries) - set(key))[:5]}")
+    problems = [x for rid, e in sorted(entries.items()) for x in _entry_problems(rid, e)]
+    if problems:
+        raise ValueError("gold labels the evaluator cannot use: " + "; ".join(problems[:10]))
+    by_request = {sid: rid for rid, sid in key.items()}
+    items = []
+    for it in _p04_items():
+        item = {"id": it["id"], "category": it["category"], "prompt": it["prompt"],
+                **({"evidence": it["evidence"]} if it.get("evidence") else {}),
+                "ref": gold_to_ref(entries[by_request[it["id"]]])}
+        try:
+            Item3.model_validate(item)
+        except Exception as exc:
+            raise ValueError(f"{it['id']} does not fit the evaluator's schema: {exc}") from exc
+        items.append(item)
+    body = {"suite_id": "intent_holdout.v3",
+            "provenance": {"requests_sha256": _sha(P04_REQUESTS), "key_sha256": _sha(P04_KEY),
+                           "gold_sha256": _sha(gold_path)},
+            "items": items}
+    return ("# GENERATED by `python -m experiments annotation adjudicate --set phase04` from the adjudicated\n"
+            "# gold labels and the frozen request set only. Do not edit: readiness re-derives it.\n"
+            + yaml.safe_dump(body, sort_keys=False, width=110, allow_unicode=True))
+
+
+# ── readiness ──────────────────────────────────────────────────────────
+
+
 def independent_ready() -> tuple[bool, str]:
+    """Every link of the chain, in order; the provenance checks come last, so
+    reaching them means everything before them holds."""
+
     if not P04_REQUESTS.exists():
         return False, "no independently authored request set (experiments/tasks/intent_holdout_v3_requests.yaml)"
     ok, why = verify_manifest()
     if not ok:
         return False, f"manifest: {why}"
+    try:
+        _phase04_index()
+    except (OSError, ValueError) as exc:
+        return False, str(exc)
+    p = set_paths("phase04")
     for who in ("A", "B"):
-        f = ANNOTATION_DIR / f"phase04_annotator_{who}.yaml"
-        if not f.exists():
+        if not p[who].exists():
             return False, f"annotator {who} has not returned labels"
-        if validate_annotation(f, P04_KEY):
+        if validate_annotation(p[who], P04_KEY):
             return False, f"annotator {who}'s file is invalid"
+    try:
+        gold, sources = _decided_gold("phase04")
+    except (OSError, ValueError, RuntimeError) as exc:
+        return False, f"adjudication: {exc}"
+    if not p["gold"].exists():
+        return False, "no adjudicated gold labels (phase04_gold.yaml); run `annotation adjudicate --set phase04`"
+    stored = _load(p["gold"]) or {}
+    if stored.get("sources") != sources or stored.get("annotations") != _gold_annotations(gold):
+        return False, "phase04_gold.yaml does not match the annotations, decisions, key and request set"
     if not P04_GOLD.exists():
         return False, "disagreements not adjudicated into intent_holdout_v3.yaml"
+    try:
+        derived = derive_independent_suite()
+    except (OSError, ValueError) as exc:
+        return False, f"suite: {exc}"
+    if P04_GOLD.read_text() != derived:
+        return False, "intent_holdout_v3.yaml is not the suite derived from the gold labels and the request set"
+    requests = _load(P04_REQUESTS) or {}
+    names = [str(requests.get("author") or "").strip().lower()] + [
+        str((_load(p[w]) or {}).get("annotator") or "").strip().lower() for w in ("A", "B")]
+    if not all(names) or len(set(names)) != 3:
+        return False, "the dataset author and the two annotators must be three different, named people"
+    if requests.get("synthetic"):
+        return False, "the request set is marked synthetic: independent evaluation runs only on a human-authored set"
     return True, "ok"
 
 
 def status_all() -> dict:
+    p = set_paths("phase04")
     return {"phase03_second_annotation": status().get("second_annotation", "complete"),
             "phase04_independent_requests": "present" if P04_REQUESTS.exists() else "outstanding",
             "phase04_rules_frozen": RULES_FREEZE.exists(),
             "phase04_manifest": verify_manifest()[1],
+            "phase04_annotations": {w: "present" if p[w].exists() else "outstanding" for w in ("A", "B")},
+            "phase04_gold": "present" if p["gold"].exists() else "outstanding",
+            "phase04_suite": "present" if P04_GOLD.exists() else "outstanding",
             "phase04_ready": independent_ready()}
