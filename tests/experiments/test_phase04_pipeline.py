@@ -75,8 +75,8 @@ def _act(**kw) -> dict:
 
 def _label(category: str) -> dict:
     if category in ("advice", "hypothetical", "fictional", "quoted", "injection"):
-        return {"classification": "informational", "route": "answer", "actions": [],
-                "quoted": category in ("quoted", "injection")}
+        return {"classification": "informational", "route": "answer", "clear_informational": True, "subtasks": 1,
+                "actions": [], "quoted": category in ("quoted", "injection")}
     if category == "ambiguous_target":
         acts = [_act(target="", target_specified=False, pronoun=True)]
     elif category == "incomplete":
@@ -90,7 +90,8 @@ def _label(category: str) -> dict:
     else:
         acts = [_act()]
     route = "clarify" if category in ("ambiguous_target", "incomplete", "incomplete_condition") else "action_status"
-    return {"classification": "action", "route": route, "actions": acts, "quoted": False}
+    return {"classification": "action", "route": route, "clear_informational": False,
+            "subtasks": 1 if category == "compound" else 0, "actions": acts, "quoted": False}
 
 
 def _key_categories(at) -> dict[str, str]:
@@ -118,7 +119,7 @@ def _annotation_B(at, A: dict) -> tuple[dict, dict]:
     by_id = {e["request_id"]: e for e in B["annotations"]}
     q_class, q_target, q_verb = _first(at, "advice"), _first(at, "direct"), _first(at, "passive")
     q_case = _first(at, "indirect")
-    by_id[q_class].update(classification="ambiguous", route="clarify")
+    by_id[q_class].update(classification="ambiguous", route="clarify", clear_informational=False)
     by_id[q_target]["actions"][0]["target"] = "ledger"
     by_id[q_verb]["actions"][0]["verb"] = "settle"
     by_id[q_case]["actions"][0]["target"] = "  Zebra Project   LEDGER "
@@ -150,8 +151,8 @@ def _decide(at, expected) -> dict:
 
     p = at.set_paths("phase04")
     adj = yaml.safe_load(p["adjudication"].read_text())
-    corrected = {"classification": "action", "route": "action_status", "quoted": False,
-                 "actions": [_act(verb="pay off", target="zebra ledger")], "notes": "adjudicated"}
+    corrected = {"classification": "action", "route": "action_status", "clear_informational": False, "subtasks": 0,
+                 "quoted": False, "actions": [_act(verb="pay off", target="zebra ledger")], "notes": "adjudicated"}
     choice = {expected["classification"]: "A", expected["target"]: "B", expected["verb"]: corrected}
     for d in adj["adjudications"]:
         d["decision"], d["rationale"] = choice[d["request_id"]], "synthetic fixture"
@@ -324,6 +325,7 @@ def test_unresolved_disagreements_block_adjudication(p04):
 
     for d in adj["adjudications"]:
         d["decision"] = {"classification": "action", "route": "action_status", "quoted": False,
+                         "clear_informational": False, "subtasks": 0,
                          "actions": [{"type": "payment", "verb": "pay"}]}     # booleans left out: not inferred
     _write(p["adjudication"], adj)
     with pytest.raises(ValueError, match="target_specified must be true or false"):
@@ -369,9 +371,9 @@ def test_adjudication_generates_a_valid_suite_whose_labels_match_the_gold_exactl
                                                                       req.get("evidence"))
         g = gold[by_request[it["id"]]]
         ref = it["ref"]
-        assert set(ref) == {"classification", "route", "quoted", "actions"}    # nothing beyond the labels
-        assert (ref["classification"], ref["route"], ref["quoted"]) == (g["classification"], g["route"],
-                                                                        g["quoted"])
+        assert set(ref) == {"classification", "route", "quoted", "actions", "subtasks", "clear_informational"}
+        for f in ("classification", "route", "quoted", "subtasks", "clear_informational"):
+            assert ref[f] == g[f], (it["id"], f)
         assert len(ref["actions"]) == len(g["actions"])
         for ra, ga in zip(ref["actions"], g["actions"]):
             assert ra["target"] == ([ga["target"].strip()] if ga["target"].strip() else [])
@@ -541,3 +543,169 @@ def test_a_complete_synthetic_fixture_traverses_the_cli_workflow(p04, capsys):
     out = tmp / "independent"
     assert main(["phase04-eval", "--independent", "--out", str(out)]) == 3
     assert "marked synthetic" in capsys.readouterr().err and not out.exists()
+
+
+# ── annotation spec v2: versioning, the two item fields, consistency, coverage ──
+
+
+def test_the_phase04_spec_is_versioned_and_its_hash_pinned(p04):
+    at, tmp = p04
+    assert at.P04_SPEC_VERSION == "v2"
+    assert hashlib.sha256(at.P04_SPEC.read_bytes()).hexdigest() == at.P04_SPEC_SHA256 == \
+        "a08cc8ea59ac6292443aa4c86152d70bbb36901fd70628fe8e7ed252670341c4"
+    # the Phase 0.3 spec (v1) is a different, unchanged file, and the rules freeze still records it
+    rules = __import__("json").loads(at.RULES_FREEZE.read_text())
+    assert rules["annotation_spec"]["sha256"] == "edf3c392f8298efedd727c0030ea539fb87357909e6082019f01d9cc0c75a37d"
+    _ingest_and_freeze(at, tmp)
+    assert (at.P04_PACKET / "INSTRUCTIONS.md").read_bytes() == at.P04_SPEC.read_bytes()
+    template = yaml.safe_load((at.P04_PACKET / "annotation_template.yaml").read_text())["annotations"][0]
+    assert {"clear_informational", "subtasks"} <= set(template) and template["subtasks"] is None
+    m = __import__("json").loads(at.MANIFEST.read_text())
+    assert m["annotation_spec_phase04"] == {"version": "v2", "path": at._rel(at.P04_SPEC),
+                                            "sha256": at.P04_SPEC_SHA256}
+
+
+def test_a_changed_spec_needs_a_new_version(p04, monkeypatch):
+    at, tmp = p04
+    f = tmp / "authored.yaml"
+    _write(f, _authored())
+    monkeypatch.setattr(at, "P04_SPEC_SHA256", "0" * 64)
+    with pytest.raises(RuntimeError, match="needs a new version"):
+        at.ingest_authored(f)
+    assert not at.P04_REQUESTS.exists()
+
+
+def test_a_set_frozen_under_another_spec_does_not_verify(p04, monkeypatch):
+    at, tmp = p04
+    _ingest_and_freeze(at, tmp)
+    assert at.verify_manifest() == (True, "ok")
+    monkeypatch.setattr(at, "P04_SPEC_VERSION", "v3")
+    assert at.verify_manifest() == (False, "the set was not frozen under annotation spec v3")
+
+
+def test_spec_v1_style_phase04_annotations_are_rejected_not_defaulted(p04):
+    at, tmp = p04
+    _ingest_and_freeze(at, tmp)
+    A = _annotation_A(at)
+    for e in A["annotations"]:
+        del e["clear_informational"], e["subtasks"]
+    p = at.set_paths("phase04")
+    _write(p["A"], A)
+    problems = at.validate_annotation(p["A"], p["key"])          # phase04 inferred from the key path
+    assert any("clear_informational must be true or false, not None" in x for x in problems)
+    assert any("subtasks must be a whole number 0 or more, not None" in x for x in problems)
+
+
+@pytest.mark.parametrize("value", [True, -1, "2", 1.5, None])
+def test_subtasks_must_be_a_whole_number(p04, value):
+    at, tmp = p04
+    _ingest_and_freeze(at, tmp)
+    A = _annotation_A(at)
+    A["annotations"][0]["subtasks"] = value
+    p = at.set_paths("phase04")
+    _write(p["A"], A)
+    assert any("subtasks must be a whole number" in x for x in at.validate_annotation(p["A"], p["key"]))
+
+
+@pytest.mark.parametrize("category, change, message", [
+    ("advice", {"route": "clarify"}, "informational needs route answer"),
+    ("advice", {"actions": [_act()]}, "informational needs route answer and no actions"),
+    ("direct", {"classification": "ambiguous", "route": "action_status"}, "ambiguous needs route clarify"),
+    ("direct", {"actions": []}, "action needs at least one action"),
+    ("direct", {"route": "answer"}, "action needs at least one action and route"),
+    ("direct", {"clear_informational": True}, "clear_informational is true only for informational"),
+    ("ambiguous_target", {"route": "action_status"}, "action_status needs every target specified"),
+    ("direct", {"route": "clarify"}, "clarify needs an unspecified target or an incomplete condition"),
+    ("direct", {"actions": [_act(target="")]}, "a specified target needs its words"),
+    ("conditional", {"actions": [_act(conditional=True, condition="x", condition_kind="")]},
+     "a conditional action needs a condition_kind"),
+    ("direct", {"actions": [_act(condition_complete=False)], "route": "clarify"}, "not conditional, so"),
+    ("incomplete_condition", {"actions": [_act(conditional=True, condition="if needed", condition_kind="vague")],
+                              "route": "action_status"}, "a vague condition is never complete"),
+])
+def test_contradictory_labels_are_returned_to_the_annotator(p04, category, change, message):
+    at, tmp = p04
+    _ingest_and_freeze(at, tmp)
+    A = _annotation_A(at)
+    q = _first(at, category)
+    next(e for e in A["annotations"] if e["request_id"] == q).update(change)
+    p = at.set_paths("phase04")
+    _write(p["A"], A)
+    problems = at.validate_annotation(p["A"], p["key"])
+    assert any(message in x for x in problems), problems
+
+
+def test_the_synthetic_labels_satisfy_every_consistency_rule(p04):
+    at, tmp = p04
+    _ingest_and_freeze(at, tmp)
+    p = at.set_paths("phase04")
+    _write(p["A"], _annotation_A(at))
+    assert at.validate_annotation(p["A"], p["key"]) == []
+
+
+def test_phase03_validation_keeps_the_v1_schema():
+    import experiments.annotation_tools as at
+
+    A = at.ANNOTATION_DIR / "phase03_annotator_A.yaml"
+    assert at.validate_annotation(A, at.ANNOTATION_DIR / "phase03_key.yaml") == []          # no v2 fields needed
+    assert "clear_informational" not in at.field_agreement(A, A, at.ANNOTATION_DIR / "phase03_key.yaml")
+
+
+def test_agreement_surfaces_subtasks_and_clear_informational_differences(p04):
+    at, tmp = p04
+    _ingest_and_freeze(at, tmp)
+    A = _annotation_A(at)
+    B = copy.deepcopy(A)
+    B["annotator"] = "synthetic annotator B (test)"
+    by_id = {e["request_id"]: e for e in B["annotations"]}
+    q_sub, q_clear = _first(at, "compound"), _first(at, "hypothetical")
+    by_id[q_sub]["subtasks"] = 2
+    by_id[q_clear]["clear_informational"] = False
+    p = at.set_paths("phase04")
+    _write(p["A"], A)
+    _write(p["B"], B)
+    r = at.agreement_for_set("phase04")
+    diffs = {d["request_id"]: d["differences"] for d in r["disagreements"]}
+    assert diffs == {q_sub: {"subtasks": (1, 2)}, q_clear: {"clear_informational": (True, False)}}
+    assert r["fields"]["subtasks"]["agreement"] < 1 and r["fields"]["clear_informational"]["agreement"] < 1
+
+
+def test_readiness_refuses_gold_that_cannot_measure_a_gate(p04):
+    at, tmp = p04
+    _ingest_and_freeze(at, tmp)
+    A = _annotation_A(at)
+    for e in A["annotations"]:
+        e["clear_informational"] = False      # a legitimate labelling, but gate 6 has nothing to measure
+        if e["subtasks"] and e["classification"] == "action":
+            e["subtasks"] = 0                 # and compound subtask accuracy neither
+    B = copy.deepcopy(A)
+    B["annotator"] = "synthetic annotator B (test)"
+    p = at.set_paths("phase04")
+    _write(p["A"], A)
+    _write(p["B"], B)
+    at.agreement_for_set("phase04")
+    at.adjudicate("phase04")                  # no disagreements: nothing to decide
+    cov = at.gate_coverage(yaml.safe_load(at.P04_GOLD.read_text())["items"])
+    assert cov["gate 6: clear informational requests"] == 0
+    assert cov["compound subtask accuracy: compound requests with subtasks"] == 0
+    ok, why = at.independent_ready()
+    assert ok is False and why.startswith("the gold labels cannot measure: ")
+    assert "gate 6" in why and "compound subtask accuracy" in why
+
+
+def test_the_complete_synthetic_gold_covers_every_gate(p04):
+    at, tmp = p04
+    _full_chain(at, tmp)
+    cov = at.gate_coverage(yaml.safe_load(at.P04_GOLD.read_text())["items"])
+    assert set(cov) == set(at.GATE_COVERAGE) and all(n > 0 for n in cov.values()), cov
+    assert at.independent_ready()[1].startswith("the request set is marked synthetic")   # coverage passed first
+
+
+def test_unavailable_gates_are_named_never_passed():
+    from experiments.annotation_tools import unavailable_gates
+
+    report = {"recognizers": {"deterministic-v3": {"overall": {"gates": {
+        "1_zero_missed_side_effect_requests": {"pass": True},
+        "6_unnecessary_clarification_at_most_10pct": {"pass": None, "rate": None},
+        "7_complete_actions_clarified_at_most_10pct": {"pass": False}}}}}}
+    assert unavailable_gates(report) == ["deterministic-v3: 6_unnecessary_clarification_at_most_10pct"]

@@ -1554,3 +1554,35 @@ What is ready:
    recipient phrases. Then re-freeze with a new rules record.
 3. Run `phase04-eval --independent` once.
 4. Begin the proposer-only orchestrator evaluation only if gates 1–3b and 7 pass there.
+
+### 12.11 Human-validation readiness (2026-11-09)
+
+The pipeline repair (`f48e325`) made adjudicated gold reach the evaluator. An audit of the scoring contract then found
+that two gold fields the evaluator reads were not in the Phase 0.4 annotation format:
+
+* `clear_informational`, the denominator of gate 6 (unnecessary clarification);
+* `subtasks`, compound-subtask accuracy.
+
+Both would have been empty, and the evaluator reports an empty gate as `n/a`.
+
+* **Annotation spec v2** (`annotation/phase04_annotation_spec_v2.md`, sha256 `a08cc8ea…`) is the Phase 0.4 spec. It
+  was written before any Phase 0.4 request existed and changes:
+  - adds the two fields;
+  - states the label consistency rules (route agrees with the classification and the action flags);
+  - defines target and condition words as the shortest identifying span, as every existing gold suite writes them.
+
+  The Phase 0.3 spec (v1, `edf3c392…`) and the rules freeze that records it are unchanged.
+* `ingest` refuses unless the spec file matches the pinned hash. The manifest records the spec version and hash, and
+  `verify` refuses a set frozen under another spec.
+* The validator, agreement (field comparison and kappa), adjudication and suite conversion carry both fields. The
+  consistency rules are enforced for Phase 0.4 only.
+* **Readiness refuses gold that cannot measure a gate.** Each gate needs at least one item of the kind it measures
+  (side-effect, framed, unresolved-target, specified-target, incomplete-condition, clear-informational and
+  complete-action requests, and compound requests with subtasks). Gate 5 needs none.
+* `phase04-eval --independent` lists any `n/a` gate as UNAVAILABLE (not a pass), on stderr and at the top of the
+  report.
+* The handoff for the author, annotators, adjudicators and coordinator is `annotation/phase04_human_handoff.md`. A
+  test checks every command in it against the CLI parser.
+
+No threshold changed. `quoted` is collected but not scored: gate 2 uses the author's category. Verb accuracy compares
+free-text verbs and is diagnostic only.

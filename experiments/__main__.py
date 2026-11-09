@@ -100,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
             elif args.action == "validate":
                 if args.file is None:
                     raise ValueError("--file is required")
-                problems = at.validate_annotation(args.file, key)
+                problems = at.validate_annotation(args.file, key, phase04=args.set == "phase04")
                 print("valid" if not problems else "\n".join(problems))
                 return 0 if not problems else 1
             elif args.action == "agreement":
@@ -140,7 +140,14 @@ def main(argv: list[str] | None = None) -> int:
             except RuntimeError as exc:
                 print(str(exc), file=sys.stderr)
                 return 3
-            v4.write(report, args.out, "intent_holdout_v3", note=args.note)
+            from experiments.annotation_tools import unavailable_gates
+
+            missing = unavailable_gates(report)
+            note = args.note
+            if missing:
+                note = ("**UNAVAILABLE gates (n/a is NOT a pass):** " + "; ".join(missing) + "\n\n" + note).strip()
+                print("UNAVAILABLE (not a pass): " + "; ".join(missing), file=sys.stderr)
+            v4.write(report, args.out, "intent_holdout_v3", note=note)
         else:
             v4.write(v4.evaluate(args.suite, raw), args.out, args.suite, note=args.note)
         print(f"wrote {args.out}")

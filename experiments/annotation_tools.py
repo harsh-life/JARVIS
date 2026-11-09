@@ -275,6 +275,9 @@ def agreement(path_a: Path, path_b: Path, key_path: Path = ANNOTATION_DIR / "pha
             ca, cb = _canonical_actions(a), _canonical_actions(b)
             if ca != cb:
                 diffs["actions"] = ([list(x) for x in ca], [list(x) for x in cb])
+            for f in P04_ITEM_FIELDS:
+                if a.get(f) != b.get(f):
+                    diffs[f] = (a.get(f), b.get(f))
         for f in diffs:
             fields[f] += 1
         sid = key[rid]
@@ -309,7 +312,8 @@ def status() -> dict:
 
 
 __all__ = ["INSTRUCTIONS", "adjudicate", "agreement", "agreement_for_set", "derive_independent_suite",
-           "export_first", "field_agreement", "freeze_manifest", "freeze_rules", "gold_to_ref", "independent_ready",
+           "export_first", "field_agreement", "freeze_manifest", "freeze_rules", "gate_coverage", "gold_to_ref",
+           "independent_ready", "unavailable_gates",
            "ingest_authored", "make_packet", "prepare_phase04", "set_paths", "status", "status_all",
            "validate_annotation", "verify_manifest"]
 
@@ -338,6 +342,19 @@ VALUES = {"classification": {"informational", "action", "ambiguous"}, "route": {
           "type": {"payment", "file_deletion", "invoice_approval", "message", "setting_change", "purchase",
                    "form_submission", "booking", "other"},
           "condition_kind": {"", None, "factual", "temporal", "user_step", "vague"}}
+
+# The Phase 0.4 annotation spec is versioned separately from the Phase 0.3 one
+# (`phase03_packet/INSTRUCTIONS.md`, v1, recorded unchanged in the rules
+# freeze). v2 adds the two item fields the gates need (`clear_informational`
+# for gate 6, `subtasks` for compound-subtask accuracy), states the label
+# consistency rules, and defines target and condition words as the shortest
+# identifying span, as every existing gold suite writes them. It was written
+# before any Phase 0.4 request existed. Ingestion copies it into the packet;
+# the manifest and readiness check its hash.
+P04_SPEC = ANNOTATION_DIR / "phase04_annotation_spec_v2.md"
+P04_SPEC_VERSION = "v2"
+P04_SPEC_SHA256 = "a08cc8ea59ac6292443aa4c86152d70bbb36901fd70628fe8e7ed252670341c4"
+P04_ITEM_FIELDS = ("clear_informational", "subtasks")
 
 AUTHOR_BRIEF = """\
 # Writing the Phase 0.4 held-out requests
@@ -453,6 +470,9 @@ def ingest_authored(path: Path) -> dict:
 
     if P04_REQUESTS.exists():
         raise RuntimeError(f"{_rel(P04_REQUESTS)} already exists: an ingested set is never replaced in place")
+    if _sha(P04_SPEC) != P04_SPEC_SHA256:
+        raise RuntimeError(f"{_rel(P04_SPEC)} does not match annotation spec {P04_SPEC_VERSION} "
+                           f"({P04_SPEC_SHA256[:12]}…); a changed spec needs a new version")
     data = _load(Path(path)) or {}
     if not (data.get("author") or "").strip():
         raise ValueError("the file names no author")
@@ -505,12 +525,17 @@ def ingest_authored(path: Path) -> dict:
         key[rid] = items[idx]["id"]
         requests.append({"request_id": rid, "request": items[idx]["prompt"],
                          **({"evidence": items[idx]["evidence"]} if items[idx].get("evidence") else {})})
-        template.append({"request_id": rid, "classification": None, "route": None, "actions": [], "quoted": None,
-                         "notes": ""})
-    (P04_PACKET / "INSTRUCTIONS.md").write_text((PACKET / "INSTRUCTIONS.md").read_text())   # the same definitions
+        template.append({"request_id": rid, "classification": None, "route": None, "clear_informational": None,
+                         "subtasks": None, "actions": [], "quoted": None, "notes": ""})
+    (P04_PACKET / "INSTRUCTIONS.md").write_text(P04_SPEC.read_text())
     (P04_PACKET / "requests.yaml").write_text(yaml.safe_dump({"requests": requests}, sort_keys=False, width=110))
-    (P04_PACKET / "annotation_template.yaml").write_text(yaml.safe_dump({"annotator": "", "annotations": template},
-                                                                        sort_keys=False, width=110))
+    (P04_PACKET / "annotation_template.yaml").write_text(
+        f"# Annotation spec {P04_SPEC_VERSION}: see INSTRUCTIONS.md. Fill EVERY field of every entry; null is not\n"
+        "# accepted. One action entry per side effect, every field present, for example:\n"
+        "# - {type: payment, verb: pay, target: 'internet bill', target_specified: true, pronoun: false,\n"
+        "#    conditional: false, condition: '', condition_kind: '', condition_complete: true, approval: false,\n"
+        "#    depends: false}\n"
+        + yaml.safe_dump({"annotator": "", "annotations": template}, sort_keys=False, width=110))
     P04_KEY.write_text("# NOT part of the packet.\n" + yaml.safe_dump(key, sort_keys=True))
     return {"requests": len(items), "by_category": dict(counts), "blank_entries_skipped": len(entries) - len(reqs),
             "synthetic": synthetic, "packet": str(P04_PACKET)}
@@ -533,7 +558,11 @@ def freeze_manifest() -> dict:
     if changed or rules["model_prompt"]["sha256"] != _prompt_sha():
         raise RuntimeError(f"rules, evaluation code or prompt changed since the rules freeze: {changed}")
     _phase04_index()   # the key is a bijection onto the request set, every request has one category
+    if _sha(P04_PACKET / "INSTRUCTIONS.md") != P04_SPEC_SHA256:
+        raise RuntimeError(f"the packet's INSTRUCTIONS.md is not annotation spec {P04_SPEC_VERSION}")
     manifest = {**rules, "dataset": {"path": _rel(P04_REQUESTS), "sha256": _sha(P04_REQUESTS)},
+                "annotation_spec_phase04": {"version": P04_SPEC_VERSION, "path": _rel(P04_SPEC),
+                                            "sha256": P04_SPEC_SHA256},
                 "key": {"path": _rel(P04_KEY), "sha256": _sha(P04_KEY)},
                 "packet": {name: _sha(P04_PACKET / name)
                            for name in ("INSTRUCTIONS.md", "requests.yaml", "annotation_template.yaml")},
@@ -554,6 +583,10 @@ def verify_manifest() -> tuple[bool, str]:
     for name, h in m["packet"].items():
         if not (P04_PACKET / name).exists() or _sha(P04_PACKET / name) != h:
             return False, f"the annotation packet's {name} changed after freezing"
+    spec = m.get("annotation_spec_phase04") or {}
+    if (spec.get("version"), spec.get("sha256"), m["packet"].get("INSTRUCTIONS.md")) != (
+            P04_SPEC_VERSION, P04_SPEC_SHA256, P04_SPEC_SHA256):
+        return False, f"the set was not frozen under annotation spec {P04_SPEC_VERSION}"
     for p, h in m["code"].items():
         if _sha(REPO_ROOT / p) != h:
             return False, f"{p} changed after freezing"
@@ -612,18 +645,25 @@ def _phase04_index() -> tuple[dict[str, str], dict[str, dict]]:
     return key, by_id
 
 
-def _entry_problems(rid: str, e) -> list[str]:
+def _entry_problems(rid: str, e, phase04: bool = False) -> list[str]:
     """Everything a label needs to enter the gold suite unchanged; nothing else
     (no model or recognizer output) may ride along."""
 
     if not isinstance(e, dict):
         return [f"{rid}: not a mapping"]
-    out = [f"{rid}: unexpected field {k!r}" for k in sorted(set(e) - ENTRY_FIELDS)]
+    allowed = ENTRY_FIELDS | set(P04_ITEM_FIELDS) if phase04 else ENTRY_FIELDS
+    out = [f"{rid}: unexpected field {k!r}" for k in sorted(set(e) - allowed)]
     for f in ("classification", "route"):
         if e.get(f) not in VALUES[f]:
             out.append(f"{rid}: {f}={e.get(f)!r}")
     if not isinstance(e.get("quoted"), bool):
         out.append(f"{rid}: quoted must be true or false, not {e.get('quoted')!r}")
+    if phase04:
+        if not isinstance(e.get("clear_informational"), bool):
+            out.append(f"{rid}: clear_informational must be true or false, not {e.get('clear_informational')!r}")
+        s = e.get("subtasks")
+        if isinstance(s, bool) or not isinstance(s, int) or s < 0:
+            out.append(f"{rid}: subtasks must be a whole number 0 or more, not {s!r}")
     actions = e.get("actions") or []
     if not isinstance(actions, list):
         return out + [f"{rid}: actions must be a list"]
@@ -642,10 +682,50 @@ def _entry_problems(rid: str, e) -> list[str]:
             v = a.get(f)
             if not (v is None or isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, str) for x in v))):
                 out.append(f"{rid} action {n}: {f} must be text")
+    if phase04 and not out:
+        out += _consistency_problems(rid, e)
     return out
 
 
-def validate_annotation(path: Path, key_path: Path) -> list[str]:
+def _consistency_problems(rid: str, e: dict) -> list[str]:
+    """Spec v2 §2 and §5: labels that contradict each other would make the gates
+    disagree with the route (gates 3 and 4 read the action flags, gate 7 the
+    route), so they are returned to the annotator rather than scored."""
+
+    c, r, acts = e["classification"], e["route"], e.get("actions") or []
+    out = []
+    if c == "informational" and (r != "answer" or acts):
+        out.append(f"{rid}: informational needs route answer and no actions")
+    if c == "ambiguous" and r != "clarify":
+        out.append(f"{rid}: ambiguous needs route clarify")
+    if c == "action" and (not acts or r not in ("action_status", "clarify")):
+        out.append(f"{rid}: action needs at least one action and route action_status or clarify")
+    if e["clear_informational"] and c != "informational":
+        out.append(f"{rid}: clear_informational is true only for informational requests")
+    if r == "action_status" and not all(a["target_specified"] and a["condition_complete"] for a in acts):
+        out.append(f"{rid}: action_status needs every target specified and every condition complete")
+    if c == "action" and r == "clarify" and all(a["target_specified"] and a["condition_complete"] for a in acts):
+        out.append(f"{rid}: clarify needs an unspecified target or an incomplete condition")
+    for n, a in enumerate(acts, start=1):
+        if a["target_specified"] and not _keywords(a.get("target")):
+            out.append(f"{rid} action {n}: a specified target needs its words")
+        if a["conditional"] and not a.get("condition_kind"):
+            out.append(f"{rid} action {n}: a conditional action needs a condition_kind")
+        if not a["conditional"] and (_keywords(a.get("condition")) or a.get("condition_kind")
+                                     or not a["condition_complete"]):
+            out.append(f"{rid} action {n}: not conditional, so condition and condition_kind are empty and "
+                       "condition_complete is true")
+        if a.get("condition_kind") == "vague" and a["condition_complete"]:
+            out.append(f"{rid} action {n}: a vague condition is never complete")
+    return out
+
+
+def validate_annotation(path: Path, key_path: Path, *, phase04: bool | None = None) -> list[str]:
+    """`phase04` (spec v2 fields and consistency rules) defaults to whether
+    `key_path` is the Phase 0.4 key."""
+
+    if phase04 is None:
+        phase04 = Path(key_path).resolve() == P04_KEY.resolve()
     key = _load(Path(key_path))
     data = _load(Path(path)) or {}
     problems = []
@@ -668,12 +748,13 @@ def validate_annotation(path: Path, key_path: Path) -> list[str]:
     if extra:
         problems.append(f"unknown request ids {extra[:3]}")
     for rid, e in ann.items():
-        problems += _entry_problems(rid, e)
+        problems += _entry_problems(rid, e, phase04)
     return problems
 
 
-def field_agreement(path_a: Path, path_b: Path, key_path: Path) -> dict:
-    """Per-field agreement and kappa, at the item level."""
+def field_agreement(path_a: Path, path_b: Path, key_path: Path, *, phase04: bool = False) -> dict:
+    """Per-field agreement and kappa, at the item level (plus the spec v2 item
+    fields for Phase 0.4)."""
 
     A, B = _annotation_entries(path_a), _annotation_entries(path_b)
     ids = sorted(set(A) & set(B) & set(_load(Path(key_path))))
@@ -689,6 +770,9 @@ def field_agreement(path_a: Path, path_b: Path, key_path: Path) -> dict:
         "any_approval": lambda e: any(a.get("approval") for a in e.get("actions") or []),
         "any_depends": lambda e: any(a.get("depends") for a in e.get("actions") or []),
     }
+    if phase04:
+        feats.update({"clear_informational": lambda e: e.get("clear_informational"),
+                      "subtasks": lambda e: e.get("subtasks")})
     out = {}
     for name, f in feats.items():
         a = [str(f(A[i])) for i in ids]
@@ -709,7 +793,7 @@ def _set_agreement(set_name: str, adjudication_out: Path | None = None) -> dict:
     for who in ("A", "B"):
         if not p[who].exists():
             raise FileNotFoundError(f"annotator {who} has not returned labels ({_rel(p[who])})")
-        problems = validate_annotation(p[who], p["key"])
+        problems = validate_annotation(p[who], p["key"], phase04=True)
         if problems:
             raise ValueError(f"annotator {who}'s file is invalid: " + "; ".join(problems[:10]))
     return agreement(p["A"], p["B"], p["key"], adjudication_out=adjudication_out,
@@ -730,7 +814,7 @@ def agreement_for_set(set_name: str) -> dict:
             raise RuntimeError(f"{_rel(p['adjudication'])} already holds decisions; move it aside before "
                                "recomputing agreement")
     result = _set_agreement(set_name, adjudication_out=p["adjudication"])
-    result["fields"] = field_agreement(p["A"], p["B"], p["key"])
+    result["fields"] = field_agreement(p["A"], p["B"], p["key"], phase04=set_name == "phase04")
     p["agreement"].write_text(json.dumps(result, indent=2))
     return result
 
@@ -757,7 +841,8 @@ def _decided_gold(set_name: str) -> tuple[dict[str, dict], dict[str, str]]:
     bad = [f"{d['request_id']}: decision {d['decision']!r}" for d in adj
            if not (d["decision"] in ("A", "B") or isinstance(d["decision"], dict))]
     bad += [x for d in adj if isinstance(d["decision"], dict)
-            for x in _entry_problems(d["request_id"], {**d["decision"], "request_id": d["request_id"]})]
+            for x in _entry_problems(d["request_id"], {**d["decision"], "request_id": d["request_id"]},
+                                     set_name == "phase04")]
     if bad:
         raise ValueError("decisions must be A, B or a complete corrected entry: " + "; ".join(bad[:5]))
     current = _set_agreement(set_name)
@@ -813,11 +898,11 @@ def _ref_action(a: dict) -> dict:
 
 
 def gold_to_ref(e: dict) -> dict:
-    """One adjudicated label as the evaluator's `ref`. Fields the annotation
-    format does not carry (`subtasks`, `clear_informational`) are left at the
-    evaluator's "not labelled" defaults; nothing is inferred."""
+    """One adjudicated spec v2 label as the evaluator's `ref`: every field is the
+    annotation's own; nothing is inferred or defaulted."""
 
     return {"classification": e["classification"], "route": e["route"], "quoted": e["quoted"],
+            "subtasks": e["subtasks"], "clear_informational": e["clear_informational"],
             "actions": [_ref_action(a) for a in e.get("actions") or []]}
 
 
@@ -842,7 +927,7 @@ def derive_independent_suite() -> str:
     if set(entries) != set(key):
         raise ValueError(f"the gold file does not cover the key: missing {sorted(set(key) - set(entries))[:5]}, "
                          f"unknown {sorted(set(entries) - set(key))[:5]}")
-    problems = [x for rid, e in sorted(entries.items()) for x in _entry_problems(rid, e)]
+    problems = [x for rid, e in sorted(entries.items()) for x in _entry_problems(rid, e, phase04=True)]
     if problems:
         raise ValueError("gold labels the evaluator cannot use: " + "; ".join(problems[:10]))
     by_request = {sid: rid for rid, sid in key.items()}
@@ -867,6 +952,43 @@ def derive_independent_suite() -> str:
 
 # ── readiness ──────────────────────────────────────────────────────────
 
+# What each data-dependent gate or metric needs at least one gold item of, as
+# `intent_eval_v3`/`intent_eval_v4` compute it. With none, the evaluator returns
+# None ("n/a"), which is not a pass, so readiness refuses instead. Gate 5 reads
+# predictions only.
+GATE_COVERAGE = {
+    "gate 1: side-effect requests (action or ambiguous)": lambda it: it["ref"]["classification"] != "informational",
+    "gate 2: framed requests (quoted, fictional, injection)":
+        lambda it: it["category"] in ("quoted", "fictional", "injection"),
+    "gate 3: unresolved targets": lambda it: any(not a["target_specified"] for a in it["ref"]["actions"]),
+    "gate 3b and target exactness: specified targets": lambda it: any(a["target_specified"]
+                                                                    for a in it["ref"]["actions"]),
+    "gate 4: incomplete conditions": lambda it: any(not a["condition_complete"] for a in it["ref"]["actions"]),
+    "gate 6: clear informational requests": lambda it: it["ref"]["clear_informational"],
+    "gate 7: complete actions (route action_status)": lambda it: it["ref"]["route"] == "action_status",
+    "compound subtask accuracy: compound requests with subtasks": lambda it: it["category"] == "compound"
+                                                                            and it["ref"]["subtasks"] > 0,
+}
+
+
+def gate_coverage(items: list[dict]) -> dict[str, int]:
+    return {name: sum(1 for it in items if f(it)) for name, f in GATE_COVERAGE.items()}
+
+
+def _suite_coverage() -> dict[str, int] | str:
+    try:
+        return gate_coverage(_load(P04_GOLD)["items"])
+    except Exception as exc:   # a damaged suite file; readiness reports it precisely
+        return f"unreadable: {type(exc).__name__}"
+
+
+def unavailable_gates(report: dict) -> list[str]:
+    """Gates the evaluator could not compute (`pass: None`, rendered "n/a").
+    These are not passes."""
+
+    return [f"{name}: {g}" for name, r in report["recognizers"].items()
+            for g, v in r["overall"]["gates"].items() if v["pass"] is None]
+
 
 def independent_ready() -> tuple[bool, str]:
     """Every link of the chain, in order; the provenance checks come last, so
@@ -885,7 +1007,7 @@ def independent_ready() -> tuple[bool, str]:
     for who in ("A", "B"):
         if not p[who].exists():
             return False, f"annotator {who} has not returned labels"
-        if validate_annotation(p[who], P04_KEY):
+        if validate_annotation(p[who], P04_KEY, phase04=True):
             return False, f"annotator {who}'s file is invalid"
     try:
         gold, sources = _decided_gold("phase04")
@@ -904,6 +1026,9 @@ def independent_ready() -> tuple[bool, str]:
         return False, f"suite: {exc}"
     if P04_GOLD.read_text() != derived:
         return False, "intent_holdout_v3.yaml is not the suite derived from the gold labels and the request set"
+    empty = [name for name, n in gate_coverage(_load(P04_GOLD)["items"]).items() if n == 0]
+    if empty:
+        return False, "the gold labels cannot measure: " + "; ".join(empty)
     requests = _load(P04_REQUESTS) or {}
     names = [str(requests.get("author") or "").strip().lower()] + [
         str((_load(p[w]) or {}).get("annotator") or "").strip().lower() for w in ("A", "B")]
@@ -923,4 +1048,6 @@ def status_all() -> dict:
             "phase04_annotations": {w: "present" if p[w].exists() else "outstanding" for w in ("A", "B")},
             "phase04_gold": "present" if p["gold"].exists() else "outstanding",
             "phase04_suite": "present" if P04_GOLD.exists() else "outstanding",
+            "phase04_annotation_spec": f"{P04_SPEC_VERSION} {P04_SPEC_SHA256[:12]}…",
+            **({"phase04_gate_coverage": _suite_coverage()} if P04_GOLD.exists() else {}),
             "phase04_ready": independent_ready()}
