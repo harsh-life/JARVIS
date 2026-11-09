@@ -1,0 +1,68 @@
+# Phase 0.4 (docs/31 §12): DEVELOPMENT examples for the five failure
+# mechanisms found in Phase 0.3, the type-specific completeness rules, and the
+# intent / interpretation / readiness distinction. Development data: written
+# by the rules author and used for tuning. It is NOT validation.
+#
+# Built from the brief's own examples and new paraphrases of the mechanisms.
+# The Phase 0.3 held-out requests themselves are not copied here. Every name,
+# account and amount is invented. Same annotation format as intent_holdout_v2.
+suite_id: intent_dev.p04
+items:
+  # ── A. reported speech: genuine vs an ordinary verb in a clause ──────
+  - {id: dA1, category: reported, prompt: "Forward the minutes to the board only if nobody has replied by noon.", ref: {classification: action, route: action_status, actions: [{type: message, verb: forward, target: [minutes], conditional: true, condition: [nobody has replied by noon], condition_kind: factual}]}}
+  - {id: dA2, category: reported, prompt: "Archive the thread once everyone has replied.", ref: {classification: action, route: action_status, actions: [{type: other, verb: archive, target: [thread], conditional: true, condition: [everyone has replied], condition_kind: temporal}]}}
+  - {id: dA3, category: reported, prompt: "Close ticket 4471 if the customer said it is fixed.", ref: {classification: action, route: action_status, actions: [{type: other, verb: close, target: ["4471"], conditional: true, condition: [customer said it is fixed], condition_kind: factual}]}}
+  - {id: dA4, category: reported, prompt: "My landlord replied that I should pay the water bill. Which bill is usually the landlord's job?", ref: {classification: informational, route: answer, clear_informational: true, quoted: true}}
+  - {id: dA5, category: reported, prompt: "Sam said to cancel the courier. What would that cost me?", ref: {classification: informational, route: answer, clear_informational: true, quoted: true}}
+  - {id: dA6, category: reported, prompt: "The bank wrote: \"close the old account\". Is that normal?", ref: {classification: informational, route: answer, clear_informational: true, quoted: true}}
+
+  # ── B. separable phrasal verbs ───────────────────────────────────────
+  - {id: dB1, category: phrasal, prompt: "Turn it off.", ref: {classification: action, route: clarify, actions: [{type: setting_change, verb: turn off, target: [], target_specified: false, pronoun: true}]}}
+  - {id: dB2, category: phrasal, prompt: "Turn the hallway heater off.", ref: {classification: action, route: action_status, actions: [{type: setting_change, verb: turn off, target: [hallway heater]}]}}
+  - {id: dB3, category: phrasal, prompt: "Switch the Fernway account over to paperless billing.", ref: {classification: action, route: action_status, actions: [{type: setting_change, verb: switch over, target: [Fernway account]}]}}
+  - {id: dB4, category: phrasal, prompt: "Move the budget-2025.xlsx file back to the Shared folder.", ref: {classification: action, route: action_status, actions: [{type: other, verb: move back, target: [budget-2025.xlsx]}]}}
+  - {id: dB5, category: phrasal, prompt: "Send the signed NDA out to Corbel Studio.", ref: {classification: action, route: action_status, actions: [{type: message, verb: send out, target: [signed NDA]}]}}
+  - {id: dB6, category: phrasal, prompt: "Find my old router settings and switch them back.", ref: {classification: action, route: action_status, subtasks: 1, actions: [{type: setting_change, verb: switch back, target: [router settings], pronoun: true, depends: true}]}}
+
+  # ── C. possessive references ─────────────────────────────────────────
+  - {id: dC1, category: possessive, prompt: "Approve hers but not his.", ref: {classification: action, route: clarify, actions: [{type: other, verb: approve, target: [], target_specified: false, pronoun: true}]}}
+  - {id: dC2, category: possessive, prompt: "Delete mine, not yours.", ref: {classification: action, route: clarify, actions: [{type: file_deletion, verb: delete, target: [], target_specified: false, pronoun: true}]}}
+  - {id: dC3, category: possessive, prompt: "Send theirs to the client.", ref: {classification: action, route: clarify, actions: [{type: message, verb: send, target: [], target_specified: false, pronoun: true}]}}
+  - {id: dC4, category: possessive, prompt: "Compare my draft with your draft, then delete mine.", ref: {classification: action, route: action_status, subtasks: 1, actions: [{type: file_deletion, verb: delete, target: [my draft], pronoun: true, depends: true}]}}
+  - {id: dC5, category: possessive, prompt: "Review her expense claim and approve hers.", ref: {classification: action, route: action_status, subtasks: 1, actions: [{type: invoice_approval, verb: approve, target: [her expense claim], pronoun: true, depends: true}]}}
+
+  # ── D. generic references ────────────────────────────────────────────
+  - {id: dD1, category: generic, prompt: "Email the report to the client.", ref: {classification: action, route: clarify, actions: [{type: message, verb: email, target: [], target_specified: false}]}}
+  - {id: dD2, category: generic, prompt: "Send the document to the manager.", ref: {classification: action, route: clarify, actions: [{type: message, verb: send, target: [], target_specified: false}]}}
+  - {id: dD3, category: generic, prompt: "Approve the proposal.", ref: {classification: action, route: clarify, actions: [{type: other, verb: approve, target: [], target_specified: false}]}}
+  - {id: dD4, category: generic, prompt: "Email the Harbour Q2 report to Mira Okafor.", ref: {classification: action, route: action_status, actions: [{type: message, verb: email, target: [Harbour Q2 report]}]}}
+  - {id: dD5, category: generic, prompt: "Approve the proposal in the evidence.", evidence: [{id: P1, title: Proposal 77, content: "Proposal 77: new bike racks for the depot, 1,200 credits."}], ref: {classification: action, route: action_status, actions: [{type: other, verb: approve, target: [proposal]}]}}
+  - {id: dD6, category: generic, prompt: "Find the contract with Brightway and send it to my manager.", ref: {classification: action, route: action_status, subtasks: 1, actions: [{type: message, verb: send, target: [contract with Brightway], pronoun: true, depends: true}]}}
+  - {id: dD7, category: generic, prompt: "Delete the photos.", ref: {classification: action, route: clarify, actions: [{type: file_deletion, verb: delete, target: [], target_specified: false}]}}
+
+  # ── E. type-specific completeness (things that ARE complete) ─────────
+  - {id: dE1, category: completeness, prompt: "Pay the electrician 90 credits.", ref: {classification: action, route: action_status, actions: [{type: payment, verb: pay, target: [electrician]}]}}
+  - {id: dE2, category: completeness, prompt: "Send her the itinerary for Lisbon.", ref: {classification: action, route: clarify, actions: [{type: message, verb: send, target: [], target_specified: false, pronoun: true}]}}
+  - {id: dE3, category: completeness, prompt: "Share the wedding album with my aunt.", ref: {classification: action, route: action_status, actions: [{type: message, verb: share, target: [wedding album]}]}}
+  - {id: dE4, category: completeness, prompt: "Top up my phone with 20 credits.", ref: {classification: action, route: action_status, actions: [{type: payment, verb: top up, target: [phone]}]}}
+  - {id: dE5, category: completeness, prompt: "Close the old travel card and move its remaining funds to my checking.", ref: {classification: action, route: action_status, actions: [{type: other, verb: close, target: [travel card]}, {type: payment, verb: move, target: [remaining funds], depends: true}]}}
+  - {id: dE6, category: completeness, prompt: "Unless Joe objects by Monday, book the lake house for the reunion weekend.", ref: {classification: action, route: action_status, actions: [{type: booking, verb: book, target: [lake house], conditional: true, condition: [Joe objects by Monday], condition_kind: factual}]}}
+  - {id: dE7, category: completeness, prompt: "Archive the \"Old Leads\" board.", ref: {classification: action, route: action_status, actions: [{type: other, verb: archive, target: [Old Leads]}]}}
+  - {id: dE8, category: completeness, prompt: "Pay the courier 12 credits when the parcel arrives.", ref: {classification: action, route: action_status, actions: [{type: payment, verb: pay, target: [courier], conditional: true, condition: [parcel arrives], condition_kind: temporal}]}}
+  - {id: dE9, category: completeness, prompt: "Cancel my Thursday pottery class.", ref: {classification: action, route: action_status, actions: [{type: booking, verb: cancel, target: [pottery class]}]}}
+  - {id: dE10, category: completeness, prompt: "Order printer paper for the office.", ref: {classification: action, route: action_status, actions: [{type: purchase, verb: order, target: [printer paper]}]}}
+  # ── E. … and things that are NOT complete ────────────────────────────
+  - {id: dE11, category: completeness, prompt: "Pay the electrician.", ref: {classification: action, route: clarify, actions: [{type: payment, verb: pay, target: [], target_specified: false}]}}
+  - {id: dE12, category: completeness, prompt: "Book a table.", ref: {classification: action, route: clarify, actions: [{type: booking, verb: book, target: [], target_specified: false}]}}
+  - {id: dE13, category: completeness, prompt: "Move the file.", ref: {classification: action, route: clarify, actions: [{type: other, verb: move, target: [], target_specified: false}]}}
+  - {id: dE14, category: completeness, prompt: "Transfer 60 credits.", ref: {classification: action, route: clarify, actions: [{type: payment, verb: transfer, target: [], target_specified: false}]}}
+
+  # ── semantic target validation ───────────────────────────────────────
+  - {id: dS1, category: semantic, prompt: "When the cost of the walnut bookcase falls under 300 credits, order it.", ref: {classification: action, route: action_status, actions: [{type: purchase, verb: order, target: [walnut bookcase], pronoun: true, conditional: true, condition: [falls under 300 credits], condition_kind: temporal}]}}
+  - {id: dS2, category: semantic, prompt: "Check the weather in Leeds and pay it.", ref: {classification: action, route: clarify, actions: [{type: payment, verb: pay, target: [], target_specified: false, pronoun: true}]}}
+  - {id: dS3, category: semantic, prompt: "Collect the March receipts and file it.", ref: {classification: action, route: clarify, actions: [{type: form_submission, verb: file, target: [], target_specified: false, pronoun: true}]}}
+
+  # ── intent vs readiness: missing detail never makes an action informational ──
+  - {id: dR1, category: readiness, prompt: "Renew it.", ref: {classification: action, route: clarify, actions: [{type: other, verb: renew, target: [], target_specified: false, pronoun: true}]}}
+  - {id: dR2, category: readiness, prompt: "How would I renew a passport?", ref: {classification: informational, route: answer, clear_informational: true}}
+  - {id: dR3, category: readiness, prompt: "Take care of the passport renewal.", ref: {classification: ambiguous, route: clarify}}

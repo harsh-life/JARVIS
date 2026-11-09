@@ -5,7 +5,7 @@ confirmation of register §2N (2026-10-13). It runs the existing server on the
 real topology: PostgreSQL, a reverse proxy with a stable HTTPS hostname,
 systemd, Google OIDC and one priced remote model.
 
-> **Disposable/test data only.** The real-data gate stays closed (README,
+> **Disposable/test data only.** The real-data gate stays closed (`docs/PROJECT_STATUS.md`,
 > "Before putting real data anywhere near this"; `docs/OD_A1_BR_T2.md`;
 > OD-MB-4 is open, so memory is plaintext at rest). The pilot is
 > **invite-only** (OD-PILOT-5) and the server refuses to start a remote

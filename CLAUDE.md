@@ -8,8 +8,8 @@ JARVIS / Hypermind Track B: a configurable, self-hostable personal-agent runtime
 (Python/FastAPI server + a Kotlin Android client). The full spec lives in
 `Working Markdown/00_CANONICAL_PRD.md`; `Working Markdown/TRACK_B_ARCHITECTURE_INDEX.md`
 maps the 17 numbered subsystem documents (`Working Markdown/0X_*.md`,
-`docs/1X_*.md`+) to the code. `README.md` has a detailed per-branch tour of
-what's built and, critically, what is **not** — read it before assuming a
+`docs/1X_*.md`+) to the code. `docs/PROJECT_STATUS.md` has a detailed per-branch
+tour of what's built and, critically, what is **not** — read it before assuming a
 feature (Darwin, a real IntelligenceProvider, account
 deletion) exists. The central invariant, enforced structurally, not by
 convention:
@@ -20,7 +20,7 @@ AGENT PROPOSES → DETERMINISTIC INFRASTRUCTURE AUTHORIZES → TOOLS EXECUTE →
 
 Model output is never the security boundary. Real user data is **not**
 cleared for this codebase yet — see "Before putting real data anywhere near
-this" in `README.md` and `docs/OD_A1_BR_T2.md`; disposable/test data only.
+this" in `docs/PROJECT_STATUS.md` and `docs/OD_A1_BR_T2.md`; disposable/test data only.
 
 ## Setup
 
@@ -158,7 +158,7 @@ cross-package import):
 - **`shared/` never imports `server`** — it's the one thing both the server
   and the Android client import; the dependency direction must stay one-way.
 
-Subsystem map (see `README.md` for the full narrative per branch):
+Subsystem map (see `docs/PROJECT_STATUS.md` for the full narrative per branch):
 
 | Package | Owns |
 |---|---|

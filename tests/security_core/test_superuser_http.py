@@ -323,6 +323,9 @@ async def test_the_superuser_import_contract_catches_a_violation(tmp_path, modul
     copy = tmp_path / "repo"
     shutil.copytree(REPO_ROOT / "server", copy / "server", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(REPO_ROOT / "shared", copy / "shared", ignore=shutil.ignore_patterns("__pycache__"))
+    # docs/31: pyproject's import contracts also cover the experiment harness.
+    shutil.copytree(REPO_ROOT / "experiments", copy / "experiments",
+                    ignore=shutil.ignore_patterns("__pycache__", "results"))
     shutil.copy(REPO_ROOT / "pyproject.toml", copy / "pyproject.toml")
     target = copy / module
     target.write_text(line + target.read_text())

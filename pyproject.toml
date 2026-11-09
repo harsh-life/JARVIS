@@ -82,7 +82,7 @@ filterwarnings = [
 ]
 
 [tool.importlinter]
-root_packages = ["server", "shared"]
+root_packages = ["server", "shared", "experiments"]
 # Required for the "Tools/agent cannot reach raw process or socket primitives"
 # contract below, whose forbidden_modules (subprocess, socket) are stdlib, not
 # one of root_packages.
@@ -752,3 +752,59 @@ forbidden_modules = [
     "server.voice",
 ]
 allow_indirect_imports = "True"
+
+# docs/31 (Phase 0): the isolated intelligence experiment harness. Production
+# never depends on it — not directly, not through a chain — so nothing the
+# harness does can reach a request, and it can be deleted without touching the
+# server. `shared` is covered by its own contract above (it imports no server
+# code, and therefore none of this either).
+[[tool.importlinter.contracts]]
+name = "Production never imports the experiment harness (docs/31)"
+type = "forbidden"
+source_modules = ["server", "shared"]
+forbidden_modules = ["experiments"]
+
+# docs/31: what the harness may reuse is the model adapters, the shared
+# schemas and configuration (to build a snapshot with the server's own
+# catalogue validation). It reaches no secret, store, memory, vault, tool,
+# execution primitive, authorization engine, identity or superuser code, no
+# Agent Factory, no gateway or composition root, no scheduler, voice, Judge,
+# dashboard or Track A socket.
+[[tool.importlinter.contracts]]
+name = "The experiment harness reaches no production authority or state (docs/31)"
+type = "forbidden"
+source_modules = ["experiments"]
+forbidden_modules = [
+    "server.secrets",
+    "server.storage",
+    "server.security",
+    "server.auth",
+    "server.graph",
+    "server.capabilities",
+    "server.memory",
+    "server.vault",
+    "server.tools",
+    "server.modeltools",
+    "server.execution",
+    "server.fs",
+    "server.net",
+    "server.agents",
+    "server.agent",
+    "server.gateway",
+    "server.composition",
+    "server.scheduler",
+    "server.voice",
+    "server.evaluation",
+    "server.dashboard",
+    "server.intelligence",
+    "server.presentation",
+]
+# No exceptions: E0's production prompt is a frozen copy held byte-for-byte
+# to `server.agent.context` by tests/experiments/test_baseline_fidelity.py.
+
+[[tool.importlinter.contracts]]
+name = "The experiment harness opens no process or socket of its own (docs/31, REPO-T5)"
+type = "forbidden"
+source_modules = ["experiments"]
+forbidden_modules = ["subprocess", "socket"]
+allow_indirect_imports = true

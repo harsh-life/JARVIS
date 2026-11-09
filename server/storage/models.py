@@ -31,6 +31,7 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Uuid,
+    event,
     text,
 )
 from sqlalchemy import JSON as SAJSON
@@ -1300,3 +1301,56 @@ class AgentGatewayNonceRow(Base):
     __table_args__ = (
         CheckConstraint("status IN ('in_progress','done')", name="ck_agent_gateway_nonces_status"),
     )
+
+
+class IntelligenceProfileRow(Base):
+    """docs/30 — one user's named experiment profile. Owned by the
+    authenticated user who created it; one private workspace per user, so no
+    graph scope (OD-PILOT-2: graph-scoped model configuration is deferred).
+    Read by the Workbench and exported to the experiment harness; nothing in
+    the production request lifecycle reads it, and selecting anything in it
+    grants nothing."""
+
+    __tablename__ = "intelligence_profiles"
+
+    profile_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    current_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("current_version >= 1", name="ck_intelligence_profiles_version"),
+        Index("ix_intelligence_profiles_owner", "owner_user_id"),
+    )
+
+
+class IntelligenceProfileVersionRow(Base):
+    """docs/30 — one immutable version of a profile: the validated
+    `IntelligenceProfileDocument` and its canonical hash. Never updated (an
+    attempt raises, see the listener below); a change is a new version, so an
+    experiment holding an exported snapshot is never changed under it."""
+
+    __tablename__ = "intelligence_profile_versions"
+
+    profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("intelligence_profiles.profile_id"), primary_key=True
+    )
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    document: Mapped[dict] = mapped_column(SAJSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("version >= 1", name="ck_intelligence_profile_versions_version"),
+    )
+
+
+class ImmutableRowError(Exception):
+    """A write tried to change a row the contract says is never updated."""
+
+
+@event.listens_for(IntelligenceProfileVersionRow, "before_update")
+def _refuse_version_update(mapper, connection, target) -> None:  # noqa: ARG001
+    raise ImmutableRowError("an intelligence profile version is immutable; save a new version instead")

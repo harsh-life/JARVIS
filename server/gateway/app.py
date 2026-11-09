@@ -38,6 +38,7 @@ from server.gateway.routers import (
     device_channel,
     graphs,
     health,
+    intelligence,
     jobs,
     me,
     memory,
@@ -49,6 +50,7 @@ from server.gateway.routers import (
 )
 from server.gateway.security import SecurityCore, build_security_core
 from server.gateway.security_errors import install_security_error_handlers
+from server.gateway.web_ui import mount_web_ui
 from server.security.usage import usage_limits_from_config
 from server.storage import StorageBackend
 
@@ -163,8 +165,11 @@ def create_app(
     v1.include_router(me.router)
     v1.include_router(usage.router)
     v1.include_router(model_config.router)
+    v1.include_router(intelligence.router)
     app.include_router(v1)
     app.include_router(auth.public_router)
+    # Pilot plan C11 / docs/30: the browser client's static files (no data).
+    mount_web_ui(app)
 
     # The agent runtime is assembled above this layer (server/composition/) and
     # handed in through the `AgentTaskPort` Protocol: the gateway sits below
@@ -201,6 +206,9 @@ def create_app(
     app.state.usage_limits = usage_limits_from_config(config) if config else None
     # Pilot plan C7: the operator-published models a user may select.
     app.state.model_catalog = model_config.catalog_from_config(config)
+    # docs/30: the Intelligence Workbench reads the operator's catalogue from
+    # here (`workbench.enabled: false` → its routes answer 503).
+    app.state.workbench_config = config
     # docs/23 — App Links, the device channel. An explicit argument wins over
     # the loaded config; with neither, the defaults (everything off) apply.
     app.state.android = android_config or (config.android if config else AndroidConfig())

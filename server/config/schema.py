@@ -24,6 +24,7 @@ from typing import Annotated, Literal
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from shared.schemas.agent_factory import AgentModelProfile
+from shared.schemas.intelligence import KIND_DELEGATION, OUTPUT_SCHEMAS, BackendKind, DelegationMode, StateModel
 from shared.schemas.push import FcmClientOptions, PushProvider
 
 # A secret reference names *where* to obtain a secret; it is never the
@@ -996,6 +997,171 @@ class SecretsStoreConfig(StrictModel):
     kek_source: SecretRef
 
 
+
+# ── docs/30: the Intelligence Workbench's operator catalogue ───────────────
+# Everything a user may *select* for an experiment profile is declared here by
+# the operator: experiment-only models (with endpoint and price — never shown
+# to a user), orchestration backends (an entry is a description, not an
+# integration: whether the harness can run it is decided by code, see
+# `shared.schemas.intelligence.HARNESS_ADAPTERS`), specializations and their
+# prompt profiles, and the ceilings a profile must fit inside. A user cannot
+# change any of it; a profile names entries by id.
+
+_SLUG = r"^[a-z][a-z0-9_.-]{0,63}$"
+
+
+class WorkbenchModelConfig(ModelEntryConfig):
+    """An experiment-only catalogue model, `workbench.<id>`. Selectable in an
+    experiment profile, never as a user's production model (that stays M2's
+    `agent.primary` / `agent.fallback`)."""
+
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,47}$")
+    display_name: str | None = Field(default=None, max_length=80)
+
+
+class PromptProfileConfig(StrictModel):
+    id: str = Field(pattern=_SLUG)
+    versions: list[str] = Field(default_factory=lambda: ["1"], min_length=1)
+
+
+class SpecializationConfig(StrictModel):
+    id: str = Field(pattern=r"^[a-z][a-z0-9_]{1,31}$")
+    display_name: str = Field(max_length=80)
+    description: str = Field(default="", max_length=400)
+    output_schema: str
+    prompt_profiles: list[PromptProfileConfig] = Field(min_length=1)
+    enabled: bool = True
+
+    @field_validator("output_schema")
+    @classmethod
+    def _known_schema(cls, value: str) -> str:
+        if value not in OUTPUT_SCHEMAS:
+            raise ValueError(f"unknown output schema {value!r}; known: {sorted(OUTPUT_SCHEMAS)}")
+        return value
+
+
+def _default_specializations() -> list[SpecializationConfig]:
+    return [
+        SpecializationConfig(
+            id="research", display_name="Research", output_schema="research.v1",
+            description="Answers a bounded question from the evidence it is given; cites evidence ids.",
+            prompt_profiles=[PromptProfileConfig(id="research.default")],
+        ),
+        SpecializationConfig(
+            id="assessment", display_name="Assessment", output_schema="assessment.v1",
+            description="Assesses supplied material against criteria; reports contradictions and gaps.",
+            prompt_profiles=[PromptProfileConfig(id="assessment.default")],
+        ),
+        SpecializationConfig(
+            id="planning", display_name="Planning", output_schema="planning.v1",
+            description="Proposes ordered steps with dependencies; proposes, never acts.",
+            prompt_profiles=[PromptProfileConfig(id="planning.default")],
+        ),
+    ]
+
+
+class OrchestrationBackendConfig(StrictModel):
+    id: str = Field(pattern=_SLUG)
+    display_name: str = Field(max_length=80)
+    kind: BackendKind
+    # Which harness adapter would run it. A name the harness does not
+    # implement is allowed — the entry is then shown `not_integrated`.
+    adapter: str = Field(pattern=_SLUG)
+    # Offered to users. A disabled entry is invisible to them.
+    enabled: bool = True
+    runtime: str = Field(max_length=80)
+    requires_model: bool = False
+    # Catalogue ids the backend may use as its own model; None = any.
+    allowed_models: list[str] | None = None
+    # An operator-held label for where the backend lives (never served, never
+    # user-settable; an actual connection would go through `server.net`).
+    endpoint_ref: str | None = Field(default=None, max_length=120)
+    delegation_mode: DelegationMode
+    state_model: StateModel = StateModel.STATELESS
+    supports_parallel: bool = False
+    capabilities: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    max_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+    max_fan_out: int = Field(default=4, ge=1, le=16)
+    max_budget: float = Field(default=0.0, ge=0)
+    config_version: str = Field(default="1", pattern=r"^[0-9A-Za-z][0-9A-Za-z._-]{0,15}$")
+
+    @model_validator(mode="after")
+    def _coherent(self) -> "OrchestrationBackendConfig":
+        if self.delegation_mode not in KIND_DELEGATION[self.kind]:
+            raise ValueError(
+                f"orchestration backend {self.id!r}: a {self.kind.value} cannot use "
+                f"delegation mode {self.delegation_mode.value!r}"
+            )
+        if self.kind is BackendKind.PLANNER and not self.requires_model:
+            raise ValueError(f"orchestration backend {self.id!r}: a planner needs a model")
+        if self.kind is BackendKind.WORKFLOW_ENGINE and self.requires_model:
+            raise ValueError(f"orchestration backend {self.id!r}: a workflow engine uses no model")
+        return self
+
+
+def _default_backends() -> list[OrchestrationBackendConfig]:
+    return [
+        OrchestrationBackendConfig(
+            id="templates.deterministic", display_name="Deterministic task templates",
+            kind=BackendKind.WORKFLOW_ENGINE, adapter="deterministic_templates", runtime="jarvis-experiments",
+            delegation_mode=DelegationMode.FIXED_TEMPLATE, state_model=StateModel.STATELESS,
+            supports_parallel=True, max_fan_out=4, max_timeout_seconds=60.0,
+            capabilities=["hand-authored decomposition", "dependency ordering", "parallel dispatch"],
+            limitations=["no routing decisions", "the plan is fixed per task"],
+        ),
+        OrchestrationBackendConfig(
+            id="planner.model", display_name="Model-based planner",
+            kind=BackendKind.PLANNER, adapter="model_planner", runtime="jarvis-experiments",
+            requires_model=True, delegation_mode=DelegationMode.PLAN_ONLY, state_model=StateModel.STATELESS,
+            supports_parallel=True, max_fan_out=4, max_timeout_seconds=60.0,
+            capabilities=["task decomposition", "specialist selection", "structured plan output"],
+            limitations=["produces a plan only; JARVIS validates and dispatches it",
+                         "one level deep; no recursive planning"],
+        ),
+    ]
+
+
+class WorkbenchLimitsConfig(StrictModel):
+    max_profiles_per_user: int = Field(default=20, ge=1, le=500)
+    max_versions_per_profile: int = Field(default=100, ge=1, le=10000)
+    max_fan_out: int = Field(default=4, ge=1, le=16)
+    max_call_timeout_seconds: float = Field(default=120.0, gt=0, le=600)
+    max_overall_timeout_seconds: float = Field(default=600.0, gt=0, le=3600)
+    # Ceilings on what a profile may *declare*; the harness enforces the
+    # profile's own budget per call (13 §3 does the same in production).
+    max_per_call_budget: float = Field(default=0.05, ge=0)
+    max_overall_budget: float = Field(default=0.5, ge=0)
+
+
+class WorkbenchConfig(StrictModel):
+    """docs/30. Off by default: `/intelligence/*` answers `503 workbench`."""
+
+    enabled: bool = False
+    models: list[WorkbenchModelConfig] = Field(default_factory=list)
+    orchestration_backends: list[OrchestrationBackendConfig] = Field(default_factory=_default_backends)
+    specializations: list[SpecializationConfig] = Field(default_factory=_default_specializations)
+    limits: WorkbenchLimitsConfig = Field(default_factory=WorkbenchLimitsConfig)
+
+    @model_validator(mode="after")
+    def _unique_and_resolvable(self) -> "WorkbenchConfig":
+        for label, ids in (
+            ("workbench.models", [m.id for m in self.models]),
+            ("workbench.orchestration_backends", [b.id for b in self.orchestration_backends]),
+            ("workbench.specializations", [s.id for s in self.specializations]),
+        ):
+            if len(ids) != len(set(ids)):
+                raise ValueError(f"{label}: ids must be unique")
+        model_ids = {f"workbench.{m.id}" for m in self.models} | {"agent.primary", "agent.fallback"}
+        for backend in self.orchestration_backends:
+            unknown = set(backend.allowed_models or ()) - model_ids
+            if unknown:
+                raise ValueError(
+                    f"orchestration backend {backend.id!r}: allowed_models names unknown entries {sorted(unknown)}"
+                )
+        return self
+
+
 class AppConfig(StrictModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     agent: AgentSectionConfig = Field(default_factory=AgentSectionConfig)
@@ -1011,6 +1177,8 @@ class AppConfig(StrictModel):
     android: AndroidConfig = Field(default_factory=AndroidConfig)
     # docs/29 — the Agent Factory, off by default.
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
+    # docs/30 — the Intelligence Workbench's operator catalogue, off by default.
+    workbench: WorkbenchConfig = Field(default_factory=WorkbenchConfig)
     security: SecurityConfig
     secrets: SecretsStoreConfig
 

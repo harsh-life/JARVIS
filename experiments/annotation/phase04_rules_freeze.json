@@ -1,0 +1,25 @@
+{
+  "frozen_at": "2026-11-06T21:49:03.998789+00:00",
+  "code": {
+    "experiments/rules_v3.py": "03b5cff9f502b9837742d08c4d17ce97c14c3ca50caa88f442c5b40422a45ef3",
+    "experiments/completeness.py": "1bdc0c8259823103e21a64ae76074716b3de64c0554f591a0eb9ed6bdf46c719",
+    "experiments/referents.py": "b19a9de88f689fbed4ca952a7172396bfbf138598b042ac71ff58aa3a9b981a4",
+    "experiments/conditions.py": "6bb7e2b26d73f72922f84c598d18f36697cacd532ccaade0980cbe946440ff8e",
+    "experiments/suspicion.py": "4514e985ecdd4a69d1f6698050b159165294b9595a1e1a7b4cb4fe132f68d314",
+    "experiments/recognizers.py": "256db02ab92573d24da7da7dd6639cc3c92733482ac71f2f09c3db10addc3974",
+    "experiments/rules_v2.py": "30f930c3e529f95e72a3c22dce77ccbcef507e013f4cd932ae236151ed74008b",
+    "experiments/intent.py": "e9c9859391fac348bf826ed3b81819318cca01c8094c9b52769f389b297bcf72",
+    "experiments/interpretation.py": "31a2384cf35d3665e1414b565ed8e3e8104fb8e932836d28c98e686cb80093af",
+    "experiments/routing.py": "386661bab74fed35bb1c32685f5af064932ea4e77c60c2b97b89249ccdc0386c",
+    "experiments/intent_eval_v3.py": "84fdaad52c0bc336a78f35e1836a7d149a1f8e51d0c47c7bd0e626710be46d61",
+    "experiments/intent_eval_v4.py": "e4413a756246d63b7917ae9c31140400b48aa8b856041f271042a032c26221e2"
+  },
+  "model_prompt": {
+    "name": "INTENT_PROMPT_V1",
+    "sha256": "5bb019a5f134e5bc9a66f34ef3a57e812685b4a2541ba29c34cdf490d6abc573"
+  },
+  "annotation_spec": {
+    "path": "experiments/annotation/phase03_packet/INSTRUCTIONS.md",
+    "sha256": "edf3c392f8298efedd727c0030ea539fb87357909e6082019f01d9cc0c75a37d"
+  }
+}
