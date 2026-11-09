@@ -38,7 +38,7 @@ and recorded the evidence and the release-gate status in
 **`docs/RELEASE_VALIDATION.md`**. It added no feature. The gate for real user
 data is **not** open (see "Before putting real data anywhere near this" below).
 
-**Phase 0 — Intelligence Workbench** (`feature/intelligence-workbench`,
+**Phase 0 — Intelligence Workbench** (merged into `main` in PR #52,
 `docs/30_INTELLIGENCE_WORKBENCH.md`): a browser client (`web/`, served at
 `/ui`) for the user's production model (M2's `/config/model`, unchanged) and
 for versioned, owner-scoped *experiment* profiles (`/intelligence/*`, off by

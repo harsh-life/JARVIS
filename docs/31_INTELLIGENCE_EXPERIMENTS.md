@@ -1,7 +1,7 @@
 # 31 — Intelligence experiment harness and orchestration boundary (Phase 0)
 
-**Status:** built on `feature/intelligence-workbench`, in `experiments/`. This is
-**not production.** Nothing under `server/` imports it, it is not mounted as an
+**Status:** the experiment harness is merged into `main` (PR #52), in `experiments/`.
+This is **not production functionality.** Nothing under `server/` imports it, it is not mounted as an
 API, and the production request lifecycle is unchanged. **No live Letta,
 LangGraph, Jev or other external orchestration integration exists.** The adapter
 contract below needs review before one is built.
