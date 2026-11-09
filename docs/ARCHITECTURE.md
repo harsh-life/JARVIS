@@ -8,7 +8,7 @@ subsystem doc (`Working Markdown/0X_*.md`, `docs/1X_*.md`+) disagree, the
 subsystem doc and the code win — file an issue against this document, not
 the other way around.
 
-Companion reading: `README.md` (what's built, per branch, and what is not),
+Companion reading: `docs/PROJECT_STATUS.md` (what's built, per branch, and what is not),
 `CLAUDE.md` (module layering + import-linter contracts), `Working Markdown/TRACK_B_ARCHITECTURE_INDEX.md`
 (the 17-document map), `docs/29_AGENT_FACTORY_ASSESSMENT.md` (the Agent
 Factory's own detailed contract), `docs/HOW_JARVIS_WORKS.md` (the narrative
@@ -214,7 +214,7 @@ escalate, or execute on their own say):
 | Judge (`server/evaluation`) | scores and recommends | `server.evaluation` never authorizes, executes, or resolves secrets, and the runtime never depends on it (CLAUDE.md layering) |
 | Scheduler (`server/scheduler`) | fires a reminder that delivers a message | a firing reminder "delivers a message, never executes" (CLAUDE.md); the tap that follows is the owner's own authenticated run, re-checked from scratch |
 | Memory (`server/memory`, Mem0) | hydrates context | visibility is re-checked with the engine's own predicate at hydration, never trusted from the store |
-| Android client | perceives the device, carries user intent | "a phone is an execution target bound to a principal, not a source of authority" (README) |
+| Android client | perceives the device, carries user intent | "a phone is an execution target bound to a principal, not a source of authority" (docs/PROJECT_STATUS.md) |
 | Voice (`server/voice`) | STT/TTS | "voice can never confirm or step up" (CLAUDE.md) |
 
 ---

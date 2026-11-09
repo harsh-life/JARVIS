@@ -4,7 +4,7 @@ Read `docs/ARCHITECTURE.md` alongside this document for the diagrams; this
 is the prose version, meant to be read start to finish once. For the
 detailed contract behind any one subsystem, jump to its `Working Markdown/0X_*.md`
 or `docs/1X_*.md`+ document — `Working Markdown/TRACK_B_ARCHITECTURE_INDEX.md`
-maps all of them. `README.md` has the per-branch tour of what's actually
+maps all of them. `docs/PROJECT_STATUS.md` has the per-branch tour of what's actually
 built vs. still a proposal; `CLAUDE.md` has the exact module-layering rules
 `import-linter` enforces in CI.
 
@@ -148,7 +148,7 @@ way to introduce a real vulnerability in this codebase:
 - Touching anything that crosses the layering in `CLAUDE.md`'s table → run
   `lint-imports --config pyproject.toml` before you're surprised by CI.
 - Adding a new external runtime (do not, without an owner decision first:
-  see README's "not built" list) → it would need its own
+  see the "not built" list in docs/PROJECT_STATUS.md) → it would need its own
   `AgentRuntimeProfile`, `AgentRuntimeProvider`, and — per OD-AF-11…15 — its
   own isolation and egress story reviewed the way Browser Use's was.
 - Unsure whether something is a security boundary → read

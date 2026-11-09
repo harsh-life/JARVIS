@@ -32,7 +32,7 @@ The client-side conformance cases a desktop build must pass are in
 
 ## 1. Current repository state
 
-**Built and merged** (see `README.md`): the security core (Google OIDC as a public
+**Built and merged** (see `docs/PROJECT_STATUS.md`): the security core (Google OIDC as a public
 PKCE client, Ed25519 device credentials, opaque access tokens, step-up by
 re-attestation), the agent runtime with task modes and the breaker, constrained
 execution, memory and vault, the Android client (docs/23 Phases B–G: device-held

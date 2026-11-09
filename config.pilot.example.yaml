@@ -13,7 +13,7 @@
 # credentials (deploy/jarvis.service), never through this file.
 #
 # What this configuration is NOT cleared for: real user data. The real-data
-# gate stays closed (README "Before putting real data anywhere near this",
+# gate stays closed (docs/PROJECT_STATUS.md "Before putting real data anywhere near this",
 # docs/OD_A1_BR_T2.md). Disposable/test data only.
 #
 # Startup preconditions (server/config/preconditions.py, checked by the
