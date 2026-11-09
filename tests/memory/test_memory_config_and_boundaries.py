@@ -279,10 +279,15 @@ def _fixture_project(tmp_path: Path, violation: tuple[str, str]) -> Path:
     (root / "server/security/superuser.py").write_text("")
     (root / "server/gateway/superuser_auth.py").write_text("")
     (root / "server/gateway/control_port.py").write_text("")
+    (root / "server/gateway/evaluation_control_port.py").write_text("")
+    (root / "server/gateway/console_port.py").write_text("")
     (root / "server/gateway/routers").mkdir()
     (root / "server/gateway/routers/__init__.py").write_text("")
-    (root / "server/gateway/routers/control.py").write_text("")
-    for name in ("supervisor", "latch", "break_glass"):
+    # import-linter >= 2.16 rejects a contract that names a module absent from
+    # the graph, so every forbidden module of the superuser contract must exist.
+    for name in ("control", "evaluation_control", "admin"):
+        (root / f"server/gateway/routers/{name}.py").write_text("")
+    for name in ("supervisor", "latch", "break_glass", "improvements", "evaluation", "console"):
         (root / f"server/composition/{name}.py").write_text("")
     (root / "server/memory/mem0_provider.py").write_text("import mem0\n")
     source, target = violation
