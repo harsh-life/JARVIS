@@ -177,7 +177,7 @@ mod tests {
         assert_eq!(ServerOrigin::parse("https://jarvis.example.com/api"), Err(OriginError::NotAnOrigin));
         assert_eq!(ServerOrigin::parse("https://jarvis.example.com/?x=1"), Err(OriginError::NotAnOrigin));
         assert_eq!(ServerOrigin::parse("https://jarvis.example.com/#f"), Err(OriginError::NotAnOrigin));
-        assert_eq!(ServerOrigin::parse("https://u:p@jarvis.example.com"), Err(OriginError::Credentials));
+        assert_eq!(ServerOrigin::parse("https://u:p@jarvis.example.com"), Err(OriginError::Credentials)); // TEST-ONLY placeholder: a rejected credentialed URL
         assert_eq!(ServerOrigin::parse("file:///etc/passwd"), Err(OriginError::NotAUrl));
         assert_eq!(ServerOrigin::parse("javascript:alert(1)"), Err(OriginError::NotAUrl));
         assert_eq!(ServerOrigin::parse("not a url"), Err(OriginError::NotAUrl));
@@ -198,7 +198,7 @@ mod tests {
     fn web_urls() {
         assert!(validate_web_url("https://jarvis.example.com/ui/").is_ok());
         assert!(validate_web_url("http://jarvis.example.com/ui/").is_err());
-        assert!(validate_web_url("https://user:pw@jarvis.example.com/").is_err());
+        assert!(validate_web_url("https://user:pw@jarvis.example.com/").is_err()); // TEST-ONLY placeholder
         assert!(validate_web_url("file:///tmp/x.html").is_err());
     }
 }

@@ -137,7 +137,7 @@ pub fn screen_locked() -> Option<bool> {
     // SAFETY: documented out-parameters; the buffer is freed below.
     let ok = unsafe {
         WTSQuerySessionInformationW(
-            WTS_CURRENT_SERVER_HANDLE,
+            Some(WTS_CURRENT_SERVER_HANDLE),
             WTS_CURRENT_SESSION,
             WTSSessionInfoEx,
             &mut buffer,
