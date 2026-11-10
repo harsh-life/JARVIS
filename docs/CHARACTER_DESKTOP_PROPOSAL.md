@@ -286,7 +286,7 @@ interfaces — the character is decorative and smoothed by design.
 | `desktop/src/test/*.test.mjs` | atlas pins, frame bounds, palette and hard alpha, all seven expressions' animations, bands, integer scaling, fallbacks, transitions without flicker, reduced motion, hidden, long idle; the webview boundary |
 | `desktop/src-tauri` `cargo test` | identity formats against `proof_vectors.json`, origin rules, report validation against the shared samples, loopback listener, keystore, prefs; sign-in/refresh/revocation/sign-out against a mock server; redirect refusal; capability/command/CSP pins |
 | `.github/workflows/desktop.yml` | the above on Ubuntu 22.04/latest, macOS and Windows; `tauri build`; smoke tests of the **installed** `.deb` (Xvfb X11; headless Weston Wayland), the AppImage, the app run from the mounted DMG, and the MSI-installed exe, with screenshots; SHA-256 checksums; unsigned artifacts |
-| `.github/workflows/desktop-release.yml` | tag `desktop-v*`: signed/notarized builds only when the secrets exist, a CI-verified signing report, checksums, a **draft** GitHub Release |
+| `.github/workflows/desktop-release.yml` | tag `desktop-v*` (must already exist on `main`): every build from the tag's commit, re-checked before and after the draft; signed/notarized builds only when the secrets exist, and a CI-verified signing report in which ad-hoc signatures count as unsigned; checksums; a **draft** GitHub Release. Runbook and checks: `docs/DESKTOP_RELEASE.md`, tested by `tests/foundation/test_desktop_release_integrity.py` |
 
 Run locally:
 

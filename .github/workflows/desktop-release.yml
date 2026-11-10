@@ -1,5 +1,5 @@
 # Desktop companion releases (OD-DESK-3): GitHub Releases, as a *draft* the
-# owner publishes by hand.
+# owner publishes by hand. Runbook: docs/DESKTOP_RELEASE.md.
 #
 #   macOS   — DMG, outside the Mac App Store (the transparent window needs
 #             Tauri's macOSPrivateApi). Signed and notarized only when the
@@ -7,14 +7,31 @@
 #   Windows — MSI. Signed only when the certificate secrets exist.
 #   Linux   — .deb and AppImage (Flatpak deferred).
 #
-# Nothing is ever *described* as signed: each job verifies the artifact
-# (codesign/spctl/stapler, Get-AuthenticodeSignature) and writes what it
-# found to SIGNING-<os>.txt, which goes into the release.
+# One tag, one commit (desktop/scripts/release_integrity.py):
+#   - This workflow never creates a tag. The tag must already exist on the
+#     remote, be named desktop-vX.Y.Z[-pre], peel to a commit on main, and name
+#     the version the app declares (`resolve`).
+#   - Every build checks out that exact commit, not the branch a manual run was
+#     started from, and records it next to its artifacts (`inspect`).
+#   - Before the draft is created, every record must name the same commit, every
+#     artifact must match its recorded hash, and the tag must still point at
+#     that commit (`assemble`, `resolve --expect-sha`). `gh release create
+#     --verify-tag` cannot create a tag. The tag is checked once more after the
+#     draft exists, and a mismatched draft is deleted.
+#
+# Nothing is ever *described* as signed. Each build verifies its artifacts
+# with the platform's own tool (codesign -dvvv, Get-AuthenticodeSignature).
+# Only a Developer ID (macOS) or a Valid Authenticode signature (Windows)
+# counts as signed; an ad-hoc or linker signature does not. When a platform's
+# signing secrets are configured but its artifact has no verified signature,
+# that build fails. When anything is unsigned, the release title and notes say so.
 #
 # Secrets (repository → Settings → Secrets; never pasted anywhere else):
 #   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
 #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD (app-specific), APPLE_TEAM_ID
 #   WINDOWS_CERTIFICATE (base64 .pfx), WINDOWS_CERTIFICATE_PASSWORD
+#
+# No dependency cache is used here: a release builds from a clean slate.
 
 name: Desktop release
 
@@ -24,17 +41,49 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to create as a draft (e.g. desktop-v0.1.0)"
+        description: "An existing release tag on main to build and draft (e.g. desktop-v0.1.0). Never created by this workflow."
         required: true
 
 permissions:
   contents: read
 
+concurrency:
+  group: desktop-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
+  resolve:
+    name: resolve the release commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      # The release tooling comes from the workflow's own commit, so the
+      # workflow and its checks always come from the same commit.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Resolve and validate the tag
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          python desktop/scripts/release_integrity.py resolve \
+            --event "$EVENT" --ref "$GITHUB_REF" --input-tag "$INPUT_TAG" --event-sha "$GITHUB_SHA"
+
   build:
     name: build (${{ matrix.os }})
+    needs: resolve
     strategy:
-      fail-fast: false
+      fail-fast: false   # each platform's evidence is kept; draft-release still needs all three
       matrix:
         include:
           - os: ubuntu-22.04
@@ -51,10 +100,32 @@ jobs:
         shell: bash
         working-directory: desktop
     env:
+      RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+      RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
       HAS_APPLE: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_ID != '' }}
       HAS_WINDOWS: ${{ secrets.WINDOWS_CERTIFICATE != '' }}
     steps:
+      # The product: exactly the resolved commit. No token is left in .git/config
+      # while npm and cargo run third-party build code.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          persist-credentials: false
+
+      # The release tooling, from the workflow's own commit (see `resolve`).
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: _release_tooling
+          persist-credentials: false
+          sparse-checkout: desktop/scripts/release_integrity.py
+          sparse-checkout-cone-mode: false
+
+      - name: The checkout is the resolved commit
+        run: |
+          HEAD_SHA=$(git rev-parse HEAD)
+          echo "building $RELEASE_TAG from $HEAD_SHA"
+          [ "$HEAD_SHA" = "$RELEASE_SHA" ] || { echo "::error::checked out $HEAD_SHA, release is $RELEASE_SHA"; exit 1; }
 
       - name: Linux dependencies
         if: runner.os == 'Linux'
@@ -67,12 +138,22 @@ jobs:
         with:
           node-version: "22"
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Rust toolchain
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           rustup toolchain install stable --profile minimal && rustup default stable
-          if [ "${{ matrix.target }}" = "universal-apple-darwin" ]; then rustup target add aarch64-apple-darwin x86_64-apple-darwin; fi
+          if [ "$TARGET" = "universal-apple-darwin" ]; then rustup target add aarch64-apple-darwin x86_64-apple-darwin; fi
 
       - run: npm ci
+
+      - name: Shared ActivityPolicy + renderer + webview boundary (JS)
+        if: runner.os == 'Linux'
+        run: npm test
 
       - name: Tests before packaging
         working-directory: desktop/src-tauri
@@ -94,6 +175,8 @@ jobs:
 
       - name: Package
         env:
+          BUNDLES: ${{ matrix.bundles }}
+          TARGET: ${{ matrix.target }}
           # Read by the Tauri bundler on macOS; empty → an unsigned build.
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -102,79 +185,93 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          ARGS="--bundles ${{ matrix.bundles }}"
-          [ -n "${{ matrix.target }}" ] && ARGS="$ARGS --target ${{ matrix.target }}"
-          if [ -n "$WINDOWS_THUMBPRINT" ]; then
-            ARGS="$ARGS --config {\"bundle\":{\"windows\":{\"certificateThumbprint\":\"$WINDOWS_THUMBPRINT\",\"digestAlgorithm\":\"sha256\",\"timestampUrl\":\"http://timestamp.digicert.com\"}}}"
+          ARGS=(--bundles "$BUNDLES")
+          [ -n "$TARGET" ] && ARGS+=(--target "$TARGET")
+          if [ -n "${WINDOWS_THUMBPRINT:-}" ]; then
+            ARGS+=(--config "{\"bundle\":{\"windows\":{\"certificateThumbprint\":\"$WINDOWS_THUMBPRINT\",\"digestAlgorithm\":\"sha256\",\"timestampUrl\":\"http://timestamp.digicert.com\"}}}")
           fi
-          if [ "$HAS_APPLE" != "true" ]; then unset APPLE_CERTIFICATE APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD; fi
-          npx tauri build $ARGS
+          if [ "$HAS_APPLE" != "true" ]; then
+            unset APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          fi
+          npx tauri build "${ARGS[@]}"
 
-      - name: Collect, verify signing, checksum
+      - name: Collect, verify signing, record the build
+        env:
+          RUNNER_OS_NAME: ${{ runner.os }}
         run: |
           mkdir -p ../out
-          find src-tauri/target -path '*/release/bundle/*' -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.msi' \) -exec cp {} ../out/ \;
-          cd ../out
-          REPORT="SIGNING-${{ runner.os }}.txt"
-          echo "Signing report for ${{ runner.os }} (${{ github.ref_name }}), generated by CI — not a claim, a verification:" > "$REPORT"
-          for f in *; do
-            case "$f" in
-              *.dmg)
-                MNT=$(hdiutil attach -nobrowse -readonly "$f" | grep -o '/Volumes/.*' | head -1)
-                APP=$(ls -d "$MNT"/*.app | head -1)
-                if codesign --verify --deep --strict "$APP" 2>/dev/null; then SIGNED=yes; else SIGNED=no; fi
-                if spctl -a -t exec "$APP" 2>/dev/null; then GATE=accepted; else GATE=rejected; fi
-                if xcrun stapler validate "$f" >/dev/null 2>&1; then NOTARIZED=yes; else NOTARIZED=no; fi
-                hdiutil detach "$MNT" -quiet
-                echo "$f: code-signed=$SIGNED gatekeeper=$GATE notarization-stapled=$NOTARIZED" >> "$REPORT" ;;
-              *.msi)
-                STATUS=$(pwsh -NoProfile -Command "(Get-AuthenticodeSignature '$f').Status")
-                echo "$f: authenticode=$STATUS" >> "$REPORT" ;;
-              *.deb|*.AppImage)
-                echo "$f: not signed (Linux packages are distributed with SHA-256 checksums)" >> "$REPORT" ;;
-            esac
-          done
-          (sha256sum * 2>/dev/null || shasum -a 256 *) | grep -v SIGNING > "SHA256SUMS-${{ runner.os }}.txt"
-          cat "$REPORT" "SHA256SUMS-${{ runner.os }}.txt"
+          find src-tauri/target -path '*/release/bundle/*' -type f \
+            \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.msi' \) -exec cp {} ../out/ \;
+          case "$RUNNER_OS_NAME" in
+            macOS) EXPECT="$HAS_APPLE" ;;
+            Windows) EXPECT="$HAS_WINDOWS" ;;
+            *) EXPECT=false ;;
+          esac
+          python ../_release_tooling/desktop/scripts/release_integrity.py inspect \
+            --source .. --out ../out --os "$RUNNER_OS_NAME" \
+            --tag "$RELEASE_TAG" --sha "$RELEASE_SHA" --expect-signed "$EXPECT"
 
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.os }}
           path: out/
+          if-no-files-found: error
 
   draft-release:
-    needs: build
+    needs: [resolve, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+      RELEASE_SHA: ${{ needs.resolve.outputs.sha }}
+      EVENT: ${{ github.event_name }}
+      INPUT_TAG: ${{ inputs.tag }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          path: tooling
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - name: Create the draft release
+
+      - name: The tag still points at the built commit
+        working-directory: tooling
+        run: |
+          python desktop/scripts/release_integrity.py resolve --event "$EVENT" --ref "$GITHUB_REF" \
+            --input-tag "$INPUT_TAG" --event-sha "$GITHUB_SHA" --expect-sha "$RELEASE_SHA"
+
+      - name: Check the builds belong together; write checksums, signing report, notes
+        run: |
+          python tooling/desktop/scripts/release_integrity.py assemble \
+            --dist dist --tag "$RELEASE_TAG" --sha "$RELEASE_SHA" --meta-dir meta
+
+      - name: Create the draft release (never creates a tag)
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           cd dist
-          cat SHA256SUMS-*.txt > SHA256SUMS.txt
-          {
-            echo "JARVIS desktop companion — draft. Review before publishing."
-            echo
-            echo "The companion presents JARVIS's activity; it never approves, confirms or runs anything."
-            echo "Real user data is not cleared for this codebase yet (docs/PROJECT_STATUS.md)."
-            echo
-            echo '## Signing (verified by CI)'
-            echo '```'
-            cat SIGNING-*.txt
-            echo '```'
-            echo
-            echo '## SHA-256'
-            echo '```'
-            cat SHA256SUMS.txt
-            echo '```'
-          } > NOTES.md
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --prerelease \
-            --title "JARVIS Companion ${TAG#desktop-v}" --notes-file NOTES.md \
-            $(ls | grep -vE '^(NOTES\.md|SHA256SUMS-.*)$')
+          mapfile -t ASSETS < ../meta/ASSETS.txt
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --prerelease \
+            --title "$(cat ../meta/TITLE.txt)" --notes-file ../meta/NOTES.md -- "${ASSETS[@]}"
+
+      - name: Re-check the tag after the draft exists
+        working-directory: tooling
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! python desktop/scripts/release_integrity.py resolve --event "$EVENT" --ref "$GITHUB_REF" \
+              --input-tag "$INPUT_TAG" --event-sha "$GITHUB_SHA" --expect-sha "$RELEASE_SHA"; then
+            echo "::error::the tag moved while the draft was created; deleting this run's draft (the tag is left alone)"
+            gh release delete "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --yes
+            exit 1
+          fi
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,tagName \
+            --jq 'if .isDraft then "draft \(.tagName) ready for review" else error("release is not a draft") end'
