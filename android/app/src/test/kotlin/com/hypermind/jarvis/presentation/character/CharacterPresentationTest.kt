@@ -1,6 +1,5 @@
 package com.hypermind.jarvis.presentation.character
 
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -10,148 +9,103 @@ import kotlinx.coroutines.test.runCurrent
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import java.time.Instant
 
-/** OD-CHAR-2 end to end on virtual time: input → provider → selector → controller → expression. */
+/** OD-CHAR-4 end to end on virtual time: server report text → policy → expression and intensity. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CharacterPresentationTest {
     private val dispatcher = StandardTestDispatcher()
     private val scope = TestScope(dispatcher)
-    private val settings = CharacterSettings(idleTimeoutMillis = 60_000, minDisplayMillis = 1_000)
+    private val settings = CharacterSettings(idleTimeoutMillis = 60_000)
 
-    private fun presentation(provider: PresentationInferenceProvider = LocalCueScorer { Instant.now() }) =
+    private fun presentation() =
         CharacterPresentation(
             scope = scope.backgroundScope,
             clock = { scope.testScheduler.currentTime },
             settings = settings,
-            provider = provider,
-            inferenceContext = dispatcher,
         ).also { scope.runCurrent() }
+
+    private fun body(vararg scores: Pair<String, Int>): String {
+        val all =
+            mapOf(
+                "happy" to 1,
+                "satisfied" to 1,
+                "default" to 5,
+                "sleepy" to 1,
+                "surprised" to 1,
+                "angry" to 1,
+                "sad" to 1,
+            ) +
+                scores
+        return """{"schema_version": 1, "computed_at": "2026-11-10T12:00:00Z", "window_s": 1800,
+                  "scores": {${all.entries.joinToString { "\"${it.key}\": ${it.value}" }}},
+                  "components": {"engagement": 50, "productivity": 50, "steadiness": 100, "failure": 0,
+                                 "pressure": 10, "surprise": 0, "inactivity": 0}}"""
+    }
 
     @After
     fun tearDown() = scope.cancel()
 
     @Test
-    fun `it starts at default, reacts to the current request, and returns to default`() {
+    fun `it starts at default and presents a report`() {
         val character = presentation()
-        assertEquals(Expression.DEFAULT, character.expression.value)
-        character.onUtterance("yay, amazing")
-        scope.runCurrent()
-        assertEquals(Expression.HAPPY, character.expression.value)
-        scope.advanceTimeBy(5_001)
-        assertEquals(Expression.DEFAULT, character.expression.value)
-    }
-
-    @Test
-    fun `idle becomes sleepy and the next request wakes it`() {
-        val character = presentation()
-        scope.advanceTimeBy(60_001)
-        assertEquals(Expression.SLEEPY, character.expression.value)
-        character.onUtterance("what's the weather")
-        scope.runCurrent()
-        assertEquals(Expression.DEFAULT, character.expression.value)
-    }
-
-    @Test
-    fun `a verified completion shows satisfied`() {
-        val character = presentation()
-        character.onEvent(PresentationEvent.TaskCompleted)
-        scope.runCurrent()
+        assertEquals(PresentedCharacter(Expression.DEFAULT, 5), character.presented.value)
+        character.onActivityReport(body("satisfied" to 8))
+        assertEquals(PresentedCharacter(Expression.SATISFIED, 6), character.presented.value)
         assertEquals(Expression.SATISFIED, character.expression.value)
     }
 
     @Test
-    fun `only the latest of overlapping inferences is applied`() {
-        val slow = CompletableDeferred<InferenceResult?>()
-        var calls = 0
-        val character =
-            presentation { input ->
-                calls++
-                if (input.utterance == "first") slow.await() else LocalCueScorer { Instant.now() }.score(input)
-            }
-        character.onUtterance("first")
-        scope.runCurrent() // the first inference is under way (slow)
-        character.onUtterance("whoa") // and is overtaken
+    fun `a report goes stale on its own, and the baseline returns`() {
+        val character = presentation()
+        character.onActivityReport(body("happy" to 9))
+        assertEquals(Expression.HAPPY, character.expression.value)
+        scope.advanceTimeBy(settings.activityMaxAgeMillis + 2)
         scope.runCurrent()
-        slow.complete(LocalCueScorer { Instant.now() }.score(InferenceInput(utterance = "so sad")))
-        scope.runCurrent()
+        assertEquals(Expression.SLEEPY, character.expression.value) // and the local idle (60 s) has passed
+    }
+
+    @Test
+    fun `a surprise is brief without any further input`() {
+        val character = presentation()
+        character.onActivityReport(body("surprised" to 10, "sad" to 8))
         assertEquals(Expression.SURPRISED, character.expression.value)
-        assertEquals(2, calls)
+        scope.advanceTimeBy(settings.hold(Expression.SURPRISED) + 1)
+        scope.runCurrent()
+        assertEquals(PresentedCharacter(Expression.SAD, 4), character.presented.value)
     }
 
     @Test
-    fun `a failing or empty provider leaves the baseline`() {
-        val failing = presentation { error("model unavailable") }
-        failing.onUtterance("yay")
-        scope.runCurrent()
-        assertEquals(Expression.DEFAULT, failing.expression.value)
-        val empty = presentation { null }
-        empty.onUtterance("yay")
-        scope.runCurrent()
-        assertEquals(Expression.DEFAULT, empty.expression.value)
+    fun `garbage or no answer is discarded`() {
+        val character = presentation()
+        character.onActivityReport(body("angry" to 9))
+        character.onActivityReport("""{"scores": "lots"}""")
+        character.onActivityReport(null)
+        assertEquals(PresentedCharacter(Expression.ANGRY, 7), character.presented.value)
     }
 
     @Test
-    fun `malformed or stale model output is rejected`() {
-        val stale = presentation { LocalCueScorer { Instant.now().minusSeconds(60) }.score(it) }
-        stale.onUtterance("yay")
-        scope.runCurrent()
-        assertEquals(Expression.DEFAULT, stale.expression.value)
-        val malformed = presentation { InferenceResult.parse("""{"happy_score": 10}""") }
-        malformed.onUtterance("yay")
-        scope.runCurrent()
-        assertEquals(Expression.DEFAULT, malformed.expression.value)
-    }
-
-    @Test
-    fun `the provider sees only the last few utterances of this session`() {
-        val seen = mutableListOf<InferenceInput>()
-        val character =
-            presentation {
-                seen += it
-                null
-            }
-        for (n in 1..6) character.onUtterance("request $n")
-        scope.runCurrent()
-        assertEquals(listOf("request 3", "request 4", "request 5"), seen.last().context)
-        assertEquals("request 6", seen.last().utterance)
+    fun `local activity wakes the character from reported inactivity`() {
+        val character = presentation()
+        scope.advanceTimeBy(60_001)
+        character.onActivityReport(body("sleepy" to 10))
+        assertEquals(PresentedCharacter(Expression.SLEEPY, 10), character.presented.value)
+        character.onActivity()
+        assertEquals(PresentedCharacter(Expression.DEFAULT, 5), character.presented.value)
     }
 
     @Test
     fun `a preview is pinned until reset`() {
         val character = presentation()
         character.preview(Expression.ANGRY)
-        character.onUtterance("yay")
-        scope.advanceTimeBy(120_000)
-        assertEquals(Expression.ANGRY, character.expression.value)
+        character.onActivityReport(body("happy" to 10))
+        scope.advanceTimeBy(30_000)
+        assertEquals(PresentedCharacter(Expression.ANGRY, 5), character.presented.value)
         character.reset()
-        assertEquals(Expression.SLEEPY, character.expression.value)
+        assertEquals(PresentedCharacter(Expression.HAPPY, 10), character.presented.value)
     }
 
     @Test
-    fun `the presented flow carries the intensity, and the expression flow stays its state alone`() {
-        val character = presentation()
-        assertEquals(PresentedCharacter(Expression.DEFAULT, 5), character.presented.value)
-        character.onUtterance("yay, amazing") // the cue scorer's 8, at HAPPY's threshold of 7
-        scope.runCurrent()
-        assertEquals(PresentedCharacter(Expression.HAPPY, 6), character.presented.value)
-        assertEquals(Expression.HAPPY, character.expression.value)
-        character.onEvent(PresentationEvent.TaskCompleted) // a different state waits out the minimum display
-        scope.advanceTimeBy(1_001)
-        assertEquals(PresentedCharacter(Expression.SATISFIED, 6), character.presented.value)
-        scope.advanceTimeBy(60_001)
-        assertEquals(PresentedCharacter(Expression.SLEEPY, 2), character.presented.value)
-        assertEquals(Expression.SLEEPY, character.expression.value)
-    }
-
-    @Test
-    fun `a preview can choose its intensity`() {
-        val character = presentation()
-        character.preview(Expression.SAD, intensity = 10)
-        assertEquals(PresentedCharacter(Expression.SAD, 10), character.presented.value)
-        character.preview(Expression.SAD)
-        assertEquals(PresentedCharacter(Expression.SAD, 5), character.presented.value)
-        character.reset()
-        assertEquals(PresentedCharacter(Expression.DEFAULT, 5), character.presented.value)
+    fun `it asks as often as the settings say`() {
+        assertEquals(15_000L, presentation().pollIntervalMillis)
     }
 }

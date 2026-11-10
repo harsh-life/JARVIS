@@ -2,13 +2,16 @@
 
 The approved artwork and default presentation settings for JARVIS's
 expressive presentation character (owner decisions **OD-CHAR-1** and
-**OD-CHAR-2**, `docs/DECISION_REGISTER.md` §2M; how the pieces fit:
+**OD-CHAR-4**, `docs/DECISION_REGISTER.md` §2M; how the pieces fit:
 `docs/CHARACTER_PRESENTATION.md`).
 
 - `presentation.json` — the default presentation settings
   (`shared/schemas/presentation.py` `CharacterPresentationSettings`):
-  per-state activation thresholds, the confidence floor, transition, reduced
-  motion and the timing/idle policy. Tune behaviour here, not in code.
+  per-state activation thresholds, transition, reduced motion, the
+  timing/idle policy, intensity and the activity policy's polling, hysteresis
+  and cooldowns. Tune behaviour here, not in code. (`min_confidence` and
+  `max_result_age_ms` are kept for document compatibility and unused since
+  OD-CHAR-4.)
 - One directory per character profile; `default/` is the built-in profile.
   Each holds `profile.json` — the state → image mapping (`CharacterProfile`:
   `schema_version`, `profile_id`, `fallback`, `states`; a state the profile

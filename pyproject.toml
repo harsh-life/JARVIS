@@ -753,6 +753,43 @@ forbidden_modules = [
 ]
 allow_indirect_imports = "True"
 
+# OD-CHAR-4 (DECISION_REGISTER §2M): the character's activity scorer is
+# "Central AI"'s deterministic reading of the caller's own task rows. It reads
+# storage and the shared schemas and nothing else — not the request plumbing,
+# not the model layer or the intelligence configuration (no model judges a
+# presentation), not the agent runtime, memory or vault (it never sees task
+# text, results or anything about the user), and no deciding or acting
+# package, directly or through a chain. (Mirrored by
+# tests/presentation/test_activity_scoring.py.)
+[[tool.importlinter.contracts]]
+name = "The activity scorer reads task rows and nothing else (OD-CHAR-4)"
+type = "forbidden"
+source_modules = ["server.presentation.activity"]
+forbidden_modules = [
+    "server.agent",
+    "server.agents",
+    "server.auth",
+    "server.capabilities",
+    "server.composition",
+    "server.dashboard",
+    "server.evaluation",
+    "server.execution",
+    "server.fs",
+    "server.gateway",
+    "server.graph",
+    "server.intelligence",
+    "server.memory",
+    "server.models",
+    "server.modeltools",
+    "server.net",
+    "server.scheduler",
+    "server.secrets",
+    "server.security",
+    "server.tools",
+    "server.vault",
+    "server.voice",
+]
+
 # docs/31 (Phase 0): the isolated intelligence experiment harness. Production
 # never depends on it — not directly, not through a chain — so nothing the
 # harness does can reach a request, and it can be deleted without touching the

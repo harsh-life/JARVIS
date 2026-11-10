@@ -715,6 +715,8 @@ the row below and nothing else.
 
 ### OD-CHAR-2 — selection from the current interaction (OWNER DECISION, 2026-10-13)
 
+*Selection mechanism superseded by **OD-CHAR-4** (2026-11-10, below): the expression now presents JARVIS's operational activity, scored by the server; the utterance/prosody inputs and the cue scorer are retired. Its boundaries (never an authority, nothing stored, no claims of feeling) carry over.*
+
 **Owner instruction, 2026-10-13:** *"I am now directing JARVIS to support
 dynamic presentation-state selection based on the current interaction and
 verified application events."* OD-CHAR-1 left this open on purpose ("what it
@@ -754,6 +756,52 @@ OD-CHAR-2 excludes.
 | ID | Decision (ratified) | Exact scope |
 |---|---|---|
 | **OD-CHAR-3** | **The OD-CHAR-2 provider may be a learned model; prosody is an input; persona stays deferred; UI-only skinning may proceed.** | **Model:** the `PresentationInferenceProvider` may be a learned classifier (not only the deterministic cue scorer), provided it runs **on the endpoint** (weights shipped with or provisioned onto the client; no inference request leaves the device), is replaceable behind the same interface, and emits the same validated `PresentationInference` shape into the same deterministic selection policy. **Signals:** the current utterance (text or transcript), **vocal/prosodic features of the current utterance computed on the endpoint** (numbers such as loudness, pitch movement, speech rate — never raw audio, which is neither retained nor sent), at most the last three utterances of the current session in memory, and verified application events. **Configurable:** per-state activation thresholds, the confidence floor, transitions (duration, cross-fade or none, reduced motion) and the hold/idle/reset policy, as validated presentation settings. **Still excluded:** persistent emotional profiling of a user (no inferred state, score or feature is stored, logged, sent or turned into memory), relationship or trust scoring, any claim or first-person statement that JARVIS has subjective feelings, and any influence on authentication, identity, membership, ownership, capabilities, policy, risk classification, confirmation or step-up, budgets, or tool authorization or execution. **Deferred until a separate explicit decision:** custom personality text injected into model prompts, persistent persona memory, and any richer personality system (traits, tone or response-style settings that reach a prompt). **May proceed now:** UI-only avatar, artwork, colour and presentation settings — rendering choices that no prompt, memory, model configuration or authority path reads. Training a model on user data remains a separate decision (opt-in collection, no raw audio by default, OD-CHAR-2). |
+
+### OD-CHAR-4 — the character expresses JARVIS's operational activity (OWNER DIRECTION, 2026-11-10; row text pending owner confirmation)
+
+**Owner instruction, 2026-11-10:** *"Replace the current limited character-cue
+inference approach with a Central AI activity-based presentation system.
+JARVIS's character expresses its operational activity, not an inferred human
+emotion and not a claim of subjective feelings. Central AI should calculate a
+presentation score based on: interaction frequency … work performed … work
+impact and completion … time … workload pressure … inactivity."* With the
+semantics: happy = frequent, meaningful interaction and productive activity;
+satisfied = normal, steady operation; sleepy = sustained inactivity; angry =
+excessive workload or sustained overload, *"it must never imply anger at the
+user"*; surprised = unexpected operational events; sad = failed, interrupted
+or unsuccessful work; default = neutral baseline. The owner also directed that
+presentation state never influence authorization, execution, permissions,
+confirmation, risk classification or budgets; that it stay private to the
+user's session with no persistent emotional profiling; and *"Review whether
+OD-CHAR-2 needs an explicit amendment. Do not silently contradict an accepted
+owner decision."*
+
+**Why an amendment is needed.** The direction cannot be implemented inside
+OD-CHAR-1…3 as written, on three counts: (1) OD-CHAR-1 says the expression
+*"is not derived from task, connection or error state"* — an activity-based
+expression is derived from task records by definition; (2) OD-CHAR-2/3 say the
+state is selected *"on the endpoint"* and that nothing inferred is *"sent off
+the device"* — the direction has Central AI (the server) compute the score;
+(3) EMO-004 excludes *"any expression gated on … interaction history"* and
+OD-CHAR-2 narrowed it only for the last three utterances — interaction
+frequency over time is interaction history. The row below amends exactly
+these three points, narrowly, and nothing else. It is written from the
+owner's instruction; **the owner confirms or corrects its wording at PR
+review** (as §2N was confirmed after it was recorded).
+
+| ID | Decision | Exact scope |
+|---|---|---|
+| **OD-CHAR-4** | **The character's expression presents JARVIS's operational activity, scored by the server ("Central AI") from JARVIS's own task records over a bounded, decaying window, and chosen on the endpoint by a deterministic policy. It replaces OD-CHAR-2's utterance-based selection.** PRD §23's amendment is extended accordingly. | **Inputs allowed (server):** the caller's own `agent_tasks` rows that touch the last 30 minutes — origin (a present user's request vs. a delegated run), status, failure code, created/updated/finished times and the runtime's own counters (model calls, tool calls, worker switches) — plus one timestamp, the latest activity within 24 hours, for inactivity. **Inputs allowed (client):** the server's report, local activity (opening the app, starting voice input, submitting a request — as events, never their content), and the clock. **Not inputs:** task text, results, anything the user says or types (the utterance, transcript and prosody inputs of OD-CHAR-2/3 are retired with the cue scorer), memory, the vault, identity or device data, and any history older than the window. **Scoring:** deterministic code, not a model — no LLM or classifier judges a presentation; the same rows at the same instant give the same report; every formula and constant is documented (`docs/CHARACTER_PRESENTATION.md` §6). **Semantics kept by construction:** inactivity produces only `sleepy` — absence is never sad or angry; a user's own cancellation counts as nothing — a user decision is never presented as failure; `angry` reads only JARVIS's own workload (live tasks, model/tool calls, ceiling and rate-limit stops) and never the request count; delegated runs are JARVIS's work but never the user's engagement. **Privacy:** the report is computed per request, returned only to the caller's own authenticated clients, and never stored, cached, logged, sent to a model or turned into memory; the client keeps only the latest scores in memory until they go stale; no table, column or migration is added. **Amends:** OD-CHAR-1's *"never a status"* clause now reads: the expression may be derived from aggregated operational activity, but it is never *the* status — the status indicator remains the only account of what JARVIS is doing, the character remains decorative to accessibility services, and nothing should read the face to learn a task's outcome (it is smoothed, delayed and decays by design). OD-CHAR-2/3's *"on the endpoint"* now reads: the activity score is computed by the server from records it already holds for the same user; the choice of expression is still made on the endpoint. EMO-004's exclusion of *"interaction history"* is narrowed, beyond OD-CHAR-2's three utterances, to this bounded window of operational records only. **Unchanged:** EMO-001 (no mood that persists — the window decays and nothing is kept, so no state survives its evidence), EMO-002/003 (no personality or trait system, nothing in prompts, model configuration, memory or the vault), the rest of EMO-004 (no relationship or trust scoring, no first-person statement of feeling — the expression is never put into words), EMO-005, OD-CHAR-3's persona deferral, and **never an authority** — no score, component or expression influences authentication, identity, membership, ownership, capabilities, policy, risk classification, confirmation or step-up, budgets, or tool authorization or execution (import-linter "Character presentation never reaches authority", "Presentation settings are a store, not an authority", and the new "The activity scorer reads task rows and nothing else"; Android `CharacterBoundaryTest`). **Training:** none; no learned classifier is part of this decision. OD-CHAR-3's permission for a learned endpoint model lapses with the utterance interface it applied to; adding a model to either side is a new decision. |
+
+**Implementation facts (2026-11-10).**
+
+| Item | Fact | Where |
+|---|---|---|
+| CHAR-8 | **Contract.** `ActivityPresentation` (schema version 1): `computed_at`, `window_s`, a 1–10 score per state and seven 0–100 components (engagement, productivity, steadiness, failure, pressure, surprise, inactivity), validated whole. `CharacterPresentationSettings` gains an optional `activity` block (poll interval, report max age, exit margin, per-state cooldowns); a document without it takes the defaults, so every stored document stays valid. `PresentationInference`, `SignalType` and `select_expression` are removed, with `presentation_selection_vectors.json`. | `shared/schemas/presentation.py`, `assets/character/presentation.json`, `shared/android/presentation_activity_samples.json` |
+| CHAR-9 | **Central AI scorer.** `score_activity` (pure) and `measure` (one owner-scoped SELECT over `agent_tasks`, at most 500 rows, plus one `max(updated_at)` over 24 h), served by `GET /api/v1/presentation/activity` with `Cache-Control: no-store`. No write, cache or log. | `server/presentation/activity.py`, `server/presentation/routes.py` |
+| CHAR-10 | **Client policy.** `ActivityPolicy` — evidence and staleness by receipt time, local wake, enter at threshold, hysteresis (exit margin 2), minimum display, per-state cooldowns, `surprised` as the only transient state, threshold-relative intensity with the dead band — in Python (reference) and Kotlin, held to `presentation_activity_policy_vectors.json`. | `shared/schemas/presentation.py`, `android/.../character/ActivityPolicy.kt` |
+| CHAR-11 | **Android.** `CharacterController` now runs `ActivityPolicy` and keeps only the development preview; `CharacterPresentation` takes the report text and local activity and nothing else; `CharacterActivityFeed` asks every 15 s while the screen is started, and sooner (not within 2 s) when the current task changes. `ApiClient.activityReport` returns the body (≤ 4 KB) on 200, null otherwise. Rendering (`Character.kt`, `RigCharacterView`) is unchanged. | `android/app/.../character/`, `CharacterActivityFeed.kt`, `MainActivity.kt`, `auth/ApiClient.kt` |
+| CHAR-12 | **Retired.** `LocalCueScorer`, `StateSelector`, `PresentationInference` (Kotlin) and `CharacterEvents` are deleted with their tests; the request text no longer reaches the character. CHAR-5's contract, CHAR-6's provider and CHAR-7's input list (above) are superseded by CHAR-8…11; CHAR-7's timing semantics survive in `ActivityPolicy` (minimum display, interrupt score, idle timeout, `surprised`'s hold). | — |
 
 ---
 
@@ -881,6 +929,7 @@ M1 or M2.
 | OD-DASH-2 | Console UI | Not built; JSON API only (§2G). |
 | OD-JDG-5 | How approved Judge guidance may carry user content (§2H) | Global guidance with secret screening only reaches every user with one user's content (BR-T2 row 38); which control fits is a product and privacy call. |
 | OD-AF-1, 9, 10 | The Agent Factory's abstractions, attribution form and `01` entities (§2J) | Still open. OD-AF-2, 3, 4, 5, 7 and 8 were ratified on 2026-10-02 (§2K); OD-AF-6 (`browser_use`, P2), OD-TOOL-3 (no MCP) and OD-AF-11…15 (Browser Use's infrastructure) on 2026-10-02 (§2L). |
+| OD-CHAR-4 (wording) | Confirm or correct the OD-CHAR-4 row (§2M) as recorded from the 2026-11-10 instruction: its three amendments (OD-CHAR-1 "never a status" → "never *the* status"; server-side scoring; EMO-004 narrowed to a 30-minute window of operational records), the retirement of OD-CHAR-3's learned-endpoint-model permission with the utterance interface, and the semantics chosen for cancellations (never sad) and `angry` (workload only). | The direction is the owner's; the exact boundary text is a reading of it, and it amends locked PRD text (§23). Implemented as recorded; not ratified until confirmed. |
 
 ---
 

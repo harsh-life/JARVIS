@@ -51,6 +51,19 @@ synthetic tasks (E0 baseline, E1 Central contract, E2 orchestration backends,
 E3 specialists, E4 synthesis). Production never imports it; it reaches no
 production state; live provider calls are opt-in.
 
+**Character Activity v1** (branch `feature/character-activity`, draft PR;
+owner direction **OD-CHAR-4**, `docs/DECISION_REGISTER.md` §2M,
+`docs/CHARACTER_PRESENTATION.md`): the character now presents JARVIS's
+*operational activity* instead of cues in the user's words. The server's
+deterministic scorer (`server/presentation/activity.py`) reads the caller's own
+task rows over a decaying 30-minute window and serves a 1–10 score per
+expression at `GET /api/v1/presentation/activity` (computed per request, never
+stored, no model involved); the client's `ActivityPolicy` (Python reference +
+Kotlin, shared vectors) chooses with hysteresis, cooldowns and staleness. The
+Android cue scorer and its selector are retired. OD-CHAR-4's row text awaits
+the owner's confirmation; a desktop companion is proposed, not built
+(`docs/CHARACTER_DESKTOP_PROPOSAL.md`).
+
 **`foundation`** — the technical substrate: shared data contracts,
 configuration, persistence/migrations, and the API skeleton (versioning,
 request IDs, the error envelope, a health check). See
@@ -232,11 +245,12 @@ never focusable, never approves) all show it, and a waiting task is shown as
 paused with what to turn on. The default on-screen character (owner decision
 OD-CHAR-1, `docs/DECISION_REGISTER.md` §2M; artwork in `assets/character/`)
 sits above the status line in one of seven expressive presentation states,
-selected on the device from the current request and verified events (OD-CHAR-2;
-a deterministic cue scorer for the pilot, not a trained model), with `default`
-as the fallback and `sleepy` after inactivity. It is presentation only: never a
-status (the indicator stays that) and never read by anything that authorizes,
-confirms or executes. See `docs/CHARACTER_PRESENTATION.md`.
+presenting JARVIS's operational activity as the server scores it from the
+user's own task records (OD-CHAR-4, superseding OD-CHAR-2's on-device cue
+scorer), with `default` as the fallback and `sleepy` after inactivity. It is
+presentation only: never *the* status (the indicator stays that) and never read
+by anything that authorizes, confirms or executes. See
+`docs/CHARACTER_PRESENTATION.md`.
 
 **Scheduler build** — task-linked reminders (`docs/22_SCHEDULER.md`, operator
 guide `docs/RUNNING_SCHEDULER.md`). *A firing reminder delivers a message; it

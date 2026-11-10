@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "description": "OD-CHAR-4: activity reports on the wire (GET /api/v1/presentation/activity). Every client must accept each `valid` text and reject each `invalid` one whole (ActivityPresentation in shared/schemas/presentation.py; Android ActivityReport.parse).",
+  "valid": [
+    {
+      "name": "a full report",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "an offset timestamp",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T17:30:00+05:30\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "a score above 10",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": 11, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "a score below 1",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 0}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "a fractional score",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": 7.5, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "a quoted score",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": \"7\", \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "a boolean score",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": true, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "a missing score",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "an unknown state",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1, \"furious\": 5}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "a component above 100",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 101, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "a negative component",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": -1, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "a missing component",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0}}"
+    },
+    {
+      "name": "an unknown component",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0, \"mood\": 50}}"
+    },
+    {
+      "name": "an unknown top-level field",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}, \"mood\": \"happy\"}"
+    },
+    {
+      "name": "a timestamp without a zone",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "a timestamp that is not one",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"yesterday\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "another schema version",
+      "text": "{\"schema_version\": 2, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 1800, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "a window below a minute",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"window_s\": 59, \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "a missing window",
+      "text": "{\"schema_version\": 1, \"computed_at\": \"2026-11-10T12:00:00Z\", \"scores\": {\"happy\": 8, \"satisfied\": 8, \"default\": 5, \"sleepy\": 1, \"surprised\": 1, \"angry\": 2, \"sad\": 1}, \"components\": {\"engagement\": 61, \"productivity\": 88, \"steadiness\": 100, \"failure\": 0, \"pressure\": 8, \"surprise\": 0, \"inactivity\": 0}}"
+    },
+    {
+      "name": "not an object",
+      "text": "[1, 2, 3]"
+    },
+    {
+      "name": "not JSON",
+      "text": "{scores: happy"
+    },
+    {
+      "name": "empty",
+      "text": ""
+    }
+  ]
+}

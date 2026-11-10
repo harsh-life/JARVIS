@@ -15,10 +15,11 @@ class JarvisApplication : Application() {
     val graph: AppGraph by lazy { AppGraph(this, mapping) }
 
     /**
-     * OD-CHAR-1/2: the character's expression — presentation only, selected
-     * on this device from the current interaction and verified events. Kept
-     * apart from [graph] (nothing there reads it) and from the mapping table,
-     * so the character shows whatever state the device is in.
+     * OD-CHAR-1/4: the character's expression — presentation only, presenting
+     * JARVIS's operational activity from the server's activity reports, decided
+     * on this device by the activity policy. Kept apart from [graph] (nothing
+     * there reads it) and from the mapping table, so the character shows
+     * whatever state the device is in.
      */
     val character: CharacterPresentation by lazy {
         val settings = CharacterAssets.settings(assets)

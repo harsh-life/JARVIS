@@ -8,11 +8,12 @@ import org.junit.Test
 import java.io.File
 
 /**
- * OD-CHAR-1, checked on the source: the character's expression is
- * presentation only. It is never derived from operational state (task,
- * connection, error), operational state never carries it, and nothing that
- * authorizes, confirms, executes, perceives, holds a credential or talks to
- * the server can read it.
+ * OD-CHAR-1/4, checked on the source: the character's expression is
+ * presentation only. It presents the server's activity report (OD-CHAR-4) and
+ * nothing else — the character package cannot see tasks, connection or error
+ * state, the app's operational state never carries an expression, the user's
+ * words never reach it, and nothing that authorizes, confirms, executes,
+ * perceives, holds a credential or talks to the server can read it.
  */
 class CharacterBoundaryTest {
     private val root = File("src/main/kotlin/com/hypermind/jarvis")
@@ -39,10 +40,10 @@ class CharacterBoundaryTest {
     }
 
     @Test
-    fun `only the screen, the application and the event bridge hold the character`() {
+    fun `only the screen, the application and the activity feed hold the character`() {
         val allowed =
             characterSources.toSet() + root.resolve("MainActivity.kt") + root.resolve("JarvisApplication.kt") +
-                root.resolve("CharacterEvents.kt")
+                root.resolve("CharacterActivityFeed.kt")
         val readers =
             root
                 .walkTopDown()
@@ -58,20 +59,33 @@ class CharacterBoundaryTest {
     }
 
     @Test
-    fun `the event bridge only reads tasks - it never acts on one`() {
-        val bridge = root.resolve("CharacterEvents.kt").readText()
+    fun `the activity feed only asks - it reads no task and never acts on one`() {
+        val feed = root.resolve("CharacterActivityFeed.kt").readText()
         for (action in listOf(".submit(", ".approve(", ".decline(", ".cancel(", ".retry(", ".dismiss(", ".runAgent(")) {
-            assertTrue(action, !bridge.contains(action))
+            assertTrue(action, !feed.contains(action))
         }
-        val imports = imports(root.resolve("CharacterEvents.kt")).filter { it.startsWith("com.hypermind.jarvis") }
-        assertEquals(
-            setOf(
-                "com.hypermind.jarvis.contract.TaskStatus",
-                "com.hypermind.jarvis.contract.TaskView",
-                "com.hypermind.jarvis.presentation.TaskSnapshot",
-            ),
-            imports.toSet(),
-        )
+        val imports = imports(root.resolve("CharacterActivityFeed.kt")).filter { it.startsWith("com.hypermind.jarvis") }
+        assertEquals(emptyList<String>(), imports)
+        // The one request it makes, wired in MainActivity, is the read-only activity report.
+        val screen = root.resolve("MainActivity.kt").readText()
+        assertTrue(screen.contains("CharacterActivityFeed.run("))
+        assertTrue(screen.contains(".activity.report("))
+    }
+
+    @Test
+    fun `the user's words never reach the character`() {
+        // The only text the character accepts is the server's report; there is no utterance,
+        // transcript or request input any more (OD-CHAR-4 retired the on-device cue scorer).
+        val textInputs =
+            CharacterPresentation::class.java.declaredMethods
+                .filter {
+                    java.lang.reflect.Modifier
+                        .isPublic(it.modifiers)
+                }.filter { m -> m.parameterTypes.any { it == String::class.java } }
+                .map { it.name }
+        assertEquals(listOf("onActivityReport"), textInputs)
+        val screen = root.resolve("MainActivity.kt").readText()
+        assertTrue(!screen.contains("onUtterance"))
     }
 
     @Test

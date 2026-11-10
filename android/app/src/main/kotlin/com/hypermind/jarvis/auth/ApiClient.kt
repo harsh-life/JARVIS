@@ -391,6 +391,9 @@ class ApiClient(
     /** The owner's agents (docs/29 §23.2): list, and the owner's own "Run". */
     val agents: AgentsApi get() = AgentsApi(http, ::api)
 
+    /** OD-CHAR-4: the read-only activity report. */
+    val activity: ActivityApi get() = ActivityApi(http, ::api)
+
     private fun raw(
         request: Request,
         client: OkHttpClient = http,

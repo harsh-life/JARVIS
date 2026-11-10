@@ -36,5 +36,18 @@
       "default": 5,
       "sleepy": 2
     }
+  },
+  "activity": {
+    "poll_interval_ms": 15000,
+    "max_age_ms": 60000,
+    "exit_margin": 2,
+    "cooldown_ms": {
+      "happy": 30000,
+      "satisfied": 15000,
+      "sleepy": 30000,
+      "surprised": 60000,
+      "angry": 60000,
+      "sad": 30000
+    }
   }
 }

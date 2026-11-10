@@ -2,8 +2,9 @@
 
 How the Android client draws the skeletal JARVIS character instead of the seven static images,
 and what to know before changing it. The character is still presentation only
-(`docs/CHARACTER_PRESENTATION.md`): `CharacterController` decides the expression and its intensity;
-this renders them (§5 for intensity).
+(`docs/CHARACTER_PRESENTATION.md`): `CharacterController` decides the expression and its intensity
+(through the activity policy, OD-CHAR-4); this renders them (§5 for intensity). The renderer is
+unchanged by OD-CHAR-4: it never sees scores or reports, only the committed `(expression, intensity)`.
 
 ## 1. What runs
 

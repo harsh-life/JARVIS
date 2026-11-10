@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,7 +43,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.hypermind.jarvis.auth.ApiClient
 import com.hypermind.jarvis.auth.BiometricPresence
 import com.hypermind.jarvis.channel.ChannelService
@@ -57,7 +61,6 @@ import com.hypermind.jarvis.permissions.GridSync
 import com.hypermind.jarvis.presentation.PresentationText
 import com.hypermind.jarvis.presentation.VoiceActivity
 import com.hypermind.jarvis.presentation.character.IntensityPolicy
-import com.hypermind.jarvis.presentation.character.PresentationEvent
 import com.hypermind.jarvis.presentation.ui.Character
 import com.hypermind.jarvis.presentation.ui.CharacterGallery
 import com.hypermind.jarvis.presentation.ui.CharacterIntensityPicker
@@ -86,6 +89,7 @@ import com.hypermind.jarvis.voice.SpeechInput
 import com.hypermind.jarvis.voice.VoiceMessages
 import com.hypermind.jarvis.voice.VoicePresence
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -193,7 +197,7 @@ class MainActivity : FragmentActivity() {
         super.onResume()
         // Inputs without callbacks (platform availability, enrollment, push) are re-read on return.
         (application as JarvisApplication).graph.refreshPresentation()
-        // Opening JARVIS is interaction: the character wakes if it was idle (OD-CHAR-2).
+        // Opening JARVIS is local activity: the character wakes if it was sleepy (OD-CHAR-4).
         (application as JarvisApplication).character.onActivity()
     }
 
@@ -282,10 +286,20 @@ class MainActivity : FragmentActivity() {
 
         val presentation by graph.presentation.collectAsState()
         var tab by rememberSaveable { mutableStateOf(0) }
-        // OD-CHAR-2: a task the user started has just completed (the server's own answer).
+        // OD-CHAR-4: the character presents JARVIS's operational activity as the server scores it.
+        // Asked for only while this screen is in front; a change in the current task asks sooner.
+        val lifecycle = LocalLifecycleOwner.current.lifecycle
         LaunchedEffect(Unit) {
-            CharacterEvents.forwardCompletions(graph.taskTracker.snapshot) {
-                app.character.onEvent(PresentationEvent.TaskCompleted)
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                CharacterActivityFeed.run(
+                    intervalMillis = app.character.pollIntervalMillis,
+                    nudges = graph.taskTracker.snapshot.drop(1),
+                    clock = SystemClock::elapsedRealtime,
+                    fetch = {
+                        withContext(Dispatchers.IO) { graph.api().activity.report(graph.sessions.accessToken().first) }
+                    },
+                    onReport = app.character::onActivityReport,
+                )
             }
         }
         // The one status line, on every tab (docs/23 §7).
@@ -495,9 +509,9 @@ class MainActivity : FragmentActivity() {
                 TaskPanelActions(
                     submit = { text ->
                         graph.taskTracker.submit(text)
-                        // The request also informs the character's expression, on this
-                        // device and in memory only; it changes nothing about the task.
-                        app.character.onUtterance(text)
+                        // Asking is local activity (it wakes a sleepy character); the request's
+                        // words play no part in the expression (OD-CHAR-4).
+                        app.character.onActivity()
                     },
                     approve = { taskId, pending -> graph.taskTracker.approve(taskId, pending, presence) },
                     decline = { taskId, pending -> graph.taskTracker.decline(taskId, pending) },

@@ -7,12 +7,11 @@ import kotlin.math.abs
  * (mirrors `presentation_intensity` in `shared/schemas/presentation.py`, held to it by
  * `shared/android/presentation_intensity_vectors.json`).
  *
- * It is not the suitability score. A score says how appropriate an expression is for the current
- * interaction, and the selector uses it to choose; this says how strongly the chosen one is
- * animated. Neither measures anyone's emotions, and confidence is neither: confidence only gates
- * selection. The intensity is derived deterministically here — no model judges it — and like the
- * expression it is presentation only: nothing that authenticates, authorizes, confirms or executes
- * reads it.
+ * It is not the score. A score says how well an expression presents JARVIS's current operational
+ * activity, and [ActivityPolicy] uses it to choose; this says how strongly the chosen one is
+ * animated. Neither measures anyone's emotions. The intensity is derived deterministically here —
+ * no model judges it — and like the expression it is presentation only: nothing that
+ * authenticates, authorizes, confirms or executes reads it.
  */
 object IntensityPolicy {
     val RANGE = 1..10
@@ -36,8 +35,8 @@ object IntensityPolicy {
      *     intensity = floor + round_half_up((score - threshold) * (10 - floor) / (10 - threshold))
      *
      * A threshold of 10 admits only a score of 10, which presents at 10. Throws
-     * IllegalArgumentException for a value out of range or a score below its threshold (the
-     * selector never selects one).
+     * IllegalArgumentException for a value out of range or a score below its threshold
+     * ([ActivityPolicy] lifts a held score to its threshold first).
      */
     fun forSelection(
         score: Int,
@@ -81,7 +80,8 @@ object IntensityPolicy {
 
 /**
  * What the character shows: the expression the controller committed and how strongly to present
- * it. Decided together by `CharacterController`; the renderer only presents it.
+ * it. Decided together by [ActivityPolicy] (through `CharacterController`); the renderer only
+ * presents it.
  */
 data class PresentedCharacter(
     val expression: Expression,
