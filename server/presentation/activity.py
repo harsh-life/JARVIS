@@ -19,10 +19,12 @@ What it is, and is not:
   text, results, memory, the vault or anything about the user beyond "asked
   for something at time t". Nothing is stored, logged or cached: the report
   is computed per request and returned to the owner's own client only.
-* **Bounded.** Only `WINDOW` of history counts (at most `MAX_ROWS` rows), plus
-  one timestamp — the latest activity within `LOOKBACK` — for inactivity.
-  Older history cannot influence anything, so there is no longer-term
-  profile to build (EMO-001/004 as amended by OD-CHAR-4).
+* **Bounded to 30 minutes.** Only task records touching the last `WINDOW`
+  (created, updated or finished within it), or still live, count — at most
+  `MAX_ROWS` of them — and inactivity is measured from those same records.
+  With none and nothing live, inactivity is fully saturated. Nothing older is
+  queried, so older history cannot influence anything and there is no
+  longer-term profile to build (EMO-001/004 as amended by OD-CHAR-4).
 * **Never an authority.** Nothing that authorizes, executes, confirms,
   classifies risk or meters budgets reads it (import-linter: "Character
   presentation never reaches authority", "Presentation settings are a store,
@@ -48,7 +50,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.storage.models import AgentTask
@@ -65,7 +67,6 @@ from shared.schemas.presentation import (
 # --- the window --------------------------------------------------------------
 
 WINDOW = timedelta(minutes=30)
-LOOKBACK = timedelta(hours=24)
 MAX_ROWS = 500
 
 # --- half-lives: how fast each kind of evidence fades --------------------------
@@ -182,18 +183,28 @@ def _percent(level: float) -> int:
     return math.floor(COMPONENT_MAX * _clamp(level) + 0.5)
 
 
-def score_activity(
-    tasks: list[TaskFacts],
-    last_activity: datetime | None,
-    now: datetime,
-) -> ActivityPresentation:
+def qualifies(t: TaskFacts, now: datetime) -> bool:
+    """A task counts only if it is live or touched the last `WINDOW` — the
+    same rule `measure` applies in SQL, so the pure scorer cannot be widened
+    by passing it older rows."""
+
+    if t.status in _LIVE:
+        return True
+    latest = max(t.created_at, t.updated_at, t.finished_at or t.updated_at)
+    return latest >= now - WINDOW
+
+
+def score_activity(tasks: list[TaskFacts], now: datetime) -> ActivityPresentation:
     """The activity report for these tasks at `now`. Pure and deterministic.
 
-    `tasks` are the caller's tasks touching the window (created, updated or
-    finished within it, or still live); `last_activity` is the latest
-    activity within the lookback, or None.
+    Only qualifying tasks (`qualifies`: live, or touching the last 30
+    minutes) count; any others are ignored. Inactivity is measured from the
+    latest of those, and is fully saturated when there is none and nothing
+    is live.
     """
 
+    tasks = [t for t in tasks if qualifies(t, now)]
+    last_activity = max((t.updated_at for t in tasks), default=None)
     engagement = productivity = steadiness = failure = work = strain = surprise = 0.0
     live = 0
     # A fixed order, so floating-point sums cannot depend on how rows arrived.
@@ -235,6 +246,7 @@ def score_activity(
     if live > 0:
         idle = 0.0
     elif last_activity is None:
+        # Nothing in the window and nothing live: fully idle (sleepy, never sad or angry).
         idle = 1.0
     else:
         idle_for = max(now - last_activity, timedelta(0))
@@ -281,8 +293,9 @@ def _aware(value: datetime | None) -> datetime | None:
 
 
 async def measure(session: AsyncSession, user_id: uuid.UUID, now: datetime) -> ActivityPresentation:
-    """Read the caller's own task rows for the window and score them. SELECT
-    only, owner-scoped; nothing is written, cached or logged."""
+    """Read the caller's own task rows for the window and score them: one
+    owner-scoped SELECT over the last 30 minutes (plus live tasks), and no
+    other query. Nothing is written, cached or logged."""
 
     since = now - WINDOW
     mine = AgentTask.user_id == user_id
@@ -315,9 +328,4 @@ async def measure(session: AsyncSession, user_id: uuid.UUID, now: datetime) -> A
         )
         for row in rows
     ]
-    last_activity = max((t.updated_at for t in tasks), default=None)
-    if last_activity is None:
-        last_activity = _aware((await session.execute(
-            select(func.max(AgentTask.updated_at)).where(mine, AgentTask.updated_at >= now - LOOKBACK)
-        )).scalar_one_or_none())
-    return score_activity(tasks, last_activity, now)
+    return score_activity(tasks, now)
