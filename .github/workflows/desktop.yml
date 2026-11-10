@@ -68,7 +68,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev libdbus-1-dev pkg-config patchelf file \
-            xvfb x11-utils imagemagick dbus-x11 weston at-spi2-core
+            xvfb x11-utils x11-xserver-utils xcompmgr imagemagick dbus-x11 weston at-spi2-core
 
       - uses: actions/setup-node@v4
         with:
@@ -119,11 +119,25 @@ jobs:
           echo "JARVIS_BIN=$BIN" >> "$GITHUB_ENV"
           mkdir -p ../smoke
           export JARVIS_SMOKE_HOLD_MS=8000
+          # A coloured root window, so a transparent companion is visibly not black.
           dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" bash -c "
+            xsetroot -solid '#3a6ea5'
             \"$BIN\" --smoke-test ../smoke/linux-x11-${{ matrix.os }}.json & PID=\$!
             sleep 6; import -window root ../smoke/linux-x11-${{ matrix.os }}.png || true
             wait \$PID"
           cat ../smoke/linux-x11-${{ matrix.os }}.json
+
+      - name: Smoke test — .deb installed, X11 with a compositor (xcompmgr)
+        if: runner.os == 'Linux'
+        run: |
+          export JARVIS_SMOKE_HOLD_MS=8000
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" bash -c "
+            xsetroot -solid '#3a6ea5'
+            xcompmgr & sleep 1
+            \"$JARVIS_BIN\" --smoke-test ../smoke/linux-x11-composited-${{ matrix.os }}.json & PID=\$!
+            sleep 6; import -window root ../smoke/linux-x11-composited-${{ matrix.os }}.png || true
+            wait \$PID"
+          cat ../smoke/linux-x11-composited-${{ matrix.os }}.json
 
       - name: Smoke test — .deb installed, Wayland (Weston, headless)
         if: runner.os == 'Linux'
@@ -144,11 +158,13 @@ jobs:
       - name: Smoke test — AppImage
         if: matrix.os == 'ubuntu-22.04'
         run: |
-          APP=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
+          APP=$(ls "$PWD"/src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
           chmod +x "$APP"
+          # Absolute: AppRun changes the working directory.
+          OUT="$GITHUB_WORKSPACE/smoke/linux-appimage.json"
           export JARVIS_SMOKE_HOLD_MS=4000 APPIMAGE_EXTRACT_AND_RUN=1
-          dbus-run-session -- xvfb-run -a "$APP" --smoke-test ../smoke/linux-appimage.json
-          cat ../smoke/linux-appimage.json
+          dbus-run-session -- xvfb-run -a "$APP" --smoke-test "$OUT"
+          cat "$OUT"
 
       - name: Smoke test — app run from the mounted DMG
         if: runner.os == 'macOS'

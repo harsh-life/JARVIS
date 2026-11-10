@@ -199,14 +199,17 @@ fn restore_position(app: &AppHandle, w: &WebviewWindow) {
             }
         }
         // Default: bottom-right of the primary work area, clear of the edge.
+        // The size comes from the frame and scale, not `outer_size()`: on
+        // Linux a window not yet mapped reports 0×0, which placed it off-screen.
         if let Ok(Some(m)) = w.primary_monitor() {
             let (p, s) = (m.position(), m.size());
-            let size = w.outer_size().unwrap_or_default();
-            let margin = (48.0 * m.scale_factor()) as i32;
-            let _ = w.set_position(PhysicalPosition::new(
-                p.x + s.width as i32 - size.width as i32 - margin,
-                p.y + s.height as i32 - size.height as i32 - margin * 2,
-            ));
+            let factor = m.scale_factor();
+            let scale = state(app).prefs.lock().unwrap().scale;
+            let (wide, high) = ((FRAME.0 * scale) as f64 * factor, (FRAME.1 * scale) as f64 * factor);
+            let margin = 48.0 * factor;
+            let x = (p.x as f64 + s.width as f64 - wide - margin).max(p.x as f64);
+            let y = (p.y as f64 + s.height as f64 - high - margin * 2.0).max(p.y as f64);
+            let _ = w.set_position(PhysicalPosition::new(x as i32, y as i32));
         }
     }
 }
