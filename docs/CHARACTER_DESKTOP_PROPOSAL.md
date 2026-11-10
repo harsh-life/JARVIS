@@ -119,6 +119,13 @@ own window's commands).
 
 ## 5. Pixel-art character (OD-DESK-2)
 
+![The seven expressions as pixel art, 3×](images/desktop/expressions.png)
+
+![Intensity bands — low, normal, high — for happy, angry and sleepy](images/desktop/bands.png)
+
+An animated preview of all seven idling is `images/desktop/idle.gif`
+(regenerate the previews with `python desktop/art/preview.py`).
+
 * **Source:** the seven approved drawings in `assets/character/default/`,
   read only. `desktop/art/generate_sprites.py` removes the decoration that is
   not the character (the drawing's own "Zzz" — the companion animates its
