@@ -198,14 +198,41 @@ deferred. wlr-layer-shell (true always-on-top on wlroots) is not implemented.
 
 ### Verification record (2026-11-10)
 
-| Environment | What ran | Result |
-|---|---|---|
-| macOS 26 (Apple silicon), local | `tauri build` → `.app` + DMG; the app launched **from the mounted DMG** with `--smoke-test` | **passed**: atlas loaded, policy showed `happy` at intensity 8 for the synthetic report (score 9, threshold 7), window and tray created. A screenshot could not be taken (no Screen Recording permission in that session), so transparency was **not visually confirmed** locally. |
-| CI runners | see the PR's `Desktop` workflow and §9 | recorded in the PR description |
+Every row below is a smoke test of the **installed or packaged** artifact
+(`.github/workflows/desktop.yml`, run `42880814824` on commit `7a20b71`, all
+jobs green), except the first. Each smoke result was `ok: true`: atlas loaded
+(`renderer: true`), the policy chose `happy` at intensity 8 for the synthetic
+report (score 9, threshold 7 → intensity 8), window and tray created.
 
-Not verified anywhere: KDE Wayland, Sway/wlroots, multi-monitor DPI changes on
-real hardware, exclusive-fullscreen behaviour, and signed/notarized builds
-(no signing credentials were configured).
+| Environment | Artifact | Smoke | What the screenshot shows |
+|---|---|---|---|
+| macOS 26, Apple silicon (local) | `.app` launched from the mounted DMG | passed | none — no Screen Recording permission in that session |
+| macOS, `macos-latest` runner | app launched from the mounted DMG | passed | **transparent**: the character over the desktop with no window background (`images/desktop/ci-macos-dmg.png`) |
+| Windows Server 2025, `windows-latest` | MSI installed with `msiexec /qn`, the installed exe run | passed | **transparent and on top**: the character above a console window, its text visible around the sprite (`images/desktop/ci-windows-msi-on-top.png`); the installer's desktop shortcut present |
+| Ubuntu 22.04 and 24.04, X11 (Xvfb) **with** a compositor (`xcompmgr`) | `.deb` installed | passed | **transparent**, on-screen bottom-right (`images/desktop/ci-linux-x11-composited.png`) |
+| Ubuntu 22.04 and 24.04, X11 (Xvfb) **without** a compositor | `.deb` installed | passed | placed on-screen; the root is black, so transparency cannot be judged — without a compositor X11 draws it black (use Backdrop) |
+| Ubuntu 22.04 and 24.04, **Wayland** (headless Weston) | `.deb` installed | passed (`session: wayland`) | not captured; stacking and position are the compositor's |
+| Ubuntu 22.04, X11 (Xvfb) | AppImage (extract-and-run) | passed | — |
+
+![macOS, from the DMG](images/desktop/ci-macos-dmg.png)
+![Windows, MSI-installed, above another window](images/desktop/ci-windows-msi-on-top.png)
+![Linux X11 with a compositor](images/desktop/ci-linux-x11-composited.png)
+
+Found and fixed by these runs: on Linux the window opened mostly off-screen
+(the default placement read the window's size before it was mapped); Windows
+checkouts converted the pinned atlas JSON to CRLF (now `-text` in
+`.gitattributes`).
+
+**Not verified anywhere:** GNOME Wayland (Mutter), KDE Wayland, Sway/wlroots,
+a real tray host on Linux (the runners have no StatusNotifier watcher — the
+tray *object* was created, nobody displayed it), always-on-top under a real
+X11 window manager, click-through and dragging (the smoke test does not move
+the pointer), multi-monitor and mixed-DPI hardware, Windows 10 without
+WebView2, Intel macOS (the CI DMG is Apple-silicon; the release workflow
+builds a universal DMG, not yet run), and any signed or notarized build
+(no credentials configured). Sign-in against a real Google login was not run:
+the protocol is covered by the server tests and by the Rust client tests
+against a mock server.
 
 ## 7. Interaction
 
