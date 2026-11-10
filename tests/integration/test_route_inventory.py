@@ -66,6 +66,11 @@ WORKBENCH_ROUTES = {
     ("GET", f"{V1}/intelligence/profiles/{{profile_id}}/versions/{{version}}/snapshot"),
 }
 
+# OD-CHAR-4: the character's activity report (read-only, owner-scoped).
+CHARACTER_ROUTES = {
+    ("GET", f"{V1}/presentation/activity"),
+}
+
 
 def _routes(app) -> set[tuple[str, str]]:
     routes = {
@@ -86,6 +91,7 @@ async def test_every_route_is_public_by_name_or_refuses_an_anonymous_request(mak
     routes = _routes(h.app)
     assert M2_ROUTES <= routes, sorted(M2_ROUTES - routes)
     assert WORKBENCH_ROUTES <= routes, sorted(WORKBENCH_ROUTES - routes)
+    assert CHARACTER_ROUTES <= routes, sorted(CHARACTER_ROUTES - routes)
     assert PUBLIC <= routes, sorted(PUBLIC - routes)
     leaking = []
     for method, path in sorted(routes - PUBLIC):

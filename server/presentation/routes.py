@@ -1,11 +1,14 @@
 """`GET/PUT/DELETE /api/v1/config/presentation` — the caller's own character
-presentation settings (pilot plan C10).
+presentation settings (pilot plan C10) — and `GET /api/v1/presentation/activity`,
+the caller's own activity report (OD-CHAR-4, `server/presentation/activity.py`).
 
 Owner-scoped by the principal from the bearer token; there is no way to name
 another user. `GET` returns the stored settings or the shared defaults; `PUT`
 replaces them with a document that must validate as
 `CharacterPresentationSettings` in full (strict, no unknown field, bounded
-size), or nothing is stored; `DELETE` returns to the defaults.
+size), or nothing is stored; `DELETE` returns to the defaults. The activity report is computed on each
+request from the caller's own task rows and is neither stored nor cached
+(`Cache-Control: no-store`).
 """
 
 from __future__ import annotations
@@ -21,16 +24,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.gateway.deps import get_db_session, get_principal
 from server.gateway.errors import AppError
+from server.presentation.activity import measure
 from server.storage.models import PresentationSettingsRow
 from shared.schemas.authorization import Principal
 from shared.schemas.errors import ErrorCode
-from shared.schemas.presentation import CharacterPresentationSettings
+from shared.schemas.presentation import ActivityPresentation, CharacterPresentationSettings
 
 logger = logging.getLogger("hypermind.presentation")
 
 router = APIRouter(tags=["presentation"])
 
 PATH = "/config/presentation"
+ACTIVITY_PATH = "/presentation/activity"
 # The full document with every field set is well under 2 KB.
 MAX_BODY_BYTES = 8_192
 
@@ -90,3 +95,16 @@ async def reset_presentation(
 ) -> Response:
     await session.execute(delete(PresentationSettingsRow).where(PresentationSettingsRow.user_id == principal.user_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(ACTIVITY_PATH, response_model=ActivityPresentation)
+async def get_activity(
+    response: Response,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> ActivityPresentation:
+    """JARVIS's current operational activity for the caller, as character
+    scores (OD-CHAR-4). Presentation only: nothing on the server reads it."""
+
+    response.headers["Cache-Control"] = "no-store"
+    return await measure(session, principal.user_id, datetime.now(timezone.utc))

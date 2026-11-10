@@ -177,9 +177,11 @@ Central list so no enum drifts across docs. An enum value not in this registry i
 **Validation:** `primary_model` must reference a supported `model.provider`; secrets by handle only.
 **Tool lists (pilot plan C7, 2026-10-13):** `model_tools` and `enabled_tools` both unset means the row configures the model only and the scope's tools are the server's; setting either restricts the scope to exactly the listed ids. A row written by `PUT /config/model` (`02` §6) is user-scoped, names an operator catalog model, never an endpoint, and references the user's own `model_api_key` handle or none.
 
-### 4.2 PresentationSettings (pilot plan C10; OD-CHAR-1/2/3, `docs/DECISION_REGISTER.md` §2M)
+### 4.2 PresentationSettings (pilot plan C10; OD-CHAR-1/3/4, `docs/DECISION_REGISTER.md` §2M)
 
 One row per user: `user_id` (PK, FK users), `settings` (json — exactly a validated `CharacterPresentationSettings`, `shared/schemas/presentation.py`: enumerated, boolean and numeric fields, no free text), `updated_at`. Presentation only: no authority package may read it (import-linter "Character presentation never reaches authority"; "Presentation settings are a store, not an authority").
+
+**No entity for the activity report (OD-CHAR-4).** `GET /presentation/activity` is computed per request from existing `agent_tasks` columns (origin, status, failure code, timestamps, model/tool call and worker-switch counters) and is never stored: there is no table, column or migration for scores, components or expressions, and none may be added without a new owner decision (EMO-001/004).
 
 ---
 

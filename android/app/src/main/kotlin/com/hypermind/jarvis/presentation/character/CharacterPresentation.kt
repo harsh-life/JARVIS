@@ -1,37 +1,27 @@
 package com.hypermind.jarvis.presentation.character
 
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.time.Instant
-import kotlin.coroutines.CoroutineContext
 
 /**
- * The character's runtime (OD-CHAR-1/2): the current interaction and verified
- * events go to the [provider], its result through [StateSelector], and the
- * selection into the [CharacterController], whose decision is [presented]: the expression and
- * how strongly to present it ([IntensityPolicy]). [expression] is the same decision without the
- * intensity, for screens that only need the state.
+ * The character's runtime (OD-CHAR-4): the server's activity reports and local activity go into the
+ * [CharacterController], whose decision is [presented] — the expression and how strongly to present
+ * it. [expression] is the same decision without the intensity, for screens that only need the state.
  *
- * - Everything is in memory only: no utterance, score or expression is
- *   persisted, logged or sent anywhere, and nothing here builds a profile of
- *   the user. [MAX_CONTEXT] recent utterances of this session are kept for a
- *   provider that needs them to interpret the current one.
- * - It never reads task, connection or error state and never acts: it is
- *   told about activity, utterances and verified events, and shows a face.
- * - Of overlapping inferences only the latest is applied; a provider that
- *   fails or throws counts as "no result" (the baseline stays).
+ * - The expression presents JARVIS's operational activity as the server's activity scorer computed
+ *   it — not the user, not a feeling. It is never the account of what JARVIS is doing (the status
+ *   line is) and nothing that authorizes, confirms or executes reads it.
+ * - Everything is in memory only: no report, score or expression is persisted, logged or sent. The
+ *   raw report text is parsed and dropped; only the latest scores are kept, until they go stale.
+ * - It reads no utterance, request text or audio: what the user says plays no part (OD-CHAR-4
+ *   retired the on-device cue scorer).
  *
- * Confined to [scope]'s dispatcher: call it from that thread (the main
- * thread in the app).
+ * Confined to [scope]'s dispatcher: call it from that thread (the main thread in the app).
  */
 class CharacterPresentation(
     private val scope: CoroutineScope,
@@ -39,17 +29,11 @@ class CharacterPresentation(
     private val clock: () -> Long,
     val profile: CharacterProfile = CharacterProfile.BUILT_IN,
     val settings: CharacterSettings = CharacterSettings(),
-    private val provider: PresentationInferenceProvider = LocalCueScorer(),
-    private val wallClock: () -> Instant = Instant::now,
-    private val inferenceContext: CoroutineContext = Dispatchers.Default,
 ) {
     private val controller = CharacterController(settings, clock())
     private val current = MutableStateFlow(controller.presented)
     private val currentExpression = MutableStateFlow(controller.shown)
     private val wake = Channel<Unit>(Channel.CONFLATED)
-    private val recent = ArrayDeque<String>()
-    private var generation = 0L
-    private var inference: Job? = null
 
     /** The committed expression and intensity. Equal values are not re-emitted. */
     val presented: StateFlow<PresentedCharacter> = current.asStateFlow()
@@ -57,30 +41,27 @@ class CharacterPresentation(
     /** [presented]'s expression alone. */
     val expression: StateFlow<Expression> = currentExpression.asStateFlow()
 
+    /** How often the app should ask the server for a fresh report while it is in front. */
+    val pollIntervalMillis: Long get() = settings.activityPollMillis
+
     init {
         scope.launch { drive() }
     }
 
-    /** The user did something meaningful: wakes a sleepy character and restarts the idle timer. */
+    /** The user did something here: wakes a sleepy character and restarts the local idle timer. */
     fun onActivity() {
         controller.onActivity(clock())
         changed()
     }
 
-    /** The user's current request (typed, or [spoken] and transcribed). */
-    fun onUtterance(
-        text: String,
-        spoken: Boolean = false,
-    ) {
-        onActivity()
-        val utterance = text.take(MAX_UTTERANCE)
-        infer(InferenceInput(utterance = utterance, spoken = spoken, context = recent.toList()))
-        recent.addLast(utterance)
-        while (recent.size > MAX_CONTEXT) recent.removeFirst()
+    /**
+     * The server's activity report, as the raw response body. Validated whole; anything invalid
+     * (or null — no answer) is discarded and the last valid report stands until it goes stale.
+     */
+    fun onActivityReport(raw: String?) {
+        controller.onReport(ActivityReport.parse(raw), clock())
+        changed()
     }
-
-    /** A verified application event. */
-    fun onEvent(event: PresentationEvent) = infer(InferenceInput(context = recent.toList(), events = listOf(event)))
 
     /** Development preview: show [expression] at [intensity] (neutral unless chosen) until [reset]. */
     fun preview(
@@ -96,26 +77,6 @@ class CharacterPresentation(
         changed()
     }
 
-    @Suppress("TooGenericExceptionCaught")
-    private fun infer(input: InferenceInput) {
-        val mine = ++generation
-        inference?.cancel()
-        inference =
-            scope.launch {
-                val result =
-                    try {
-                        withContext(inferenceContext) { provider.infer(input) }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (ignored: Exception) {
-                        null
-                    }
-                if (mine != generation) return@launch
-                controller.onSelection(StateSelector.select(result, settings, wallClock()), clock())
-                changed()
-            }
-    }
-
     private fun changed() {
         publish()
         wake.trySend(Unit)
@@ -128,7 +89,7 @@ class CharacterPresentation(
 
     private suspend fun drive() {
         while (true) {
-            val at = controller.nextChangeAt()
+            val at = controller.nextChangeAt(clock())
             if (at == null) {
                 wake.receive()
             } else {
@@ -138,10 +99,5 @@ class CharacterPresentation(
             controller.tick(clock())
             publish()
         }
-    }
-
-    companion object {
-        const val MAX_CONTEXT = 3
-        const val MAX_UTTERANCE = 2_000
     }
 }

@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "description": "OD-CHAR-4: the client activity policy (ActivityPolicy in shared/schemas/presentation.py; Android ActivityPolicy.kt). Each case starts a fresh policy at t=0 with the default settings plus the case's overrides (deep-merged). Each step happens at `at` (monotonic ms) and is one of: `report` (a score map; states it omits take the base scores happy 1, satisfied 1, default 5, sleepy 1, surprised 1, angry 1, sad 1; the string \"invalid\" is a report that fails validation), `activity` (local activity), or `tick`. `expect` is [expression, intensity] after the step.",
+  "cases": [
+    {
+      "name": "starts at the default baseline",
+      "steps": [{"at": 0, "tick": true, "expect": ["default", 5]}]
+    },
+    {
+      "name": "inactivity without evidence: sleepy at its baseline intensity after the idle timeout",
+      "steps": [
+        {"at": 299999, "tick": true, "expect": ["default", 5]},
+        {"at": 300000, "tick": true, "expect": ["sleepy", 2]}
+      ]
+    },
+    {
+      "name": "local activity wakes a baseline sleepy at once",
+      "steps": [
+        {"at": 300000, "tick": true, "expect": ["sleepy", 2]},
+        {"at": 300001, "activity": true, "expect": ["default", 5]}
+      ]
+    },
+    {
+      "name": "reported inactivity is ignored while the user was recently here",
+      "steps": [
+        {"at": 0, "report": {"sleepy": 10}, "expect": ["default", 5]},
+        {"at": 300000, "report": {"sleepy": 10}, "expect": ["sleepy", 10]}
+      ]
+    },
+    {
+      "name": "local activity ends a reported sleepy",
+      "steps": [
+        {"at": 300000, "report": {"sleepy": 10}, "expect": ["sleepy", 10]},
+        {"at": 310000, "activity": true, "expect": ["default", 5]}
+      ]
+    },
+    {
+      "name": "increasing interaction: satisfied, then happy once it outscores it",
+      "steps": [
+        {"at": 0, "report": {"satisfied": 8, "happy": 4}, "expect": ["satisfied", 6]},
+        {"at": 15000, "report": {"satisfied": 8, "happy": 8}, "expect": ["satisfied", 6]},
+        {"at": 30000, "report": {"satisfied": 8, "happy": 9}, "expect": ["happy", 8]}
+      ]
+    },
+    {
+      "name": "a state is entered only at its threshold",
+      "steps": [
+        {"at": 0, "report": {"happy": 6}, "expect": ["default", 5]},
+        {"at": 15000, "report": {"happy": 7}, "expect": ["happy", 4]}
+      ]
+    },
+    {
+      "name": "hysteresis: the shown state stays down to its threshold minus the margin",
+      "steps": [
+        {"at": 0, "report": {"angry": 8}, "expect": ["angry", 4]},
+        {"at": 15000, "report": {"angry": 6}, "expect": ["angry", 4]},
+        {"at": 30000, "report": {"angry": 5}, "expect": ["default", 5]}
+      ]
+    },
+    {
+      "name": "cooldown: a state that left cannot return until its cooldown ends",
+      "steps": [
+        {"at": 0, "report": {"angry": 8}, "expect": ["angry", 4]},
+        {"at": 30000, "report": {"angry": 5}, "expect": ["default", 5]},
+        {"at": 45000, "report": {"angry": 9}, "expect": ["default", 5]},
+        {"at": 89999, "report": {"angry": 9}, "expect": ["default", 5]},
+        {"at": 90000, "report": {"angry": 9}, "expect": ["angry", 7]}
+      ]
+    },
+    {
+      "name": "sustained workload rises and falls in intensity, then recovers to satisfied",
+      "steps": [
+        {"at": 0, "report": {"angry": 8}, "expect": ["angry", 4]},
+        {"at": 15000, "report": {"angry": 10}, "expect": ["angry", 10]},
+        {"at": 30000, "report": {"angry": 9}, "expect": ["angry", 7]},
+        {"at": 45000, "report": {"angry": 8}, "expect": ["angry", 4]},
+        {"at": 60000, "report": {"angry": 7}, "expect": ["angry", 4]},
+        {"at": 75000, "report": {"angry": 5, "satisfied": 8}, "expect": ["satisfied", 6]}
+      ]
+    },
+    {
+      "name": "a failed task: sad, held while it fades, then recovery",
+      "steps": [
+        {"at": 0, "report": {"sad": 8}, "expect": ["sad", 4]},
+        {"at": 15000, "report": {"sad": 6, "satisfied": 4}, "expect": ["sad", 4]},
+        {"at": 30000, "report": {"sad": 3, "satisfied": 7}, "expect": ["satisfied", 4]}
+      ]
+    },
+    {
+      "name": "an unexpected event: surprised interrupts, is brief, cools down, and the failure shows",
+      "steps": [
+        {"at": 0, "report": {"satisfied": 8}, "expect": ["satisfied", 6]},
+        {"at": 1000, "report": {"surprised": 10, "sad": 8, "satisfied": 8}, "expect": ["surprised", 10]},
+        {"at": 3499, "tick": true, "expect": ["surprised", 10]},
+        {"at": 3500, "tick": true, "expect": ["sad", 4]},
+        {"at": 4000, "report": {"surprised": 10, "sad": 8}, "expect": ["sad", 4]}
+      ]
+    },
+    {
+      "name": "minimum display defers a change that is not urgent",
+      "steps": [
+        {"at": 0, "report": {"happy": 7}, "expect": ["happy", 4]},
+        {"at": 1000, "report": {"happy": 7, "satisfied": 8}, "expect": ["happy", 4]},
+        {"at": 1500, "tick": true, "expect": ["satisfied", 6]}
+      ]
+    },
+    {
+      "name": "tie: happy before satisfied",
+      "steps": [{"at": 0, "report": {"happy": 8, "satisfied": 8}, "expect": ["happy", 6]}]
+    },
+    {
+      "name": "tie: surprised before angry before sad",
+      "steps": [{"at": 0, "report": {"surprised": 9, "angry": 9, "sad": 9}, "expect": ["surprised", 8]}]
+    },
+    {
+      "name": "tie: angry before sad",
+      "steps": [{"at": 0, "report": {"angry": 9, "sad": 9}, "expect": ["angry", 7]}]
+    },
+    {
+      "name": "tie: sleepy before surprised",
+      "steps": [{"at": 300000, "report": {"sleepy": 9, "surprised": 9}, "expect": ["sleepy", 7]}]
+    },
+    {
+      "name": "tie: the shown state wins against an earlier state",
+      "steps": [
+        {"at": 0, "report": {"sad": 8}, "expect": ["sad", 4]},
+        {"at": 15000, "report": {"sad": 8, "happy": 8}, "expect": ["sad", 4]},
+        {"at": 30000, "report": {"sad": 8, "happy": 9}, "expect": ["happy", 8]}
+      ]
+    },
+    {
+      "name": "stale evidence falls back to the baseline",
+      "steps": [
+        {"at": 0, "report": {"happy": 9}, "expect": ["happy", 8]},
+        {"at": 60000, "tick": true, "expect": ["happy", 8]},
+        {"at": 60001, "tick": true, "expect": ["default", 5]}
+      ]
+    },
+    {
+      "name": "an invalid report is discarded and refreshes nothing",
+      "steps": [
+        {"at": 0, "report": {"happy": 9}, "expect": ["happy", 8]},
+        {"at": 15000, "report": "invalid", "expect": ["happy", 8]},
+        {"at": 60001, "tick": true, "expect": ["default", 5]}
+      ]
+    },
+    {
+      "name": "an invalid first report leaves the baseline",
+      "steps": [{"at": 0, "report": "invalid", "expect": ["default", 5]}]
+    },
+    {
+      "name": "a report with nothing eligible keeps the baseline",
+      "steps": [{"at": 0, "report": {}, "expect": ["default", 5]}]
+    },
+    {
+      "name": "dead band: a small intensity change is ignored, a large one applied",
+      "settings": {"intensity": {"dead_band": 3}},
+      "steps": [
+        {"at": 0, "report": {"happy": 7}, "expect": ["happy", 4]},
+        {"at": 15000, "report": {"happy": 8}, "expect": ["happy", 4]},
+        {"at": 30000, "report": {"happy": 9}, "expect": ["happy", 8]}
+      ]
+    },
+    {
+      "name": "no margin: the shown state leaves as soon as it drops below its threshold",
+      "settings": {"activity": {"exit_margin": 0}},
+      "steps": [
+        {"at": 0, "report": {"satisfied": 7}, "expect": ["satisfied", 4]},
+        {"at": 15000, "report": {"satisfied": 6}, "expect": ["default", 5]}
+      ]
+    },
+    {
+      "name": "custom threshold and floor shape entry and intensity",
+      "settings": {"thresholds": {"happy": 9}, "intensity": {"floor": 6}},
+      "steps": [
+        {"at": 0, "report": {"happy": 8}, "expect": ["default", 5]},
+        {"at": 15000, "report": {"happy": 9}, "expect": ["happy", 6]},
+        {"at": 30000, "report": {"happy": 10}, "expect": ["happy", 10]}
+      ]
+    }
+  ]
+}

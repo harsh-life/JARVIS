@@ -11,16 +11,20 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 
 /**
- * How this client presents and selects the character — provider-neutral and
- * independent of the profile's state → image mapping (mirrors
+ * How this client presents and selects the character — independent of the profile's
+ * state → image mapping (mirrors
  * `shared/schemas/presentation.py` `CharacterPresentationSettings`; defaults in
  * `assets/character/presentation.json`). The thresholds and timings are
  * product parameters to be tuned, not validated measurements of anything.
  *
- * The optional `intensity` block parameterises [IntensityPolicy]: the intensity a selection at its
- * state's threshold presents at (`floor`), the dead band for a repeated selection of the shown
- * state, and the fixed intensities of the two baseline states. A document without it takes these
- * defaults.
+ * The optional `intensity` block parameterises [IntensityPolicy]: the intensity a state at its
+ * threshold presents at (`floor`), the dead band for the shown state, and the fixed intensities of
+ * the two baseline states. The optional `activity` block (OD-CHAR-4) parameterises [ActivityPolicy]:
+ * how often to ask for a report, when a report is stale, the hysteresis margin and the per-state
+ * cooldowns. A document without either takes these defaults.
+ *
+ * Under the activity policy `min_confidence`, `max_result_age_ms` and the hold of every state but
+ * SURPRISED are accepted for document compatibility and not used.
  */
 data class CharacterSettings(
     val visible: Boolean = true,
@@ -38,6 +42,10 @@ data class CharacterSettings(
     val intensityFloor: Int = IntensityPolicy.DEFAULT_FLOOR,
     val intensityDeadBand: Int = IntensityPolicy.DEFAULT_DEAD_BAND,
     val baselineIntensities: Map<Expression, Int> = IntensityPolicy.DEFAULT_BASELINES,
+    val activityPollMillis: Long = 15_000,
+    val activityMaxAgeMillis: Long = 60_000,
+    val activityExitMargin: Int = 2,
+    val activityCooldownMillis: Map<Expression, Long> = DEFAULT_COOLDOWNS,
 ) {
     enum class Transition(
         val wire: String,
@@ -69,12 +77,21 @@ data class CharacterSettings(
         require(intensityDeadBand in DEAD_BAND_RANGE) { "intensity.dead_band" }
         require(baselineIntensities.keys == BASELINE_STATES) { "intensity.baseline" }
         require(baselineIntensities.values.all { it in IntensityPolicy.RANGE }) { "intensity.baseline" }
+        require(activityPollMillis in POLL_RANGE) { "activity.poll_interval_ms" }
+        require(activityMaxAgeMillis in MAX_AGE_RANGE) { "activity.max_age_ms" }
+        require(activityMaxAgeMillis > activityPollMillis) { "activity.max_age_ms" }
+        require(activityExitMargin in EXIT_MARGIN_RANGE) { "activity.exit_margin" }
+        require(activityCooldownMillis.keys == HOLD_STATES) { "activity.cooldown_ms" }
+        require(activityCooldownMillis.values.all { it in COOLDOWN_RANGE }) { "activity.cooldown_ms" }
     }
 
     fun threshold(expression: Expression): Int = thresholds.getValue(expression)
 
-    /** How long a selected state stays before the baseline returns; the baseline itself has none. */
+    /** A state's maximum display time (only the transient SURPRISED uses it); DEFAULT has none. */
     fun hold(expression: Expression): Long = holdMillis[expression] ?: Long.MAX_VALUE
+
+    /** How long after leaving the screen a state may not be entered again; DEFAULT never cools down. */
+    fun cooldown(expression: Expression): Long = activityCooldownMillis[expression] ?: 0L
 
     /** The fixed intensity of a baseline state ([Expression.DEFAULT] or [Expression.SLEEPY]). */
     fun baselineIntensity(expression: Expression): Int = baselineIntensities[expression] ?: IntensityPolicy.NEUTRAL
@@ -88,11 +105,15 @@ data class CharacterSettings(
         private val IDLE_RANGE = 10_000L..86_400_000L
         private val AGE_RANGE = 100L..60_000L
         private val DEAD_BAND_RANGE = 0..9
+        private val POLL_RANGE = 5_000L..300_000L
+        private val MAX_AGE_RANGE = 10_000L..600_000L
+        private val EXIT_MARGIN_RANGE = 0..5
+        private val COOLDOWN_RANGE = 0L..600_000L
 
         /** The states the controller returns to without a selection: they have a fixed intensity, never a score. */
         val BASELINE_STATES = setOf(Expression.DEFAULT, Expression.SLEEPY)
 
-        /** Every state but the baseline [Expression.DEFAULT] has a hold. */
+        /** Every state but the baseline [Expression.DEFAULT] has a hold and a cooldown. */
         val HOLD_STATES = Expression.entries.toSet() - Expression.DEFAULT
 
         val DEFAULT_THRESHOLDS =
@@ -116,6 +137,16 @@ data class CharacterSettings(
                 Expression.SAD to 5_000L,
             )
 
+        val DEFAULT_COOLDOWNS =
+            mapOf(
+                Expression.HAPPY to 30_000L,
+                Expression.SATISFIED to 15_000L,
+                Expression.SLEEPY to 30_000L,
+                Expression.SURPRISED to 60_000L,
+                Expression.ANGRY to 60_000L,
+                Expression.SAD to 30_000L,
+            )
+
         private val FIELDS =
             setOf(
                 "schema_version",
@@ -127,6 +158,7 @@ data class CharacterSettings(
                 "thresholds",
                 "timing",
                 "intensity",
+                "activity",
             )
         private val TIMING_FIELDS =
             setOf(
@@ -138,6 +170,7 @@ data class CharacterSettings(
                 "max_result_age_ms",
             )
         private val INTENSITY_FIELDS = setOf("floor", "dead_band", "baseline")
+        private val ACTIVITY_FIELDS = setOf("poll_interval_ms", "max_age_ms", "exit_margin", "cooldown_ms")
 
         /**
          * A settings document, validated as strictly as the server's schema;
@@ -154,6 +187,8 @@ data class CharacterSettings(
                 require(timing.keys.all { it in TIMING_FIELDS }) { "unknown timing field" }
                 val intensity = root["intensity"]?.jsonObject ?: JsonObject(emptyMap())
                 require(intensity.keys.all { it in INTENSITY_FIELDS }) { "unknown intensity field" }
+                val activity = root["activity"]?.jsonObject ?: JsonObject(emptyMap())
+                require(activity.keys.all { it in ACTIVITY_FIELDS }) { "unknown activity field" }
                 val defaults = CharacterSettings()
                 CharacterSettings(
                     visible = root["visible"]?.let(::bool) ?: defaults.visible,
@@ -183,6 +218,12 @@ data class CharacterSettings(
                     baselineIntensities =
                         intensity["baseline"]?.let { byState(it, defaults.baselineIntensities) { v -> int(v) } }
                             ?: defaults.baselineIntensities,
+                    activityPollMillis = activity["poll_interval_ms"]?.let(::long) ?: defaults.activityPollMillis,
+                    activityMaxAgeMillis = activity["max_age_ms"]?.let(::long) ?: defaults.activityMaxAgeMillis,
+                    activityExitMargin = activity["exit_margin"]?.let(::int) ?: defaults.activityExitMargin,
+                    activityCooldownMillis =
+                        activity["cooldown_ms"]?.let { byState(it, defaults.activityCooldownMillis) { v -> long(v) } }
+                            ?: defaults.activityCooldownMillis,
                 )
             } catch (ignored: SerializationException) {
                 null
