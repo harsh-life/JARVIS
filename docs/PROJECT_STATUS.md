@@ -60,9 +60,24 @@ task rows over a decaying 30-minute window, and nothing older, and serves a 1–
 expression at `GET /api/v1/presentation/activity` (computed per request, never
 stored, no model involved); the client's `ActivityPolicy` (Python reference +
 Kotlin, shared vectors) chooses with hysteresis, cooldowns and staleness. The
-Android cue scorer and its selector are retired. A desktop companion is
-proposed, not built
-(`docs/CHARACTER_DESKTOP_PROPOSAL.md`).
+Android cue scorer and its selector are retired.
+
+**Desktop companion** (draft PR, owner decisions **OD-DESK-1…5**, 2026-11-10,
+`docs/DECISION_REGISTER.md` §2O, `docs/CHARACTER_DESKTOP_PROPOSAL.md`): a
+Tauri 2 app (`desktop/`) for Linux, macOS and Windows that shows a pixel-art
+adaptation of the seven-expression character, driven by the same activity
+report and a third, JavaScript `ActivityPolicy` (`shared/web/`) held to the
+shared vectors. It is a distinct registered device (`DevicePlatform.desktop`)
+signed in through the system browser and a loopback PKCE handoff, with its
+Ed25519 key in the OS credential store and tokens in memory only. **It only
+presents:** the gateway confines a desktop session to its activity report,
+its own logout and its own revocation (`server/gateway/device_scope.py`), and
+the device channel refuses it. Off on a server until `desktop.enabled`.
+Packages (DMG, MSI, `.deb`, AppImage) are built and smoke-tested in CI as
+**unsigned** development artifacts: no signing credentials are configured.
+What is built — not built: chat, task submission, confirmations, desktop
+execution (docs/24 stays a proposal), auto-update, Flatpak, layer-shell
+always-on-top on wlroots.
 
 **`foundation`** — the technical substrate: shared data contracts,
 configuration, persistence/migrations, and the API skeleton (versioning,

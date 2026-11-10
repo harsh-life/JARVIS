@@ -407,6 +407,9 @@ composition
 | Audit log | `server/security/audit.py`, `server/storage/models.py` | `AuditLogger`, `AuditEvent` |
 | Android server-side dispatch | `server/execution` (Android/Shizuku half) | capability→operation→primitive mapping |
 | Android client | `android/:app`, `android/:contract` | shares only `shared/schemas/` with the server |
+| Desktop companion (OD-DESK-1…5) | `desktop/` (Tauri 2: `src-tauri/` Rust core, `src/` webview), `shared/web/activity-policy.js` | presentation only: reads `GET /presentation/activity`; a `desktop` device whose sessions `server/gateway/device_scope.py` confines to the presentation surface; never an execution target (`docs/CHARACTER_DESKTOP_PROPOSAL.md`) |
+| Device-platform scope | `server/gateway/device_scope.py`, `server/gateway/deps.py` | `enforce_device_scope`, `@desktop_scope` — checked on every authenticated HTTP request |
+| Desktop login handoff | `server/auth/desktop_handoff.py` | loopback code + PKCE verifier → desktop-bound bootstrap token |
 | Voice | `server/voice` | STT/TTS; "voice can never confirm or step up" |
 | Dashboard (read-only) | `server/dashboard` | consults read-only Protocols only |
 | Composition root | `server/composition` | the only place upper-layer Protocols get concrete implementations |

@@ -24,9 +24,10 @@ You run the server yourself. You choose the model: a local one through Ollama by
 - **Constrained execution.** Sandboxed filesystem, default-deny network egress, and `argv`-only restricted process execution. Process confinement needs Linux and runs nothing on macOS.
 - **Reminders.** A due reminder delivers a message to your own devices and never executes anything.
 - **An Android client** in [`android/`](android/) for tasks, confirmation cards and on-device actions.
+- **A desktop companion** in [`desktop/`](desktop/) for Linux, macOS and Windows: a small pixel-art JARVIS that shows what JARVIS is doing. It signs in through your browser as its own revocable device and can only read its activity report — it never approves, confirms or runs anything. See [the desktop companion](docs/CHARACTER_DESKTOP_PROPOSAL.md).
 - **The Intelligence Workbench**: a browser page at `/ui` for your model choice and for experiment profiles. See [How to use the Workbench](#how-to-use-the-workbench).
 
-**Built but off by default** (the operator turns each on in `config.yaml`): persistent memory and a Git-backed Knowledge Vault, the Agent Factory (owner-private agents, including a sandboxed browser agent), the Judge (evaluation), the Android device channel and push wake, server-side voice providers, and a read-only operator console API.
+**Built but off by default** (the operator turns each on in `config.yaml`): persistent memory and a Git-backed Knowledge Vault, the Agent Factory (owner-private agents, including a sandboxed browser agent), the Judge (evaluation), the Android device channel and push wake, the desktop companion's sign-in (`desktop.enabled`), server-side voice providers, and a read-only operator console API.
 
 **Experimental:** the experiment harness in [`experiments/`](experiments/), which tests orchestration ideas on synthetic tasks. Production never imports it.
 
@@ -171,12 +172,22 @@ Screenshots from a local instance (default catalogue plus one extra local experi
 
 ![Experiment profile](docs/images/workbench/workbench-profile.png)
 
+## Desktop companion
+
+1. On the server, set `desktop: {enabled: true}` in `config.yaml` and restart.
+2. Install the companion from a GitHub Release (or a CI artifact): `.dmg` on macOS, `.msi` on Windows, `.deb` or AppImage on Linux. The builds are unsigned for now, so your OS will ask you to confirm. Linux needs WebKitGTK 4.1, a Secret Service (GNOME Keyring or KDE Wallet) and, for the tray, AppIndicator support.
+3. Right-click the character and open **Settings…**, enter your server's address (`https://…`), then choose **Sign in with the browser**.
+4. The desktop appears in your phone's device list as `desktop`, and you can revoke it there at any time.
+
+Build it yourself with `cd desktop && npm ci && npx tauri build`. Rust, Node 22+, and the platform's WebView are required.
+
 ## Limitations
 
 - **Real data is not cleared.** Release-blocking checks have not all run. The Android suite has not run on a physical phone, some at-rest blast-radius rows await owner decisions, and the real-integration smoke test has not run. All users share one server process, which is logical isolation and not a defence against application-level code execution. Details are in [docs/RELEASE_VALIDATION.md](docs/RELEASE_VALIDATION.md) and [docs/OD_A1_BR_T2.md](docs/OD_A1_BR_T2.md).
 - **The Workbench is operator-configured and off by default.** It needs `workbench.enabled` in `config.yaml`, a registered device, and a pasted access token that lasts 15 minutes. You cannot connect an arbitrary model or endpoint, and experiment-only models cannot become your production model.
 - **Experiment profiles do nothing in production.** They only feed the isolated harness. Offline harness runs are scripted, not real model output.
-- **Sign-in is Google OIDC only**, and the only device platform the server accepts is `android`. There is no browser login and no chat page.
+- **Sign-in is Google OIDC only**, and the device platforms are `android` and the presentation-only `desktop` companion. There is no browser login and no chat page.
+- **Desktop companion packages are unsigned.** CI builds a DMG, an MSI, a `.deb` and an AppImage, but no signing or notarization credentials are configured, so macOS Gatekeeper and Windows SmartScreen will warn. On Wayland the companion cannot keep itself above other windows or remember its position.
 - **Signing in is open to any Google account by default.** Set `security.oidc.allowed_emails` or `allowed_domains` before exposing the server beyond your own machine. The pilot topology is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - **Not yet verified in this release:** the Google sign-in step and the Android client on hardware.
 - **Not built:** see [Current capabilities](#current-capabilities).
@@ -191,5 +202,6 @@ Screenshots from a local instance (default catalogue plus one extra local experi
 - [Deployment](docs/DEPLOYMENT.md): single-host pilot setup
 - [Capability matrix](docs/CAPABILITY_MATRIX.md) and [decision register](docs/DECISION_REGISTER.md): the security contracts and owner decisions
 - [Android client](docs/23_ANDROID_CLIENT_PERCEPTION.md)
+- [Desktop companion](docs/CHARACTER_DESKTOP_PROPOSAL.md): install, sign-in, per-OS behaviour and limits
 - [CLAUDE.md](CLAUDE.md): developer commands (test suites, import-boundary checks, migrations)
 - [Canonical PRD](Working%20Markdown/00_CANONICAL_PRD.md): the full product specification

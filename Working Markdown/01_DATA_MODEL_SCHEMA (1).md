@@ -41,7 +41,7 @@ Central list so no enum drifts across docs. An enum value not in this registry i
 |---|---|
 | `visibility` | `private`, `graph` |
 | `user.status` | `active`, `suspended`, `deleted` |
-| `device.platform` | `android` (MVP; others `[FUTURE]`) |
+| `device.platform` | `android`; `desktop` (OD-DESK-1, 2026-11-10: the presentation-only desktop companion — its sessions reach only the presentation surface, `02` §1.1); others `[FUTURE]` |
 | `graph.type` | `private`, `shared` |
 | `membership.role` | `owner`, `member` (MVP; richer roles OD-E1 `[FUTURE]`) |
 | `fact_type` | `preference`, `past_request`, `stated_goal` |
@@ -87,7 +87,7 @@ Central list so no enum drifts across docs. An enum value not in this registry i
 |---|---|---|---|---|
 | `device_id` | uuid | Yes | PK | |
 | `user_id` | ref(User.user_id) | Yes | FK | Owning user. |
-| `platform` | enum(device.platform) | Yes | — | `android` for MVP. |
+| `platform` | enum(device.platform) | Yes | — | `android`, or `desktop` (OD-DESK-1). A `desktop` device registers only with its own Ed25519 key and a desktop-bound bootstrap token (§2.4). |
 | `credential_ref` | ref(SecretReference.secret_ref) | Yes | — | Handle to the long-lived device credential in the SecretStore — **never the credential value** (SECRET-002). |
 | `registered_at` | timestamp | Yes | — | |
 | `last_seen` | timestamp | No | — | Updated on activity; supports revocation UX. |
@@ -97,6 +97,18 @@ Central list so no enum drifts across docs. An enum value not in this registry i
 **Keys/indexes:** PK `device_id`; index `user_id`.
 **Relationships:** N→1 `User`; 1→N `Session`.
 **Validation:** a request presenting a `credential_ref` whose Device is `revoked` is rejected at auth (see `03`). `credential_ref` value never stored inline.
+
+### 2.4 Login handoff records (OD-DESK-1, `[IMPL]`; migration `c7e9a1b3d5f8`)
+
+Server-internal, short-lived, never returned by any API. They carry the desktop companion's system-browser login (`02` §3) without any bearer credential entering a URL.
+
+| Table / column | Purpose |
+|---|---|
+| `oidc_login_states.desktop_state`, `.desktop_challenge`, `.desktop_port` | Set together, only for a desktop login: the companion's own nonce, the S256 challenge of a PKCE verifier only the companion holds, and the `127.0.0.1` port to return to. Null for every other login. |
+| `desktop_handoffs` (`code_hash` PK, `user_id`, `code_challenge`, `created_at`, `expires_at`, `used_at`) | The one-time code the callback returns to the loopback listener. Stored as a hash; single-use (conditional UPDATE); TTL `desktop.handoff_ttl_seconds` (default 120 s). Redeemed only with the verifier matching `code_challenge`. |
+| `bootstrap_tokens.platform` | The platform a bootstrap token may register, when bound. A redeemed handoff issues a `desktop`-bound token; a `desktop` device registers only with one, and such a token registers nothing else. Null for the ordinary login. |
+
+No column stores an access token, a refresh credential, a device private key, an activity report, a score or an expression (OD-DESK-5).
 
 ### 2.3 Session `[LOCKED]` (PRD SESSION-001)
 

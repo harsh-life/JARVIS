@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build:frontend": "node scripts/build-frontend.mjs",
-    "test": "node --test src/test/ ../shared/web/",
+    "test": "node --test \"src/test/*.test.mjs\" \"../shared/web/*.test.mjs\"",
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build"

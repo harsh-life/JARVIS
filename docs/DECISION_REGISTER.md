@@ -923,6 +923,41 @@ M1 or M2.
 
 ---
 
+## 2O. Desktop companion — owner decisions (2026-11-10)
+
+**Owner instruction, 2026-11-10:** *"The owner has authorized the desktop
+companion, its pixel-art design, its device identity approach and its
+distribution defaults."* The three decisions the proposal
+(`docs/CHARACTER_DESKTOP_PROPOSAL.md` §9) left open are approved as stated
+below, together with two boundaries the owner set in the same instruction.
+Prior decisions are preserved: OD-CHAR-1…4, EMO-001…005, the 30-minute
+activity boundary (CHAR-13) and the real-data gate are unchanged. docs/24's
+generic endpoint model (OD-EP-2, OD-EP-9) stays open — `desktop` here is one
+presentation-only platform, not that model.
+
+| ID | Decision (owner) | Exact scope |
+|---|---|---|
+| **OD-DESK-1** | **The desktop companion is a distinct registered device, `DevicePlatform.desktop`, on the existing identity architecture**: Google OIDC → internal user → desktop device registration → Ed25519 device credential → short-lived access tokens; existing refresh (device proof) and revocation. | **Login:** the system browser, never an embedded webview; the callback returns a single-use, expiring (120 s) handoff code to a `127.0.0.1` loopback listener, redeemable only with the companion's PKCE verifier (S256) for a bootstrap token bound to `desktop`. No access, refresh or bootstrap token ever appears in a URL, a page, webview storage or a log. **Credential:** the private key is generated on the desktop and kept in the OS credential store (Keychain, Credential Manager, Secret Service); the server never mints a desktop's key; no plaintext fallback — sign-in fails if the store is unavailable. It is software key storage, **not** Secure Enclave or TPM bound. **Scope:** a desktop session reaches only its activity report, its own logout and its own revocation; the device channel refuses it; it has no Android privilege, execution adapter, push token, step-up key or capability. **Independence:** revoking a desktop never touches the user's phone, and a desktop cannot revoke another device. Off by default on a server (`desktop.enabled`). |
+| **OD-DESK-2** | **Pixel-art rendering of the existing seven-expression character.** | Adapted reproducibly from the approved originals in `assets/character/default/` (unmodified), preserving identity, silhouette, proportions, colours and expression semantics. 64×88 sprites on an 80×96 frame, one shared palette, integer scaling, animated (idle per intensity band, transitions, long idle) with reduced-motion and static fallbacks; generator and SHA-256 pins in `desktop/art/`. No new state, mood, trait or claim of feeling. |
+| **OD-DESK-3** | **Distribution through GitHub Releases**: macOS DMG **outside the Mac App Store** (the transparent window uses Tauri's `macOSPrivateApi`), Windows MSI, Linux `.deb` and AppImage. | Releases are drafts the owner publishes. Signing and notarization happen only when the owner's credentials are configured as repository secrets, and CI verifies and reports what it actually found; nothing is described as signed or notarized otherwise. SHA-256 checksums for every artifact. Flatpak is deferred. |
+| **OD-DESK-4** | **No task, approval or execution authority in the companion.** | It presents; it never submits, cancels or modifies a task, approves or confirms an action, steps up, or executes anything — enforced by the server's device scope (OD-DESK-1), not only by the client. It never reads the clipboard, the screen, window titles, keystrokes or audio, installs no global input hook, plays no sound and never speaks. |
+| **OD-DESK-5** | **No persistent activity report or expression history.** | Reports, scores and expressions live in the companion's memory only until stale; they are never written to disk, browser storage, a log or a crash report, and the server keeps none either (OD-CHAR-4). Local preferences hold only non-secret presentation settings and the server's address. |
+
+**Implementation facts (2026-11-10).**
+
+| Item | Fact | Where |
+|---|---|---|
+| DESK-1 | `DevicePlatform.desktop`; `DesktopConfig` (`desktop.enabled`, default off; `handoff_ttl_seconds`, default 120). | `shared/schemas/enums.py`, `server/config/schema.py` |
+| DESK-2 | Loopback handoff: `GET /auth/oidc/start?desktop_state&desktop_challenge&desktop_port`; the callback 302s to `127.0.0.1` with the code; `POST /auth/desktop/handoff` redeems code + verifier. Migration `c7e9a1b3d5f8` (additive): login-state columns, `desktop_handoffs`, `bootstrap_tokens.platform`. | `server/auth/desktop_handoff.py`, `server/auth/login.py`, `server/gateway/routers/auth.py` |
+| DESK-3 | Platform binding both ways at registration; a desktop must bring its own key. | `server/auth/device.py`, `server/auth/bootstrap.py` |
+| DESK-4 | Device scope in `get_resolved_session` (every authenticated HTTP request): a desktop reaches the three routes marked `@desktop_scope` and nothing else (`403`, audited); unknown platforms reach nothing; the device channel refuses non-`android`. Pinned by an AST scan of the markers and by a full-composition test of every route. | `server/gateway/device_scope.py`, `server/gateway/deps.py`, `tests/security_core/test_desktop_device.py`, `tests/integration/test_desktop_scope.py` |
+| DESK-5 | `shared/web/activity-policy.js`: the third ActivityPolicy (strict report parser, settings validation, intensity), held to the shared vectors and samples and replayed against the Python reference on random input. | `shared/web/`, `tests/presentation/test_activity_policy_js_parity.py` |
+| DESK-6 | The Tauri 2 app: Rust core (sign-in, keystore, tokens in memory, origin-pinned HTTPS that never follows redirects, report validation, lock/sleep-aware polling, tray and in-window menu, window behaviour) and webview (policy, sprite renderer, settings) with a strict per-window command allowlist and no network in the page. | `desktop/` |
+| DESK-7 | Pixel-art atlas: 100 frames, 42 animations, generated reproducibly and checked in CI. | `desktop/art/`, `desktop/src/sprites/` |
+| DESK-8 | CI builds, tests, packages and smoke-tests the installed packages on Linux (X11 and Wayland), macOS and Windows; the release workflow drafts a GitHub Release with a verified signing report and checksums. | `.github/workflows/desktop.yml`, `.github/workflows/desktop-release.yml` |
+
+---
+
 ## 3. Genuinely unresolved owner decisions
 
 | ID | Question | Why it is the owner's |

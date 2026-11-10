@@ -425,6 +425,12 @@ No decision was closed in this run. Implemented recommendations are not ratifica
 - Evaluations and candidates store model-written notes about a user's task (owner-private; row 2 class).
 - Routing `405` is reported as `500` (§L).
 - Android: SDK network behaviour (ML Kit / Firebase data transport) not captured on a device.
+- Desktop companion (OD-DESK-1…5, 2026-11-10): **does not change the real-data gate.** It reads only the
+  activity report and its sessions are confined to the presentation surface. Its packages are unsigned CI
+  artifacts until the owner configures signing secrets. Smoke tests run on CI runners, not on owner hardware.
+  KDE and wlroots Wayland, GNOME without a tray extension, and mixed-DPI multi-monitor setups are unverified
+  (`docs/CHARACTER_DESKTOP_PROPOSAL.md` §6, §10). Before real data, the desktop's key storage carries the same
+  caveat as any device's: the OS credential store is software-protected and not hardware-bound.
 
 ## O. OD-A1, explicitly
 
