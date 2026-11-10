@@ -51,17 +51,17 @@ synthetic tasks (E0 baseline, E1 Central contract, E2 orchestration backends,
 E3 specialists, E4 synthesis). Production never imports it; it reaches no
 production state; live provider calls are opt-in.
 
-**Character Activity v1** (branch `feature/character-activity`, draft PR;
-owner direction **OD-CHAR-4**, `docs/DECISION_REGISTER.md` §2M,
+**Character Activity v1** (merged in PR #55; owner decision **OD-CHAR-4**,
+ratified 2026-11-10, `docs/DECISION_REGISTER.md` §2M,
 `docs/CHARACTER_PRESENTATION.md`): the character now presents JARVIS's
 *operational activity* instead of cues in the user's words. The server's
 deterministic scorer (`server/presentation/activity.py`) reads the caller's own
-task rows over a decaying 30-minute window and serves a 1–10 score per
+task rows over a decaying 30-minute window, and nothing older, and serves a 1–10 score per
 expression at `GET /api/v1/presentation/activity` (computed per request, never
 stored, no model involved); the client's `ActivityPolicy` (Python reference +
 Kotlin, shared vectors) chooses with hysteresis, cooldowns and staleness. The
-Android cue scorer and its selector are retired. OD-CHAR-4's row text awaits
-the owner's confirmation; a desktop companion is proposed, not built
+Android cue scorer and its selector are retired. A desktop companion is
+proposed, not built
 (`docs/CHARACTER_DESKTOP_PROPOSAL.md`).
 
 **`foundation`** — the technical substrate: shared data contracts,

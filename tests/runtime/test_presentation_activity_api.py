@@ -101,7 +101,16 @@ async def test_old_work_outside_the_window_does_not_count(make_harness):
     await _insert(h, alice, status="failed", minutes_ago=45, failure_code="internal_error")
     report = await _report(h, alice)
     assert report.components.failure == 0 and report.components.surprise == 0
-    assert report.scores.sleepy == 10                          # but it does date the inactivity
+    assert report.scores.sleepy == 10                          # nor dates the inactivity: nothing older is read
+
+
+async def test_a_live_task_prevents_sleepy_however_old_its_last_update(make_harness):
+    h = await make_harness()
+    alice = await h.user("alice")
+    await _insert(h, alice, status="awaiting_confirmation", minutes_ago=90)
+    report = await _report(h, alice)
+    assert report.scores.sleepy == 1 and report.components.inactivity == 0
+    assert report.components.pressure > 0
 
 
 async def test_the_report_writes_nothing_and_carries_no_task_content(make_harness):

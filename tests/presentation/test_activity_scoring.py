@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import random
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -52,16 +53,27 @@ def task(
     )
 
 
+def marker(ended_ago: timedelta, at: datetime = NOW) -> TaskFacts:
+    """A record that only dates activity: a delegated run cancelled with no
+    work counts for nothing but its timestamp."""
+
+    end = at - ended_ago
+    return TaskFacts(from_user=False, status="cancelled", failure_code=None, created_at=end, updated_at=end,
+                     finished_at=end, model_calls=0, tool_calls=0, worker_switches=0)
+
+
 def scores(tasks: list[TaskFacts], *, idle_for: timedelta | None = None, at: datetime = NOW):
-    last = at - idle_for if idle_for is not None else max((t.updated_at for t in tasks), default=None)
-    return score_activity(tasks, last, at).scores
+    """`idle_for`: the last activity was this long ago (a marker record at that age)."""
+
+    extra = [marker(idle_for, at)] if idle_for is not None else []
+    return score_activity(tasks + extra, at).scores
 
 
-def chosen(tasks: list[TaskFacts], **kw) -> Expression:
+def chosen(tasks: list[TaskFacts]) -> Expression:
     """What a client shows on this report alone (the user not recently present)."""
 
     policy = ActivityPolicy(CharacterPresentationSettings(), 0)
-    report = score_activity(tasks, kw.get("last", max((t.updated_at for t in tasks), default=None)), NOW)
+    report = score_activity(tasks, NOW)
     policy.on_report(report, 10_000_000)
     return policy.shown
 
@@ -90,7 +102,7 @@ def test_sleepiness_rises_with_idle_time_and_only_after_it_starts():
 
 
 def test_a_live_task_is_never_sleepy():
-    s = score_activity([task(40, "awaiting_confirmation")], NOW - timedelta(hours=3), NOW).scores
+    s = score_activity([task(40, "awaiting_confirmation", ran_for=200)], NOW).scores
     assert s.sleepy == 1
 
 
@@ -134,7 +146,7 @@ def test_productive_evidence_fades_back_to_baseline():
 
 def test_delegated_runs_are_work_but_not_interaction():
     delegated = [task(i, from_user=False) for i in range(5)]
-    report = score_activity(delegated, NOW, NOW)
+    report = score_activity(delegated, NOW)
     assert report.components.engagement == 0
     assert report.components.productivity > 0
     assert not eligible(report.scores, "happy")              # happy needs the user's engagement
@@ -172,7 +184,7 @@ def test_the_request_count_never_makes_the_character_angry():
     """Many requests that made JARVIS do no work: engagement, never strain."""
 
     requests = [task(i * 0.5, "completed", model_calls=0, tool_calls=0) for i in range(40)]
-    report = score_activity(requests, NOW, NOW)
+    report = score_activity(requests, NOW)
     assert report.components.engagement == 100
     assert report.scores.angry == 1
 
@@ -200,7 +212,7 @@ def test_a_completion_after_a_failure_is_recovery():
 def test_a_users_own_cancellation_is_never_a_failure():
     s = scores([task(0, "cancelled"), task(1, "cancelled"), task(2, "cancelled")])
     assert s.sad == 1 and s.surprised == 1
-    assert score_activity([task(0, "cancelled")], NOW, NOW).components.failure == 0
+    assert score_activity([task(0, "cancelled")], NOW).components.failure == 0
 
 
 # --- unexpected events ------------------------------------------------------------------------
@@ -245,10 +257,9 @@ def test_any_window_scores_in_range_and_identically_twice(seed):
              tool_calls=rng.randint(0, 24), worker_switches=rng.randint(0, 2))
         for _ in range(rng.randint(0, 60))
     ]
-    last = NOW - timedelta(minutes=rng.uniform(0, 100))
-    first = score_activity(tasks, last, NOW)
-    assert first == score_activity(list(reversed(tasks)), last, NOW)    # same rows, any order
-    assert score_activity(tasks, None, NOW) == score_activity(tasks, None, NOW)
+    first = score_activity(tasks, NOW)
+    assert first == score_activity(list(reversed(tasks)), NOW)          # same rows, any order
+    assert first == score_activity(tasks, NOW)
     for value in first.scores.model_dump().values():
         assert 1 <= value <= 10
     for value in first.components.model_dump().values():
@@ -259,6 +270,90 @@ def test_any_window_scores_in_range_and_identically_twice(seed):
 def test_a_future_timestamp_counts_as_now():
     skewed = task(-5, "failed", failure_code="internal_error")
     assert scores([skewed]).surprised == 10
+
+
+# --- the 30-minute boundary (OD-CHAR-4, owner correction of 2026-11-10) ---------------------------
+
+
+def test_nothing_in_the_window_and_nothing_live_is_fully_sleepy_and_nothing_else():
+    for ago in (timedelta(minutes=31), timedelta(hours=3), timedelta(days=2)):
+        s = scores([], idle_for=ago)
+        assert s.sleepy == 10, ago
+        assert [s.happy, s.satisfied, s.surprised, s.angry, s.sad] == [1, 1, 1, 1, 1], ago
+
+
+def test_the_window_edge_is_exactly_thirty_minutes():
+    edge = score_activity([task(30, "failed", failure_code="stalled", ran_for=0)], NOW)
+    past = score_activity([task(30 + 1 / 60, "failed", failure_code="stalled", ran_for=0)], NOW)
+    assert edge.components.failure > 0 and edge.components.inactivity == 100
+    assert past.components.failure == 0 and past.components.inactivity == 100
+
+
+def test_work_older_than_thirty_minutes_changes_nothing():
+    recent = [task(1), task(4, "failed", failure_code="max_tool_calls_exceeded")]
+    old = [
+        task(31, "failed", failure_code="internal_error"),
+        task(45, "failed", failure_code="rate_limited"),
+        task(60, model_calls=16, tool_calls=24),
+        task(90, "completed", worker_switches=2),
+        task(600, "failed", failure_code="emergency_stop"),
+    ]
+    assert score_activity(recent + old, NOW) == score_activity(recent, NOW)
+    assert score_activity(old, NOW) == score_activity([], NOW)
+
+
+@pytest.mark.parametrize("code", ["internal_error", "stalled", "max_iterations_exceeded", "rate_limited"])
+def test_an_old_failure_is_neither_sad_nor_surprising(code):
+    s = score_activity([task(31, "failed", failure_code=code)], NOW).scores
+    assert (s.sad, s.surprised, s.angry) == (1, 1, 1)
+    assert s.sleepy == 10
+
+
+def test_live_work_counts_however_long_ago_it_last_changed():
+    live = [task(120, "running", from_user=False, model_calls=0, tool_calls=0, ran_for=10) for _ in range(3)]
+    s = score_activity(live, NOW).scores
+    assert s.angry == 10 and s.sleepy == 1
+    waiting = score_activity([task(240, "awaiting_confirmation", ran_for=5)], NOW).scores
+    assert waiting.sleepy == 1
+
+
+def test_the_pure_scorer_cannot_be_widened_by_passing_older_rows():
+    from server.presentation.activity import qualifies
+
+    assert qualifies(task(29), NOW) and not qualifies(task(31, ran_for=0), NOW)
+    assert qualifies(task(500, "running", ran_for=0), NOW)
+
+
+async def test_measurement_issues_exactly_one_query_and_no_historical_lookup():
+    """`measure` reads the window once; with nothing found it does not look
+    further back for an older timestamp."""
+
+    from server.presentation.activity import WINDOW, measure
+
+    statements = []
+
+    class _Result:
+        def all(self):
+            return []
+
+    class _Session:
+        async def execute(self, statement):
+            statements.append(str(statement.compile(compile_kwargs={"literal_binds": True})))
+            return _Result()
+
+    report = await measure(_Session(), uuid.uuid4(), NOW)
+    assert len(statements) == 1
+    sql = statements[0].lower()
+    assert "max(" not in sql and "agent_tasks" in sql
+    since = (NOW - WINDOW).strftime("%Y-%m-%d %H:%M:%S")
+    assert since in statements[0]                                 # the only time bound is the window
+    assert report.scores.sleepy == 10 and report.components.inactivity == 100
+
+
+def test_the_scorer_has_no_lookback_beyond_the_window():
+    source = (ROOT / "server/presentation/activity.py").read_text()
+    assert "LOOKBACK" not in source and "func." not in source and "hours=" not in source
+    assert source.count("session.execute(") == 1
 
 
 # --- what the scorer can see ------------------------------------------------------------------

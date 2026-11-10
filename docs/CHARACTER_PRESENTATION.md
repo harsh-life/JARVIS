@@ -217,7 +217,7 @@ column the runtime already writes to `agent_tasks` for its own reasons.
 | Time / recency | ages of the timestamps above; decay half-lives | **real** |
 | Workload pressure | live tasks (running, awaiting confirmation, waiting for platform), recent calls, ceiling/rate-limit/budget stops | **real** — there is no queue: a waiting task is paused, never queued |
 | Sustained demand | the decayed sums above over a 30-minute window | **real** |
-| Inactivity | time since the latest `updated_at` within 24 h; none → fully idle | **real** |
+| Inactivity | time since the latest `updated_at` among the window's records; none and nothing live → fully idle | **real** |
 | Unexpected events | unexpected failure codes; a task entering `waiting_for_platform`; a worker switch (counted when its task ends) | **partial** — the runtime records no time for a worker switch, so it is seen late |
 | Latency, CPU, model token use, provider errors that did not fail a task | — | **not available to the scorer**; not invented |
 | Scheduler reminders, agent inbox items | — | exist, but are not work JARVIS performed for a request; not used |
@@ -247,7 +247,7 @@ does not depend on how rows arrive.
     E  = engagement / 4          P = productivity / 3        St = steadiness / 1
     F  = failure / 1.25          S = surprise / 1
     L  = max(live / 3, work / 160, strain / 2)                          (pressure)
-    Z  = 0 if any task is live; 1 if no activity in 24 h;
+    Z  = 0 if any task is live; 1 if no record in the window;
          else clamp((idle − 2 min) / 8 min)                              (inactivity)
     O  = clamp((L − 0.5) / 0.5)                                          (overload)
     W  = 0.7 if a task is live and L < 0.5, else 0                       (working)
@@ -301,7 +301,7 @@ does not depend on how rows arrive.
   caller's own clients, and never stored, cached, logged or sent to a model.
   The client keeps only the latest scores in memory until they go stale. No
   table, column or migration exists for it. History older than 30 minutes
-  cannot influence anything (one timestamp within 24 h dates inactivity), so
+  is never queried and cannot influence anything, inactivity included, so
   there is no longer-term profile to build.
 - **Never a feeling.** No first-person statement, no mood that persists (the
   window decays; nothing outlives its evidence), no personality, nothing in a
