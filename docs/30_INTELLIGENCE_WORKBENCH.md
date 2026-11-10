@@ -1,6 +1,6 @@
 # 30 — Intelligence Workbench (Phase 0)
 
-**Status:** built on `feature/intelligence-workbench`. Owner-approved direction
+**Status:** merged into `main` (PR #52). Owner-approved direction
 (Phase 0 brief, 2026-11-06). **Configuration and control plane only:** nothing
 here runs a model in production, authorizes anything or changes the
 production request lifecycle. Darwin is still deferred. Track A's

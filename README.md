@@ -45,16 +45,6 @@ uv venv .venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
 ```
 
-> **Pre-merge testing only (remove once the Workbench PR is merged).** The Workbench and this README are still on a feature branch. Until it is merged, check that branch out right after cloning, then continue with the same steps:
->
-> ```bash
-> git clone https://github.com/harsh-life/JARVIS.git
-> cd JARVIS
-> git checkout feature/intelligence-workbench
-> uv venv .venv && source .venv/bin/activate
-> uv pip install -e ".[dev]"
-> ```
-
 **2. Configure**
 
 ```bash
