@@ -23,6 +23,7 @@ from server.gateway.deps import (
     get_resolved_session,
     get_security_core,
 )
+from server.gateway.device_scope import DesktopScope, desktop_scope
 from server.gateway.errors import AppError
 from server.gateway.security import SecurityCore
 from server.graph.authorization import AccessRequest
@@ -86,6 +87,7 @@ async def issue_token(
 
 
 @router.post("/sessions/logout", status_code=status.HTTP_204_NO_CONTENT)
+@desktop_scope(DesktopScope.OWN_SESSION)
 async def logout(
     request: Request,
     session: AsyncSession = Depends(get_db_session),

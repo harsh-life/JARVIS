@@ -263,6 +263,15 @@ android:
   #     service_account_ref: "secretstore:fcm-service-account"
   #     min_interval_seconds: 30         # coalesce wakes to one phone
 
+
+# OD-DESK-1 — the desktop companion (desktop/, docs/CHARACTER_DESKTOP_PROPOSAL.md).
+# Off by default. When enabled, the companion signs in through the system
+# browser and a 127.0.0.1 loopback handoff (PKCE), registers a `desktop`
+# device with its own key, and its sessions reach only the activity report,
+# their own logout and their own revocation — never tasks or confirmations.
+desktop:
+  enabled: false
+  handoff_ttl_seconds: 120
 security:
   oidc:
     client_id: "REPLACE_WITH_YOUR_OWN_GOOGLE_OIDC_CLIENT_ID"

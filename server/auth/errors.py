@@ -52,6 +52,12 @@ class InvalidBootstrapToken(AuthError):
     different user (03 §3.2)."""
 
 
+class InvalidDesktopHandoff(AuthError):
+    """A desktop login handoff code was absent, unknown, already redeemed,
+    expired, or presented without the verifier its login was started with
+    (OD-DESK-1). Every case is the same failure to the client."""
+
+
 class InvalidDeviceProof(AuthError):
     """The device-credential proof did not verify (03 §4).
 

@@ -15,7 +15,7 @@ from typing import AsyncIterator, Protocol, Sequence
 from fastapi import APIRouter, FastAPI
 
 from server.config import AppConfig
-from server.config.schema import AndroidConfig
+from server.config.schema import AndroidConfig, DesktopConfig
 from server.execution.device_hub import DeviceHub
 from server.gateway.errors import install_error_handlers
 from server.gateway.request_context import RequestIdMiddleware
@@ -81,6 +81,7 @@ def create_app(
     memory_port: MemoryPort | None = None,
     vault_port: VaultPort | None = None,
     android_config: AndroidConfig | None = None,
+    desktop_config: DesktopConfig | None = None,
     device_hub: DeviceHub | None = None,
     scheduler_port: SchedulerPort | None = None,
     reminder_inbox: ReminderInbox | None = None,
@@ -212,6 +213,9 @@ def create_app(
     # docs/23 — App Links, the device channel. An explicit argument wins over
     # the loaded config; with neither, the defaults (everything off) apply.
     app.state.android = android_config or (config.android if config else AndroidConfig())
+    # OD-DESK-1 — the desktop companion's login handoff (off by default). An
+    # explicit argument wins over the loaded config, as for Android.
+    app.state.desktop = desktop_config or (config.desktop if config else DesktopConfig())
     # The device channel's hub, built by the composition root when
     # `android.enabled` (the same object the Android tools send through).
     # Without one the channel endpoint closes every socket as disabled.

@@ -748,6 +748,24 @@ class AndroidConfig(StrictModel):
     push: AndroidPushConfig = Field(default_factory=AndroidPushConfig)
 
 
+class DesktopConfig(StrictModel):
+    """OD-DESK-1 — the pixel-art desktop companion's server-side surface.
+
+    `enabled` admits the desktop login handoff (a system-browser OIDC login
+    returned to the companion's loopback listener, then redeemed with the
+    companion's PKCE verifier) and the registration of `desktop` devices.
+    **Off by default**: until an operator enables it, `/auth/oidc/start`
+    refuses the desktop parameters, the handoff endpoint answers `404`, and no
+    desktop device can be registered. A desktop device's sessions are confined
+    to the presentation surface either way (`server/gateway/device_scope.py`).
+    """
+
+    enabled: bool = False
+    # How long the one-time loopback handoff code may wait to be redeemed.
+    # The companion redeems it within a second of receiving it.
+    handoff_ttl_seconds: int = Field(default=120, ge=30, le=600)
+
+
 _EMAIL_RE = re.compile(r"^[^@\s]+@[a-z0-9.-]+\.[a-z]{2,}$")
 _DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$")
 
@@ -1175,6 +1193,8 @@ class AppConfig(StrictModel):
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
     android: AndroidConfig = Field(default_factory=AndroidConfig)
+    # OD-DESK-1 — the desktop companion's login handoff, off by default.
+    desktop: DesktopConfig = Field(default_factory=DesktopConfig)
     # docs/29 — the Agent Factory, off by default.
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     # docs/30 — the Intelligence Workbench's operator catalogue, off by default.

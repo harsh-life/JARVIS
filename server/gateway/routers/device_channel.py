@@ -56,7 +56,7 @@ from shared.schemas.device_channel import (
     DeviceReauthAck,
     DeviceReminderAck,
 )
-from shared.schemas.enums import AuditActor, AuditResult
+from shared.schemas.enums import AuditActor, AuditResult, DevicePlatform
 
 logger = logging.getLogger("hypermind.gateway.device_channel")
 
@@ -179,6 +179,19 @@ async def _authenticate(websocket: WebSocket, hello: DeviceHello) -> ResolvedSes
             await db.commit()
             return DeviceCloseCode.AUTH_EXPIRED
         except AuthError:
+            await db.commit()
+            return DeviceCloseCode.AUTH_FAILED
+        if device.platform is not DevicePlatform.ANDROID:
+            # OD-DESK-1: the channel carries device operations, and only a
+            # phone executes them. A desktop companion (or any future
+            # platform) is refused here, so it can never become a dispatch
+            # target, receive a reminder or resume a waiting task.
+            await audit.record(
+                actor=AuditActor.SYSTEM,
+                action=AuditAction.DEVICE_CHANNEL_REJECTED,
+                resource=f"device:{device.device_id}",
+                result=AuditResult.BLOCKED,
+            )
             await db.commit()
             return DeviceCloseCode.AUTH_FAILED
         if device.device_id != resolved.principal.device_id or device.user_id != resolved.principal.user_id:

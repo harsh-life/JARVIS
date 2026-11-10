@@ -32,7 +32,18 @@ class UserStatus(str, Enum):
 
 
 class DevicePlatform(str, Enum):
-    ANDROID = "android"  # MVP; others [FUTURE]
+    """A registered device's platform (01 §1.2).
+
+    `DESKTOP` (OD-DESK-1): the pixel-art desktop companion. Its device
+    credential is the same Ed25519 key-pair model as a phone's, but a desktop
+    session is confined to the presentation surface by the gateway
+    (`server/gateway/device_scope.py`): it carries no execution adapter, no
+    device channel and no confirmation authority. Other platforms stay
+    [FUTURE].
+    """
+
+    ANDROID = "android"
+    DESKTOP = "desktop"
 
 
 class GraphType(str, Enum):

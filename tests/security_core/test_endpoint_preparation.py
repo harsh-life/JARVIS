@@ -7,13 +7,15 @@ test here ratifies a proposal. Where a test pins a value an open decision
 would change, it names the decision; ratifying it means editing that test in
 the same commit as the change.
 
-* Device registration accepts only the registry's platforms (`android`) and
-  no endpoint-profile field — OD-EP-2 (`credential_alg`) and OD-EP-9
-  (`endpoint_class`, `desktop_*`) are open. A refused registration does not
-  spend the user's login.
+* Device registration accepts only the registry's platforms (`android`, and
+  since OD-DESK-1 the presentation-only `desktop`) and no endpoint-profile
+  field — OD-EP-2 (`credential_alg`) and OD-EP-9 (`endpoint_class`,
+  `desktop_*`) are open. A refused registration does not spend the user's
+  login.
 * The login result cannot be steered anywhere by the caller: no `return_to`
-  or `redirect_uri` parameter exists (docs/24 §9.2 proposes a loopback
-  `return_to`; not built). There is no open redirect to close later.
+  or `redirect_uri` parameter exists. OD-DESK-1's desktop handoff returns to
+  a loopback *port* the companion names, on a host fixed to `127.0.0.1`
+  (`tests/security_core/test_desktop_device.py`). There is no open redirect.
 * The wire types a client sends carry no identity, authority or profile
   claim (PHONE-003): such a field is unrepresentable, not ignored.
 * The authorization engine never reads a device's platform, class, client
@@ -43,16 +45,21 @@ REPO = Path(__file__).resolve().parents[2]
 # ── device registration ─────────────────────────────────────────────────
 
 
-def test_the_registry_has_exactly_one_device_platform():
-    """Current state for OD-EP-9 / docs/24 §10.3: no desktop value exists.
-    `linux` in `ExecutionPlatform` is the *server host* (docs/24 §2.2 item 3)
-    and is deliberately not a device platform."""
+def test_the_registry_has_exactly_the_phone_and_the_desktop_companion():
+    """OD-DESK-1 (2026-11-10) added one device platform, `desktop`: the
+    presentation-only desktop companion (docs/CHARACTER_DESKTOP_PROPOSAL.md).
+    It is not docs/24's generic endpoint model, which stays open (OD-EP-9):
+    there are no per-OS values and no `endpoint_class`, and a desktop session
+    is confined to the presentation surface (`server/gateway/device_scope.py`,
+    `tests/security_core/test_desktop_device.py`). `linux` in
+    `ExecutionPlatform` is the *server host* (docs/24 §2.2 item 3) and is
+    deliberately not a device platform."""
 
-    assert [p.value for p in DevicePlatform] == ["android"]
+    assert [p.value for p in DevicePlatform] == ["android", "desktop"]
 
 
 @pytest.mark.parametrize(
-    "platform", ["desktop", "desktop_windows", "desktop_macos", "desktop_linux", "linux", "server", "browser"]
+    "platform", ["desktop_windows", "desktop_macos", "desktop_linux", "linux", "server", "browser"]
 )
 async def test_an_unregistered_platform_is_refused_without_spending_the_login(api, platform):
     bootstrap = await api.oidc_login()

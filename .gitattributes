@@ -1,0 +1,4 @@
+# The desktop companion's sprite assets are pinned by SHA-256
+# (desktop/art/SHA256SUMS): never convert their line endings on checkout.
+desktop/src/sprites/* -text
+desktop/art/SHA256SUMS -text

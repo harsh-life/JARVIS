@@ -76,6 +76,9 @@ jobs:
       - name: Tests
         env:
           HYPERMIND_REQUIRE_MEMORY_STACK: "1"
+          # OD-DESK-1: the Python↔JavaScript ActivityPolicy parity test runs
+          # under Node (preinstalled on the runner); a missing Node fails it.
+          HYPERMIND_REQUIRE_NODE: "1"
         run: python -m pytest tests/ -q --ignore=tests/memory
 
       - name: Memory release-blocking suite (17 §5, docs/21 §9 — MEM-T1..T10, MP-T1..T12)

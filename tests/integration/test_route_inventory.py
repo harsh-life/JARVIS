@@ -26,11 +26,14 @@ PUBLIC = {
     ("GET", "/.well-known/assetlinks.json"),
 }
 # Authenticated by a credential other than an access token: the bootstrap
-# token (device registration) and the device proof (token issuance) — both
-# refuse a request that carries neither.
+# token (device registration), the device proof (token issuance) and — for
+# the desktop companion (OD-DESK-1) — the one-time loopback handoff code
+# together with the PKCE verifier only the companion holds. All refuse a
+# request that carries neither.
 OTHER_CREDENTIAL = {
     ("POST", f"{V1}/devices"),
     ("POST", f"{V1}/sessions/token"),
+    ("POST", f"{V1}/auth/desktop/handoff"),
 }
 OPERATOR = re.compile(rf"^{re.escape(V1)}/(admin|control)(/|$)")
 

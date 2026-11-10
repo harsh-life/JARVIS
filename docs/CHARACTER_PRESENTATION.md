@@ -37,11 +37,12 @@ seven drawings, chosen to be readable at a glance:
 |---|---|---|---|
 | Activity scorer ("Central AI") | turns the caller's task rows into a 1–10 score per state, deterministically | `server/presentation/activity.py` | `ActivityPresentation`; §6 |
 | Activity report | the scores and the components behind them, per request | `GET /api/v1/presentation/activity` | `shared/android/presentation_activity_samples.json` |
-| Activity policy | turns a stream of reports into one shown state: hysteresis, cooldowns, staleness, local wake, intensity | `ActivityPolicy` (Python reference; Android `ActivityPolicy.kt`) | `shared/android/presentation_activity_policy_vectors.json`; §3 |
+| Activity policy | turns a stream of reports into one shown state: hysteresis, cooldowns, staleness, local wake, intensity | `ActivityPolicy` (Python reference; Android `ActivityPolicy.kt`; web/desktop `shared/web/activity-policy.js`) | `shared/android/presentation_activity_policy_vectors.json`; §3 |
 | Controller | runs the policy; adds the development preview (pin) | Android `CharacterController`, run by `CharacterPresentation` | — |
 | Feed | asks for the report while the screen is in front, and sooner when the current task changes | Android `CharacterActivityFeed` | — |
 | Asset profile | which image shows each state | `CharacterProfile`, `assets/character/<id>/profile.json` | `CharacterProfile` |
 | Renderer | draws the shown state at its intensity: the rig (`docs/CHARACTER_RIG.md`) or the images | `presentation/ui/Character.kt`, `presentation/character/rig/` | unchanged |
+| Desktop renderer | the pixel-art companion (OD-DESK-2): the shown state's idle animation in the intensity's band (1–3 low, 4–7 normal, 8–10 high), transitions, long idle, reduced motion | `desktop/src/renderer.js`, `desktop/src/sprites/` | `docs/CHARACTER_DESKTOP_PROPOSAL.md` §5 |
 | Operational status | what JARVIS is actually doing | `Presenter` → `StatusIndicator` (untouched) | — |
 
 "Central AI" here is the server runtime, not a model: **no LLM or classifier
@@ -321,7 +322,7 @@ does not depend on how rows arrive.
   row updates while it waits; `surprised`'s 60 s cooldown bounds that to once a
   minute at most.
 - **Per user, not per device.** All of a user's devices see the same activity
-  (a task from the phone shows on a future desktop companion too). That is
+  (a task from the phone shows on the desktop companion too). That is
   intended — it is JARVIS's activity — but it means one device's work can wake
   another's character.
 - **Constants are untuned.** Half-lives, saturation points and thresholds are
@@ -339,6 +340,8 @@ does not depend on how rows arrive.
 | Endpoint: owner scope, no-store, writes nothing, carries no task content, token | `tests/runtime/test_presentation_activity_api.py`; route inventory |
 | Intensity mapping | `tests/presentation/test_presentation_intensity.py`; Android `IntensityPolicyTest` |
 | Android controller, runtime on virtual time, feed cadence, boundaries | `CharacterControllerTest`, `CharacterPresentationTest`, `CharacterActivityFeedTest`, `CharacterBoundaryTest` |
+| JavaScript policy (desktop/web): vectors, samples, intensity, settings; parity with the Python reference on random input | `shared/web/activity-policy.test.mjs`; `tests/presentation/test_activity_policy_js_parity.py` |
+| Desktop renderer, atlas and webview boundary | `desktop/src/test/`; `desktop/src-tauri` `cargo test` |
 | Import boundaries | `lint-imports --config pyproject.toml` |
 
 ## 10. What OD-CHAR-4 retired

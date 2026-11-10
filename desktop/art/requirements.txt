@@ -1,0 +1,4 @@
+# The sprite generator's exact toolchain (desktop/art/generate_sprites.py).
+# Pinned so `--check` reproduces the committed atlas pixel for pixel.
+Pillow==12.3.0
+numpy==2.4.6
