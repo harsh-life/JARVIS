@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <title>JARVIS Companion — Settings</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="settings.js"></script>
+</head>
+<body class="settings">
+<main>
+  <h1>JARVIS Companion</h1>
+  <p class="note">The companion presents what JARVIS is doing on this computer. It never approves, confirms,
+    submits or runs anything — tasks and confirmations stay in JARVIS itself.</p>
+
+  <h2>Account</h2>
+  <section>
+    <label class="stack">JARVIS server
+      <input id="server_url" type="url" inputmode="url" placeholder="https://jarvis.example.com" autocomplete="off" spellcheck="false">
+    </label>
+    <p>Status: <span id="status" class="status" role="status" aria-live="polite">—</span></p>
+    <div class="row">
+      <button id="save_server" type="button">Save server</button>
+      <button id="sign_in" type="button" class="primary">Sign in with the browser</button>
+      <button id="sign_out" type="button">Sign out</button>
+    </div>
+    <p class="note">Signing in opens your browser. This desktop gets its own device key, kept in the system's
+      credential store, and can be revoked from your phone without affecting it.</p>
+    <p id="account_error" class="error" role="alert"></p>
+  </section>
+
+  <h2>Character</h2>
+  <section>
+    <label>Size <select id="scale"></select></label>
+    <label>Show the character <input id="visible" type="checkbox"></label>
+    <label>Reduced motion (always) <input id="reduced_motion" type="checkbox"></label>
+    <label>Click-through <input id="click_through" type="checkbox"></label>
+    <label>Backdrop (for desktops without transparency) <input id="backdrop" type="checkbox"></label>
+    <label>Start at login <input id="start_at_login" type="checkbox"></label>
+    <p class="note">While click-through is on the character ignores the mouse. Turn it off here, from the tray menu,
+      or by starting JARVIS Companion again.</p>
+  </section>
+
+  <h2>Open JARVIS</h2>
+  <section>
+    <label class="stack">Page to open on double-click
+      <input id="web_url" type="url" inputmode="url" placeholder="(the server's /ui/ page)" autocomplete="off" spellcheck="false">
+    </label>
+    <p class="note">By default this is the server's web page at <code>/ui/</code>, currently the Intelligence
+      Workbench — a configuration page, not a chat. JARVIS has no web conversation page yet.</p>
+    <div class="row"><button id="save_web" type="button">Save page</button></div>
+    <p id="web_error" class="error" role="alert"></p>
+  </section>
+
+  <h2>This computer</h2>
+  <section>
+    <dl id="platform"></dl>
+    <ul id="notes"></ul>
+  </section>
+</main>
+</body>
+</html>

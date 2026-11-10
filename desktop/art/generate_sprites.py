@@ -45,6 +45,8 @@ RIG = Path(__file__).with_name("rig.json")
 OUT_DIR = ROOT / "desktop" / "src" / "sprites"
 ATLAS_PNG = OUT_DIR / "jarvis-atlas.png"
 ATLAS_JSON = OUT_DIR / "jarvis-atlas.json"
+# A single static frame (the neutral `default`), shown if the atlas cannot be used.
+FALLBACK_PNG = OUT_DIR / "jarvis-fallback.png"
 SUMS = Path(__file__).with_name("SHA256SUMS")
 
 EXPRESSIONS = ["happy", "satisfied", "default", "sleepy", "surprised", "angry", "sad"]
@@ -389,7 +391,7 @@ def _long_idle(name: str, sprite: np.ndarray, meta: dict) -> list[tuple[np.ndarr
 
 # ── atlas ───────────────────────────────────────────────────────────────
 
-def build(rig: dict) -> tuple[Image.Image, dict]:
+def build(rig: dict) -> tuple[Image.Image, dict, Image.Image]:
     raw = {e: _base(e, rig) for e in EXPRESSIONS}
     quantised, palette = _quantise(raw)
     sprites = {e: _outline(_patch(q, rig["expressions"][e].get("patch", []))) for e, q in quantised.items()}
@@ -443,7 +445,8 @@ def build(rig: dict) -> tuple[Image.Image, dict]:
         "frames": index,
         "animations": animations,
     }
-    return image, meta
+    fallback = Image.fromarray(_place(sprites["default"]), "RGBA")
+    return image, meta, fallback
 
 
 def _png_bytes(image: Image.Image) -> bytes:
@@ -461,12 +464,14 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="regenerate in memory and compare with the committed files")
     args = parser.parse_args()
     rig = json.loads(RIG.read_text(encoding="utf-8"))
-    image, meta = build(rig)
+    image, meta, fallback = build(rig)
     if args.check:
         committed = np.array(Image.open(ATLAS_PNG).convert("RGBA"))
         fresh = np.array(image)
         same_pixels = committed.shape == fresh.shape and bool((committed == fresh).all())
         same_index = json.loads(ATLAS_JSON.read_text(encoding="utf-8")) == json.loads(_json_bytes(meta))
+        same_pixels = same_pixels and bool(
+            (np.array(Image.open(FALLBACK_PNG).convert("RGBA")) == np.array(fallback)).all())
         if not (same_pixels and same_index):
             print(f"sprite atlas drift: pixels {'ok' if same_pixels else 'DIFFER'}, "
                   f"index {'ok' if same_index else 'DIFFERS'} — run desktop/art/generate_sprites.py")
@@ -474,12 +479,14 @@ def main() -> int:
         print("sprite atlas reproduces exactly")
         return 0
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    png, js = _png_bytes(image), _json_bytes(meta)
+    png, js, fb = _png_bytes(image), _json_bytes(meta), _png_bytes(fallback)
     ATLAS_PNG.write_bytes(png)
     ATLAS_JSON.write_bytes(js)
+    FALLBACK_PNG.write_bytes(fb)
     SUMS.write_text(
         f"{hashlib.sha256(png).hexdigest()}  desktop/src/sprites/{ATLAS_PNG.name}\n"
-        f"{hashlib.sha256(js).hexdigest()}  desktop/src/sprites/{ATLAS_JSON.name}\n",
+        f"{hashlib.sha256(js).hexdigest()}  desktop/src/sprites/{ATLAS_JSON.name}\n"
+        f"{hashlib.sha256(fb).hexdigest()}  desktop/src/sprites/{FALLBACK_PNG.name}\n",
         encoding="utf-8",
     )
     print(f"{len(meta['frames'])} frames, {len(meta['animations'])} animations, atlas {image.width}x{image.height}")

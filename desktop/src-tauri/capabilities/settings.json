@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings",
+  "description": "The settings window: it may receive events and call the four settings commands. No HTTP, filesystem, shell, opener or clipboard permission; sign-in and sign-out run entirely in Rust.",
+  "windows": ["settings"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-settings-get",
+    "allow-settings-set",
+    "allow-sign-in",
+    "allow-sign-out"
+  ]
+}

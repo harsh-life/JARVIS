@@ -1,0 +1,59 @@
+[package]
+name = "jarvis-desktop-companion"
+version = "0.1.0"
+description = "JARVIS desktop companion: a pixel-art presence that presents JARVIS's activity (OD-DESK-1..3)"
+edition = "2021"
+rust-version = "1.80"
+license = "UNLICENSED"
+publish = false
+
+[lib]
+name = "jarvis_companion"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# macos-private-api: the transparent companion window needs it on macOS, which
+# is why the app ships outside the Mac App Store (OD-DESK-3).
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync"] }
+# rustls, no OpenSSL; redirects are never followed (src/net.rs).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+url = "2"
+ed25519-dalek = { version = "2", features = ["zeroize"] }
+getrandom = "0.2"
+sha2 = "0.10"
+base64 = "0.22"
+zeroize = { version = "1", features = ["derive", "serde"] }
+subtle = "2"
+uuid = { version = "1", features = ["serde"] }
+log = "0.4"
+thiserror = "1"
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_RemoteDesktop"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = "0.9"
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync", "test-util"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

@@ -1,0 +1,59 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9; --fg: #1d2129; --muted: #5b6270; --line: #d6dae1; --accent: #2c5fb8;
+  --ok: #1f7a4d; --warn: #9a5b00; --bad: #b3261e; --card: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #16181d; --fg: #e8eaee; --muted: #a2a9b6; --line: #343944; --accent: #8db4ff;
+    --ok: #6fd3a0; --warn: #f0b45a; --bad: #ff8a80; --card: #1f232a; }
+}
+
+/* The companion window: nothing but the character. */
+html, body.companion { margin: 0; padding: 0; background: transparent; overflow: hidden; user-select: none; }
+body.companion { display: grid; place-items: end center; height: 100vh; cursor: grab; }
+canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+.badge {
+  position: fixed; top: 4px; left: 4px; width: 10px; height: 10px; border-radius: 50%;
+  background: #e0a030; box-shadow: 0 0 0 2px rgba(0,0,0,.55);
+}
+.menu-button {
+  position: fixed; top: 2px; right: 2px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px;
+  background: rgba(20, 22, 28, .72); color: #fff; font: 14px/22px system-ui, sans-serif; opacity: 0;
+  transition: opacity .15s; cursor: pointer;
+}
+body.companion:hover .menu-button, .menu-button:focus-visible { opacity: 1; }
+.menu-button:focus-visible { outline: 2px solid #8db4ff; }
+@media (prefers-reduced-motion: reduce) { .menu-button { transition: none; } }
+
+/* Settings */
+body.settings {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif;
+}
+.settings main { max-width: 560px; margin: 0 auto; padding: 20px 16px 32px; }
+.settings h1 { font-size: 18px; margin: 0 0 4px; }
+.settings h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 22px 0 8px; }
+.settings p.note { color: var(--muted); margin: 0 0 12px; }
+.settings section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.settings label { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
+.settings label.stack { flex-direction: column; align-items: stretch; }
+.settings input[type=url], .settings select {
+  font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg);
+  min-width: 0; width: 100%;
+}
+.settings .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.settings button {
+  font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--fg);
+  cursor: pointer;
+}
+.settings button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.settings button:disabled { opacity: .55; cursor: default; }
+.settings .status { font-weight: 600; }
+.settings .status.connected { color: var(--ok); }
+.settings .status.offline, .settings .status.signing_in { color: var(--warn); }
+.settings .status.error, .settings .status.revoked { color: var(--bad); }
+.settings ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+.settings .error { color: var(--bad); min-height: 1.2em; margin: 6px 0 0; }
+.settings dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+.settings dt { color: var(--muted); }
+.settings dd { margin: 0; }
