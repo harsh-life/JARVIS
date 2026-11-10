@@ -45,7 +45,7 @@ from server.security.audit import AuditLogger
 from server.security.events import AuditAction
 from server.storage.models import AccessToken, Device, Session, User
 from shared.schemas.authorization import Principal
-from shared.schemas.enums import AuditActor, AuditResult, UserStatus
+from shared.schemas.enums import AuditActor, AuditResult, DevicePlatform, UserStatus
 from shared.schemas.identity import Device as DeviceContract
 from shared.schemas.identity import new_session_for_device
 
@@ -86,6 +86,11 @@ class ResolvedSession:
     # When this device last proved user presence with its step-up key (docs/23
     # §3). Read live with the token, like the rest of the chain.
     device_reattested_at: datetime | None = None
+    # The token's device's platform (OD-DESK-1), read live with the rest of
+    # the chain: the gateway confines a `desktop` session to the presentation
+    # surface (`server/gateway/device_scope.py`). `None` only for a value
+    # built outside `resolve_principal`, which the gateway never sees.
+    device_platform: DevicePlatform | None = None
 
 
 class SessionService:
@@ -222,6 +227,7 @@ class SessionService:
             token_hash=token_row.token_hash,
             token_expires_at=min(as_utc(token_row.expires_at), as_utc(session_row.expires_at)),
             device_reattested_at=as_utc(device.reattested_at) if device.reattested_at else None,
+            device_platform=device.platform,
         )
 
     # ── 03 §5.5 step-up (SESSION-003) ───────────────────────────────────

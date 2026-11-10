@@ -27,6 +27,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.auth.bootstrap import issue_bootstrap_token
+from server.auth.desktop_handoff import DESKTOP_HANDOFF_TTL, issue_desktop_handoff
 from server.auth.errors import AuthError, InvalidLoginState, LoginNotAdmitted
 from server.auth.oidc import (
     OIDCProvider,
@@ -81,13 +82,37 @@ class LoginStart:
 
 
 @dataclass(frozen=True)
+class DesktopLoginRequest:
+    """OD-DESK-1: what the desktop companion sends to start its login — its
+    own nonce, the S256 challenge of a verifier only it holds, and the
+    loopback port to be returned to. Validated by the router."""
+
+    state: str
+    challenge: str
+    port: int
+
+
+@dataclass(frozen=True)
+class DesktopReturn:
+    """A completed desktop login: the one-time handoff code and where the
+    callback hands it back (`server/auth/desktop_handoff.py`)."""
+
+    handoff_code: str
+    state: str
+    port: int
+
+
+@dataclass(frozen=True)
 class LoginCompletion:
     user: User
     created: bool
     needs_device_registration: bool
-    bootstrap_token: str
+    # The bootstrap token — absent for a desktop login, which is returned a
+    # handoff code instead (`desktop`), so no bearer credential reaches a URL.
+    bootstrap_token: str | None
     # The app-generated nonce this login was started with, if any (docs/23 §3).
     app_state: str | None = None
+    desktop: DesktopReturn | None = None
 
 
 class OIDCLoginFlow:
@@ -107,7 +132,12 @@ class OIDCLoginFlow:
         self._admission = admission or Admission()
 
     async def start(
-        self, session: AsyncSession, *, audit: AuditLogger, app_state: str | None = None
+        self,
+        session: AsyncSession,
+        *,
+        audit: AuditLogger,
+        app_state: str | None = None,
+        desktop: DesktopLoginRequest | None = None,
     ) -> LoginStart:
         """03 §2.1: generate state, nonce, and a PKCE verifier/challenge pair,
         store `{state → (nonce, code_verifier)}` with a short TTL, and return the
@@ -131,6 +161,9 @@ class OIDCLoginFlow:
                 created_at=_utcnow(),
                 expires_at=_utcnow() + self._state_ttl,
                 app_state=app_state,
+                desktop_state=desktop.state if desktop else None,
+                desktop_challenge=desktop.challenge if desktop else None,
+                desktop_port=desktop.port if desktop else None,
             )
         )
         await session.flush()
@@ -153,7 +186,13 @@ class OIDCLoginFlow:
         )
 
     async def complete(
-        self, session: AsyncSession, *, code: str, state: str, audit: AuditLogger
+        self,
+        session: AsyncSession,
+        *,
+        code: str,
+        state: str,
+        audit: AuditLogger,
+        desktop_handoff_ttl: timedelta = DESKTOP_HANDOFF_TTL,
     ) -> LoginCompletion:
         """03 §2.1's callback half.
 
@@ -193,7 +232,6 @@ class OIDCLoginFlow:
             )
 
         devices = await self._repo.active_devices_for_user(session, user_id=user.user_id)
-        bootstrap_token = await issue_bootstrap_token(session, user_id=user.user_id)
 
         await audit.record(
             actor=AuditActor.SYSTEM,
@@ -202,6 +240,38 @@ class OIDCLoginFlow:
             result=AuditResult.SUCCESS,
             user_id=user.user_id,
         )
+
+        if state_row.desktop_challenge is not None:
+            # OD-DESK-1: a desktop login gets a handoff code, redeemable only
+            # with the companion's verifier, instead of a bootstrap token.
+            if state_row.desktop_state is None or state_row.desktop_port is None:
+                raise InvalidLoginState("desktop_state_incomplete")
+            handoff = await issue_desktop_handoff(
+                session,
+                user_id=user.user_id,
+                code_challenge=state_row.desktop_challenge,
+                ttl=desktop_handoff_ttl,
+            )
+            await audit.record(
+                actor=AuditActor.SYSTEM,
+                action=AuditAction.DESKTOP_HANDOFF_ISSUED,
+                resource=f"user:{user.user_id}",
+                result=AuditResult.SUCCESS,
+                user_id=user.user_id,
+            )
+            return LoginCompletion(
+                user=user,
+                created=created,
+                needs_device_registration=not devices,
+                bootstrap_token=None,
+                desktop=DesktopReturn(
+                    handoff_code=handoff,
+                    state=state_row.desktop_state,
+                    port=state_row.desktop_port,
+                ),
+            )
+
+        bootstrap_token = await issue_bootstrap_token(session, user_id=user.user_id)
         await audit.record(
             actor=AuditActor.SYSTEM,
             action=AuditAction.BOOTSTRAP_TOKEN_ISSUED,

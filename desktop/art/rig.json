@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "description": "Hand-authored pixel rig for the desktop companion's sprites (OD-DESK-2). Coordinates are sprite pixels in the 64x88 character box. `eyes`: boxes [x0, y0, x1, y1] closed by a blink (omitted where the drawing's eyes are already closed); `tear`: where the sad tear starts; `idle`: the idle motion style; `frame_ms`: the canonical idle frame time; `strip`: decoration removed from the source (the drawing's own Zzz; the companion animates its own); `patch`: light pixels repainted with a sampled colour (bubble-edge cleanup).",
+  "expressions": {
+    "happy":     {"source": "happy.webp",     "idle": "bounce", "frame_ms": 150},
+    "satisfied": {"source": "satisfied.png",  "idle": "sway",   "frame_ms": 230,
+                  "eyes": [[18, 29, 24, 31], [32, 29, 38, 31]]},
+    "default":   {"source": "default.png",    "idle": "sway",   "frame_ms": 250,
+                  "eyes": [[19, 28, 24, 34], [33, 28, 38, 34]]},
+    "sleepy":    {"source": "sleepy.webp",    "idle": "nod",    "frame_ms": 420,
+                  "strip": {"y_from": 0, "y_to": 480, "margin": 30},
+                  "patch": [{"rect": [4, 32, 11, 40], "sample": [11, 28]}]},
+    "surprised": {"source": "surprised.webp", "idle": "jitter", "frame_ms": 130,
+                  "eyes": [[18, 30, 23, 35], [33, 29, 38, 35]]},
+    "angry":     {"source": "angry.webp",     "idle": "shake",  "frame_ms": 140,
+                  "eyes": [[19, 33, 25, 38], [32, 31, 38, 37]]},
+    "sad":       {"source": "sad.webp",       "idle": "droop",  "frame_ms": 320,
+                  "eyes": [[20, 39, 25, 43], [33, 38, 39, 43]], "tear": [21, 44]}
+  }
+}

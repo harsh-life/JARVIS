@@ -23,6 +23,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.gateway.deps import get_db_session, get_principal
+from server.gateway.device_scope import DesktopScope, desktop_scope
 from server.gateway.errors import AppError
 from server.presentation.activity import measure
 from server.storage.models import PresentationSettingsRow
@@ -98,6 +99,7 @@ async def reset_presentation(
 
 
 @router.get(ACTIVITY_PATH, response_model=ActivityPresentation)
+@desktop_scope(DesktopScope.PRESENTATION)
 async def get_activity(
     response: Response,
     session: AsyncSession = Depends(get_db_session),

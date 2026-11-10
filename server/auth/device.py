@@ -63,7 +63,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.auth.bootstrap import consume_bootstrap_token
-from server.auth.errors import InvalidDeviceProof
+from server.auth.errors import InvalidBootstrapToken, InvalidDeviceProof
 from server.auth.repository import AuthRepository, utcnow
 from server.secrets.errors import SecretStoreError
 from server.secrets.requester import SecretRequester
@@ -265,6 +265,11 @@ class DeviceService:
 
         if (public_key is None) != (key_proof is None):
             raise InvalidDeviceProof("incomplete_public_key")
+        if platform is DevicePlatform.DESKTOP and public_key is None:
+            # OD-DESK-1: a desktop's private key is generated on the desktop
+            # and held in its OS credential store; the server never mints one
+            # for it. Refused before the token is spent.
+            raise InvalidDeviceProof("desktop_requires_own_key")
         verified_public: str | None = None
         if public_key is not None and key_proof is not None:
             # Checked before the token is spent, so a malformed request does not
@@ -276,7 +281,17 @@ class DeviceService:
             )
 
         try:
-            user_id = await consume_bootstrap_token(session, bootstrap_token)
+            grant = await consume_bootstrap_token(session, bootstrap_token)
+            # OD-DESK-1: the platform binding holds both ways. A token from the
+            # desktop handoff registers only a desktop, and a desktop registers
+            # only with such a token — so every `desktop` device came through
+            # the loopback handoff, and that handoff cannot mint a phone. The
+            # token is already spent: a refused registration means signing in
+            # again (the safe direction, as for every other failure here).
+            if (grant.platform is DevicePlatform.DESKTOP) != (platform is DevicePlatform.DESKTOP):
+                raise InvalidBootstrapToken("platform_mismatch")
+            if grant.platform is not None and grant.platform is not platform:
+                raise InvalidBootstrapToken("platform_mismatch")
         except Exception:
             await audit.record(
                 actor=AuditActor.SYSTEM,
@@ -285,6 +300,7 @@ class DeviceService:
                 result=AuditResult.BLOCKED,
             )
             raise
+        user_id = grant.user_id
 
         private_key = Ed25519PrivateKey.generate() if verified_public is None else None
         public_b64 = (

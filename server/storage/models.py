@@ -619,6 +619,35 @@ class OIDCLoginState(Base):
     # the browser, echoed back with the bootstrap token so the app accepts only
     # the login it started (login-CSRF). Null for a plain JSON login.
     app_state: Mapped[str | None] = mapped_column(String, nullable=True)
+    # OD-DESK-1's loopback handoff: the desktop companion's own nonce (echoed
+    # to its loopback listener so it accepts only the login it started), the
+    # S256 challenge of the PKCE verifier only the companion holds (the
+    # handoff code is useless without it), and the loopback port to return
+    # to. All three or none; null for every other login.
+    desktop_state: Mapped[str | None] = mapped_column(String, nullable=True)
+    desktop_challenge: Mapped[str | None] = mapped_column(String, nullable=True)
+    desktop_port: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+class DesktopHandoff(Base):
+    """OD-DESK-1 — the one-time code a desktop login returns to the
+    companion's loopback listener, in place of the bootstrap token.
+
+    The code alone is worth nothing: it is redeemed only together with the
+    PKCE verifier whose S256 challenge the companion sent when it started the
+    login, which never left the companion. Stored as a hash, single-use, short
+    TTL; redemption issues a bootstrap token bound to the `desktop` platform,
+    so no bearer credential ever appears in a browser URL.
+    """
+
+    __tablename__ = "desktop_handoffs"
+
+    code_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.user_id"), nullable=False)
+    code_challenge: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class BootstrapToken(Base):
@@ -633,6 +662,13 @@ class BootstrapToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # OD-DESK-1: the platform this token may register, when it is bound to
+    # one. A token from the desktop handoff registers only a `desktop` device,
+    # and a `desktop` device registers only with such a token. Null for the
+    # ordinary (phone) login, which cannot register a desktop.
+    platform: Mapped[DevicePlatform | None] = mapped_column(
+        _sa_enum(DevicePlatform, "bootstrap_platform"), nullable=True
+    )
 
 
 class AccessToken(Base):

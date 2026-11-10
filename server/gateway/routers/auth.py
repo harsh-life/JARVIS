@@ -1,7 +1,9 @@
 """Auth / identity / device endpoints — 02 §3, realized by `03`.
 
-Public endpoints here are exactly the two 02 §1.1 permits without a token: the
-OIDC start and callback. Everything else requires a credential.
+Public endpoints here are the two 02 §1.1 permits without a token — the OIDC
+start and callback — plus, by OD-DESK-1, the desktop handoff redemption, which
+requires the one-time handoff code *and* the PKCE verifier only the companion
+holds (`server/auth/desktop_handoff.py`). Everything else requires a credential.
 
 ## Why device registration does not use an `Idempotency-Key`
 
@@ -22,7 +24,7 @@ is also the only way it could legitimately receive a new credential.
 from __future__ import annotations
 
 import uuid
-
+from datetime import timedelta
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
@@ -37,11 +39,22 @@ from server.gateway.deps import (
     get_resolved_session,
     get_security_core,
 )
+from server.gateway.device_scope import DesktopScope, desktop_scope
 from server.gateway.errors import AppError
 from server.gateway.security import SecurityCore
-from server.auth.errors import StepUpRequired
+from server.auth.desktop_handoff import (
+    CHALLENGE_PATTERN,
+    DESKTOP_PORT_MAX,
+    DESKTOP_PORT_MIN,
+    DESKTOP_STATE_PATTERN,
+    VERIFIER_PATTERN,
+    loopback_redirect,
+    redeem_desktop_handoff,
+)
+from server.auth.errors import AuthError, StepUpRequired
+from server.auth.login import DesktopLoginRequest
 from server.auth.sessions import ResolvedSession
-from server.config.schema import AndroidConfig
+from server.config.schema import AndroidConfig, DesktopConfig
 from shared.schemas.device_channel import DeviceCloseCode
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
@@ -83,10 +96,30 @@ def _android(request: Request) -> AndroidConfig:
     return getattr(request.app.state, "android", None) or AndroidConfig()
 
 
+def _desktop(request: Request) -> DesktopConfig:
+    return getattr(request.app.state, "desktop", None) or DesktopConfig()
+
+
 class OIDCStartResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     redirect_url: str
+
+
+class DesktopHandoffRequest(BaseModel):
+    """OD-DESK-1: the companion redeems its loopback handoff code with the PKCE
+    verifier it generated before opening the browser."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=20, max_length=128)
+    code_verifier: str = Field(pattern=VERIFIER_PATTERN)
+
+
+class DesktopHandoffResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    bootstrap_token: str
 
 
 class OIDCCallbackResponse(BaseModel):
@@ -138,6 +171,9 @@ class DeviceRotationResponse(BaseModel):
 async def oidc_start(
     request: Request,
     app_state: str | None = Query(default=None, pattern=_APP_STATE_PATTERN),
+    desktop_state: str | None = Query(default=None, pattern=DESKTOP_STATE_PATTERN),
+    desktop_challenge: str | None = Query(default=None, pattern=CHALLENGE_PATTERN),
+    desktop_port: int | None = Query(default=None, ge=DESKTOP_PORT_MIN, le=DESKTOP_PORT_MAX),
     session: AsyncSession = Depends(get_db_session),
     core: SecurityCore = Depends(get_security_core),
     audit: AuditLogger = Depends(get_audit_logger),
@@ -158,7 +194,20 @@ async def oidc_start(
             ErrorCode.VALIDATION_FAILED,
             "the Android App Link login handoff is not configured on this server",
         )
-    start = await core.login_flow.start(session, audit=audit, app_state=app_state)
+    # OD-DESK-1: the desktop companion's loopback handoff. All three values or
+    # none, never together with the Android handoff, and only when enabled.
+    desktop_values = (desktop_state, desktop_challenge, desktop_port)
+    desktop: DesktopLoginRequest | None = None
+    if any(value is not None for value in desktop_values):
+        if any(value is None for value in desktop_values) or app_state is not None:
+            raise AppError(ErrorCode.VALIDATION_FAILED, "incomplete desktop login request")
+        if not _desktop(request).enabled:
+            raise AppError(
+                ErrorCode.VALIDATION_FAILED,
+                "the desktop companion login is not enabled on this server",
+            )
+        desktop = DesktopLoginRequest(state=desktop_state, challenge=desktop_challenge, port=desktop_port)
+    start = await core.login_flow.start(session, audit=audit, app_state=app_state, desktop=desktop)
     return OIDCStartResponse(redirect_url=start.redirect_url)
 
 
@@ -182,9 +231,31 @@ async def oidc_callback(
     fragment so it never enters a server log.
     """
 
+    desktop_config = _desktop(request)
     completion = await core.login_flow.complete(
-        session, code=code, state=state, audit=audit
+        session,
+        code=code,
+        state=state,
+        audit=audit,
+        desktop_handoff_ttl=timedelta(seconds=desktop_config.handoff_ttl_seconds),
     )
+    if completion.desktop is not None:
+        if not desktop_config.enabled:
+            # Disabled between start and callback: fail closed. The handoff
+            # code just minted is never delivered, and expires unredeemed.
+            raise AppError(ErrorCode.VALIDATION_FAILED, "desktop login is not enabled")
+        # OD-DESK-1: back to the companion's loopback listener with a code
+        # that is worthless without the companion's verifier. No bearer
+        # credential is in this URL, and the host is fixed to 127.0.0.1.
+        return RedirectResponse(
+            loopback_redirect(
+                port=completion.desktop.port,
+                code=completion.desktop.handoff_code,
+                desktop_state=completion.desktop.state,
+            ),
+            status_code=status.HTTP_302_FOUND,
+            headers=_NO_STORE,
+        )
     if completion.app_state is not None:
         base = _android(request).app_links.base_url
         if base is None:
@@ -204,6 +275,57 @@ async def oidc_callback(
             needs_device_registration=completion.needs_device_registration,
             bootstrap_token=completion.bootstrap_token,
         ).model_dump(mode="json"),
+        headers=_NO_STORE,
+    )
+
+
+@router.post("/auth/desktop/handoff", response_model=DesktopHandoffResponse)
+async def desktop_handoff(
+    request: Request,
+    body: DesktopHandoffRequest,
+    session: AsyncSession = Depends(get_db_session),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> Response:
+    """OD-DESK-1 — redeem the loopback handoff code for a bootstrap token
+    bound to the `desktop` platform.
+
+    Public in the same sense as the OIDC callback: the caller has no Hypermind
+    credential yet. What it must hold instead is the one-time code the callback
+    returned to its loopback listener *and* the PKCE verifier it generated
+    before the login began — the code alone is refused. Every failure is the
+    same `401`, audited without the code or the verifier.
+    """
+
+    if not _desktop(request).enabled:
+        raise AppError(ErrorCode.NOT_FOUND, "not found")
+    try:
+        user_id, bootstrap = await redeem_desktop_handoff(
+            session, code=body.code, code_verifier=body.code_verifier
+        )
+    except AuthError:
+        await audit.record(
+            actor=AuditActor.SYSTEM,
+            action=AuditAction.DESKTOP_HANDOFF_REJECTED,
+            resource="auth:desktop_handoff",
+            result=AuditResult.BLOCKED,
+        )
+        raise
+    await audit.record(
+        actor=AuditActor.SYSTEM,
+        action=AuditAction.DESKTOP_HANDOFF_REDEEMED,
+        resource=f"user:{user_id}",
+        result=AuditResult.SUCCESS,
+        user_id=user_id,
+    )
+    await audit.record(
+        actor=AuditActor.SYSTEM,
+        action=AuditAction.BOOTSTRAP_TOKEN_ISSUED,
+        resource=f"user:{user_id}",
+        result=AuditResult.SUCCESS,
+        user_id=user_id,
+    )
+    return JSONResponse(
+        DesktopHandoffResponse(bootstrap_token=bootstrap).model_dump(mode="json"),
         headers=_NO_STORE,
     )
 
@@ -367,6 +489,7 @@ async def rotate_device_credential(
 
 
 @router.delete("/devices/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
+@desktop_scope(DesktopScope.OWN_DEVICE)
 async def revoke_device(
     request: Request,
     device_id: uuid.UUID,

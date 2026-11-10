@@ -28,6 +28,11 @@ class AuditAction(str, Enum):
     USER_CREATED = "auth.user.created"
     BOOTSTRAP_TOKEN_ISSUED = "auth.bootstrap_token.issued"
     BOOTSTRAP_TOKEN_REJECTED = "auth.bootstrap_token.rejected"
+    # OD-DESK-1: the desktop companion's loopback login handoff. Records carry
+    # the user id — never the handoff code, its verifier or the bootstrap token.
+    DESKTOP_HANDOFF_ISSUED = "auth.desktop_handoff.issued"
+    DESKTOP_HANDOFF_REDEEMED = "auth.desktop_handoff.redeemed"
+    DESKTOP_HANDOFF_REJECTED = "auth.desktop_handoff.rejected"
 
     # ── device credential lifecycle (03 §4) ─────────────────────────────
     DEVICE_REGISTERED = "device.registered"
@@ -56,6 +61,9 @@ class AuditAction(str, Enum):
     SESSION_LOGGED_OUT = "session.logout"
     ACTIVE_GRAPH_CHANGED = "session.active_graph.changed"
     STEP_UP_REQUIRED = "session.step_up.required"
+    # OD-DESK-1: a desktop session asked for a route outside its presentation
+    # scope (server/gateway/device_scope.py).
+    DEVICE_SCOPE_REFUSED = "session.device_scope.refused"
 
     # ── graph lifecycle & membership (04 §4) ────────────────────────────
     GRAPH_CREATED = "graph.created"

@@ -14,6 +14,7 @@ which gives each locked property a mechanism rather than a convention:
 | short TTL | `expires_at`, checked on consume |
 | bound to that user | `user_id` on the row, returned by consume |
 | register-only scope | the token grants nothing else because nothing else accepts it — `consume` is called from exactly one place (`server/auth/device.py`) |
+| platform-bound (OD-DESK-1) | `platform` on the row: a token from the desktop handoff registers only a `desktop` device, and only such a token registers one (enforced in `server/auth/device.py`) |
 
 The last row is the important one: the scope is narrow because of an *absence*
 of other consumers, not because of a scope claim that some future endpoint might
@@ -23,6 +24,7 @@ also choose to honour.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import update
@@ -31,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.auth.errors import InvalidBootstrapToken
 from server.secrets.crypto import generate_token, hash_token
 from server.storage.models import BootstrapToken
+from shared.schemas.enums import DevicePlatform
 
 # Long enough to walk back from the browser to the app, short enough that a
 # leaked bootstrap token is not a standing device-registration permission.
@@ -41,11 +44,21 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+@dataclass(frozen=True)
+class BootstrapGrant:
+    """What a spent bootstrap token establishes: whose device may be
+    registered, and — when the token is bound to one — on which platform."""
+
+    user_id: uuid.UUID
+    platform: DevicePlatform | None
+
+
 async def issue_bootstrap_token(
     session: AsyncSession,
     *,
     user_id: uuid.UUID,
     ttl: timedelta = BOOTSTRAP_TOKEN_TTL,
+    platform: DevicePlatform | None = None,
 ) -> str:
     """Mint a token for the user who just completed OIDC login.
 
@@ -60,14 +73,16 @@ async def issue_bootstrap_token(
             user_id=user_id,
             created_at=_utcnow(),
             expires_at=_utcnow() + ttl,
+            platform=platform,
         )
     )
     await session.flush()
     return raw
 
 
-async def consume_bootstrap_token(session: AsyncSession, token: str) -> uuid.UUID:
-    """Validate and spend a bootstrap token; return the bound user id.
+async def consume_bootstrap_token(session: AsyncSession, token: str) -> BootstrapGrant:
+    """Validate and spend a bootstrap token; return the bound user id and the
+    platform it is bound to, if any.
 
     `[LOCKED]` (03 §3.1 step 6, AUTH-T2) single-use. The spend is a conditional
     UPDATE on `used_at IS NULL`, so two concurrent registrations cannot both
@@ -105,4 +120,4 @@ async def consume_bootstrap_token(session: AsyncSession, token: str) -> uuid.UUI
     if result.rowcount != 1:
         raise InvalidBootstrapToken("replayed")
 
-    return row.user_id
+    return BootstrapGrant(user_id=row.user_id, platform=row.platform)

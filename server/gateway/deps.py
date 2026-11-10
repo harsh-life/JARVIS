@@ -45,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.auth.errors import AuthError, InvalidAccessToken
 from server.auth.sessions import ResolvedSession
 from server.capabilities.floor import AbsoluteFloorViolation
+from server.gateway.device_scope import DeviceScopeRefused, enforce_device_scope
 from server.gateway.errors import AppError
 from server.gateway.security import SecurityCore
 from server.graph.service import GraphOperationRefused
@@ -142,11 +143,25 @@ async def get_resolved_session(
     """
 
     try:
-        return await core.sessions.resolve_principal(session, bearer_token(request))
+        resolved = await core.sessions.resolve_principal(session, bearer_token(request))
     except AuthError as exc:
         await audit.record(actor=AuditActor.SYSTEM, action=AuditAction.ACCESS_TOKEN_REJECTED,
                            resource=f"auth:token:{exc.reason}"[:128], result=AuditResult.BLOCKED)
         raise
+    # OD-DESK-1: a session reaches only what its device's platform may — a
+    # desktop companion only the presentation surface. Checked here, where
+    # every authenticated HTTP request's identity is resolved, so no handler
+    # can forget it.
+    try:
+        enforce_device_scope(request, resolved)
+    except DeviceScopeRefused:
+        principal = resolved.principal
+        await audit.record(actor=AuditActor.USER, action=AuditAction.DEVICE_SCOPE_REFUSED,
+                           resource=f"route:{request.method}:{request.url.path}"[:128],
+                           result=AuditResult.BLOCKED, user_id=principal.user_id,
+                           device_id=principal.device_id, session_id=principal.session_id)
+        raise
+    return resolved
 
 
 async def get_principal(
