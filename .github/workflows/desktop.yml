@@ -1,0 +1,212 @@
+# Desktop companion (OD-DESK-1…3): the shared JS policy, the pixel-art
+# atlas, and the Tauri app built, tested, packaged and smoke-tested from its
+# *installed packages* on Linux (X11 and Wayland), macOS and Windows.
+#
+# Needs no secrets: packages here are unsigned development artifacts. Signed
+# release builds are .github/workflows/desktop-release.yml.
+
+name: Desktop
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy-and-art:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Shared ActivityPolicy (JS) + renderer + webview boundary
+        run: node --test shared/web/ desktop/src/test/
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: The pixel-art atlas reproduces from the approved originals
+        run: |
+          python -m pip install -r desktop/art/requirements.txt
+          python desktop/art/generate_sprites.py --check
+
+  app:
+    name: app (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04      # packages: the older glibc keeps the AppImage/.deb portable
+            bundles: deb,appimage
+          - os: ubuntu-latest
+            bundles: deb
+          - os: macos-latest
+            bundles: app,dmg
+          - os: windows-latest
+            bundles: msi
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build and test dependencies (WebKitGTK 4.1, AppIndicator, D-Bus; Xvfb, Weston)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev libdbus-1-dev pkg-config patchelf file \
+            xvfb x11-utils imagemagick dbus-x11 weston at-spi2-core
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal -c rustfmt,clippy && rustup default stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: desktop-${{ matrix.os }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+
+      - name: Install
+        run: npm ci
+
+      - name: Assemble the webview (verifies the sprite pins)
+        run: node scripts/build-frontend.mjs
+
+      - name: Format and lint
+        working-directory: desktop/src-tauri
+        run: cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Rust tests (protocol, credential handling, boundary)
+        working-directory: desktop/src-tauri
+        run: cargo test --locked
+
+      - name: Package (${{ matrix.bundles }})
+        run: npx tauri build --bundles ${{ matrix.bundles }}
+
+      # ── smoke tests of the installed packages ──────────────────────────
+      # `--smoke-test` opens the real companion window, loads the sprite atlas
+      # in the packaged webview, feeds a synthetic report through the shared
+      # policy and records what is shown — no network, no credential store.
+
+      - name: Smoke test — .deb installed, X11 (Xvfb, no compositor)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y ./src-tauri/target/release/bundle/deb/*.deb
+          BIN=$(dpkg -L jarvis-companion 2>/dev/null | grep '/usr/bin/' | head -1)
+          [ -n "$BIN" ] || BIN=$(dpkg -c src-tauri/target/release/bundle/deb/*.deb | awk '{print $6}' | grep '^./usr/bin/' | sed 's/^\.//' | head -1)
+          echo "binary: $BIN"
+          echo "JARVIS_BIN=$BIN" >> "$GITHUB_ENV"
+          mkdir -p ../smoke
+          export JARVIS_SMOKE_HOLD_MS=8000
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" bash -c "
+            \"$BIN\" --smoke-test ../smoke/linux-x11-${{ matrix.os }}.json & PID=\$!
+            sleep 6; import -window root ../smoke/linux-x11-${{ matrix.os }}.png || true
+            wait \$PID"
+          cat ../smoke/linux-x11-${{ matrix.os }}.json
+
+      - name: Smoke test — .deb installed, Wayland (Weston, headless)
+        if: runner.os == 'Linux'
+        continue-on-error: true   # recorded either way; see docs/CHARACTER_DESKTOP_PROPOSAL.md §6
+        run: |
+          BIN="$JARVIS_BIN"
+          mkdir -p ../smoke
+          export XDG_RUNTIME_DIR=$(mktemp -d) && chmod 700 "$XDG_RUNTIME_DIR"
+          (weston --backend=headless-backend.so --socket=wl-ci --width=1280 --height=800 >../smoke/weston.log 2>&1 \
+            || weston --backend=headless --socket=wl-ci --width=1280 --height=800 >>../smoke/weston.log 2>&1) &
+          sleep 3
+          export WAYLAND_DISPLAY=wl-ci GDK_BACKEND=wayland XDG_SESSION_TYPE=wayland LIBGL_ALWAYS_SOFTWARE=1
+          unset DISPLAY
+          export JARVIS_SMOKE_HOLD_MS=6000
+          dbus-run-session -- "$BIN" --smoke-test ../smoke/linux-wayland-${{ matrix.os }}.json
+          cat ../smoke/linux-wayland-${{ matrix.os }}.json
+
+      - name: Smoke test — AppImage
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          APP=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
+          chmod +x "$APP"
+          export JARVIS_SMOKE_HOLD_MS=4000 APPIMAGE_EXTRACT_AND_RUN=1
+          dbus-run-session -- xvfb-run -a "$APP" --smoke-test ../smoke/linux-appimage.json
+          cat ../smoke/linux-appimage.json
+
+      - name: Smoke test — app run from the mounted DMG
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p ../smoke
+          DMG=$(ls src-tauri/target/release/bundle/dmg/*.dmg | head -1)
+          MNT=$(hdiutil attach -nobrowse -readonly "$DMG" | grep -o '/Volumes/.*' | head -1)
+          APPBIN=$(ls "$MNT"/*.app/Contents/MacOS/* | head -1)
+          export JARVIS_SMOKE_HOLD_MS=8000
+          "$APPBIN" --smoke-test ../smoke/macos.json & PID=$!
+          sleep 6; screencapture -x ../smoke/macos.png || echo "screencapture unavailable"
+          wait $PID
+          hdiutil detach "$MNT" -quiet
+          cat ../smoke/macos.json
+
+      - name: Smoke test — MSI installed
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ..\smoke | Out-Null
+          $msi = Get-ChildItem src-tauri\target\release\bundle\msi\*.msi | Select-Object -First 1
+          $p = Start-Process msiexec.exe -ArgumentList "/i `"$($msi.FullName)`" /qn /l*v ..\smoke\msi-install.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec exited $($p.ExitCode)" }
+          $exe = Get-ChildItem "$env:ProgramFiles\JARVIS Companion" -Filter *.exe -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike "uninstall*" } | Select-Object -First 1
+          if (-not $exe) { $exe = Get-ChildItem $env:ProgramFiles, ${env:ProgramFiles(x86)}, "$env:LOCALAPPDATA\Programs" -Filter "*jarvis*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 }
+          Write-Host "installed: $($exe.FullName)"
+          $env:JARVIS_SMOKE_HOLD_MS = "8000"
+          $out = (Resolve-Path ..\smoke).Path + "\windows.json"
+          $app = Start-Process $exe.FullName -ArgumentList "--smoke-test `"$out`"" -PassThru
+          Start-Sleep -Seconds 6
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save((Resolve-Path ..\smoke).Path + "\windows.png")
+          $app.WaitForExit(60000) | Out-Null
+          Get-Content $out
+          if ($app.ExitCode -ne 0) { throw "smoke test exited $($app.ExitCode)" }
+
+      - name: Checksums
+        run: |
+          cd src-tauri/target/release/bundle
+          find . -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.msi' \) -print0 \
+            | xargs -0 sha256sum > SHA256SUMS-${{ matrix.os }}.txt || \
+            find . -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.msi' \) -print0 \
+            | xargs -0 shasum -a 256 > SHA256SUMS-${{ matrix.os }}.txt
+          cat SHA256SUMS-${{ matrix.os }}.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jarvis-companion-${{ matrix.os }}-unsigned
+          path: |
+            desktop/src-tauri/target/release/bundle/**/*.deb
+            desktop/src-tauri/target/release/bundle/**/*.AppImage
+            desktop/src-tauri/target/release/bundle/**/*.dmg
+            desktop/src-tauri/target/release/bundle/**/*.msi
+            desktop/src-tauri/target/release/bundle/SHA256SUMS-*.txt
+            smoke/
+          if-no-files-found: warn
+          retention-days: 14
