@@ -250,6 +250,123 @@ def test_the_tag_comes_from_the_trigger():
         ri.tag_from_event("pull_request", "refs/pull/1/merge", "desktop-v1.2.3")
 
 
+# ── manual runs only from main ────────────────────────────────────────────
+
+NON_MAIN_REFS = [
+    "refs/heads/feature/rigby-android-player",
+    "refs/heads/fix/desktop-release-tag-integrity",
+    "refs/heads/main-evil",  # a prefix match would accept this
+    "refs/heads/feature/main",  # a suffix match would accept this
+    "refs/heads/Main",
+    "refs/heads/main/",
+    "refs/tags/desktop-v0.1.0",  # a manual run started from the release tag itself
+    "refs/tags/main",
+    "refs/pull/58/merge",
+    "main",  # not a full ref
+    "",
+]
+
+
+def _dispatch(repo, ref, **kw):
+    return ri.resolve(
+        repo.clone,
+        event="workflow_dispatch",
+        ref=ref,
+        input_tag="desktop-v0.1.0",
+        event_sha=kw.pop("event_sha", repo.main_sha),
+        **kw,
+    )
+
+
+@needs_git
+@pytest.mark.parametrize("ref", NON_MAIN_REFS)
+def test_a_manual_run_from_any_ref_but_main_is_refused(repo, ref):
+    # Everything else about this release is valid (a real tag on main, matching
+    # versions), so the ref is the only thing that can make it fail.
+    _g(repo.work, "tag", "desktop-v0.1.0")
+    repo.push("refs/tags/desktop-v0.1.0")
+    assert _dispatch(repo, "refs/heads/main").sha == repo.main_sha
+    with pytest.raises(ri.IntegrityError, match="must be started from refs/heads/main"):
+        _dispatch(repo, ref)
+
+
+@needs_git
+@pytest.mark.parametrize("ref", NON_MAIN_REFS)
+def test_the_post_draft_recheck_refuses_a_non_main_manual_run_too(repo, ref):
+    _g(repo.work, "tag", "desktop-v0.1.0")
+    repo.push("refs/tags/desktop-v0.1.0")
+    with pytest.raises(ri.IntegrityError, match="must be started from refs/heads/main"):
+        _dispatch(repo, ref, expect_sha=repo.main_sha)
+
+
+@pytest.mark.parametrize("ref", NON_MAIN_REFS)
+def test_the_ref_is_refused_before_any_git_command_runs(monkeypatch, tmp_path, ref):
+    def no_git(*a, **k):
+        raise AssertionError("git ran for a run that was already refused")
+
+    monkeypatch.setattr(ri, "_git", no_git)
+    with pytest.raises(ri.IntegrityError, match="must be started from refs/heads/main"):
+        ri.resolve(
+            tmp_path, event="workflow_dispatch", ref=ref, input_tag="desktop-v0.1.0", event_sha=SHA_FOR_REFS
+        )
+
+
+SHA_FOR_REFS = "c" * 40
+
+
+@needs_git
+def test_a_manual_run_from_main_must_execute_a_commit_that_is_on_main(repo):
+    # Started "from main", but the code it runs is a commit that is not main's
+    # history: a rewritten branch or a mismatched event.
+    _g(repo.work, "tag", "desktop-v0.1.0")
+    repo.push("refs/tags/desktop-v0.1.0")
+    _g(repo.work, "checkout", "-q", "-b", "side")
+    (repo.work / "side.txt").write_text("unreviewed tooling")
+    side = _commit(repo.work, "unreviewed")
+    repo.push("side")
+    with pytest.raises(ri.IntegrityError, match="not on main"):
+        _dispatch(repo, "refs/heads/main", event_sha=side)
+    with pytest.raises(ri.IntegrityError, match="not on main"):
+        _dispatch(repo, "refs/heads/main", event_sha=side, expect_sha=repo.main_sha)
+
+
+@needs_git
+def test_a_manual_run_from_main_still_resolves(repo):
+    _g(repo.work, "tag", "-a", "desktop-v0.1.0", "-m", "release")
+    repo.push("refs/tags/desktop-v0.1.0")
+    res = _dispatch(repo, "refs/heads/main")
+    assert (res.tag, res.sha, res.version) == ("desktop-v0.1.0", repo.main_sha, "0.1.0")
+
+
+@needs_git
+def test_a_tag_push_is_unaffected_by_the_manual_run_restriction(repo):
+    # A push run's ref is the tag, never main. The existing tag-to-commit checks apply.
+    _g(repo.work, "tag", "desktop-v0.1.0")
+    repo.push("refs/tags/desktop-v0.1.0")
+    res = ri.resolve(
+        repo.clone, event="push", ref="refs/tags/desktop-v0.1.0", input_tag="", event_sha=repo.main_sha
+    )
+    assert res.sha == repo.main_sha
+    with pytest.raises(ri.IntegrityError, match="moved after it was pushed"):
+        ri.resolve(repo.clone, event="push", ref="refs/tags/desktop-v0.1.0", input_tag="", event_sha=SHA_FOR_REFS)
+
+
+@needs_git
+def test_the_cli_exits_nonzero_for_a_manual_run_from_a_feature_branch(repo, capsys):
+    _g(repo.work, "tag", "desktop-v0.1.0")
+    repo.push("refs/tags/desktop-v0.1.0")
+
+    def run(ref):
+        return ri.main(
+            ["resolve", "--repo", str(repo.clone), "--event", "workflow_dispatch", "--ref", ref,
+             "--input-tag", "desktop-v0.1.0", "--event-sha", repo.main_sha]
+        )
+
+    assert run("refs/heads/feature/x") == 1
+    assert "must be started from refs/heads/main" in capsys.readouterr().err
+    assert run("refs/heads/main") == 0
+
+
 @needs_git
 def test_the_real_tree_declares_one_consistent_version():
     versions = ri.declared_versions(ROOT, subprocess.run(
@@ -553,3 +670,131 @@ def test_the_release_notes_keep_the_gate_and_the_boundary():
     assert "never approves, confirms or runs anything" in ri.BOUNDARY_STATEMENT
     status = (ROOT / "docs" / "PROJECT_STATUS.md").read_text()
     assert "Before putting real data anywhere near this" in status
+
+
+# ── the workflow: manual runs only from main, and the signing environment ──
+
+
+def _needs(job) -> set[str]:
+    n = job.get("needs", [])
+    return {n} if isinstance(n, str) else set(n)
+
+
+def _all_needs(wf, name, seen=None) -> set[str]:
+    seen = set() if seen is None else seen
+    for dep in _needs(wf["jobs"][name]):
+        if dep not in seen:
+            seen.add(dep)
+            _all_needs(wf, dep, seen)
+    return seen
+
+
+def test_guard_runs_first_and_every_other_job_waits_for_it(wf):
+    guard = wf["jobs"]["guard"]
+    assert "needs" not in guard
+    for name in wf["jobs"]:
+        if name != "guard":
+            assert "guard" in _all_needs(wf, name), f"{name} can run without the guard"
+    # The jobs that hold a token or a secret depend on it directly, not only transitively.
+    for name in ("resolve", "build", "draft-release"):
+        assert "guard" in _needs(wf["jobs"][name]), name
+
+
+def test_guard_runs_nothing_from_the_repository(wf):
+    steps = wf["jobs"]["guard"]["steps"]
+    assert steps and all("uses" not in s for s in steps), "the guard must not check out or run any action"
+    assert not any("actions/checkout" in str(s) for s in steps)
+    assert "if" not in wf["jobs"]["guard"], "a skipped guard would read as a pass"
+
+
+def _guard_script(wf) -> str:
+    return "\n".join(s["run"] for s in wf["jobs"]["guard"]["steps"])
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
+@pytest.mark.parametrize(
+    ("event", "ref", "ok"),
+    [
+        ("workflow_dispatch", "refs/heads/main", True),
+        ("push", "refs/tags/desktop-v0.1.0", True),
+        ("push", "refs/tags/desktop-v0.2.0-rc.1", True),
+        *[("workflow_dispatch", ref, False) for ref in NON_MAIN_REFS],
+        ("push", "refs/heads/main", False),
+        ("push", "refs/tags/v0.1.0", False),
+        ("pull_request", "refs/pull/58/merge", False),
+        ("schedule", "refs/heads/main", False),
+    ],
+)
+def test_the_guard_script_itself_accepts_only_main_and_release_tags(wf, event, ref, ok):
+    # The step is run for real, with the values GitHub would put in its env.
+    proc = subprocess.run(
+        ["bash", "-c", _guard_script(wf)],
+        env={"PATH": "/usr/bin:/bin", "EVENT": event, "REF": ref},
+        capture_output=True,
+        text=True,
+    )
+    assert (proc.returncode == 0) is ok, proc.stdout + proc.stderr
+    if not ok:
+        assert "::error::" in proc.stdout
+
+
+def test_release_tooling_never_comes_from_a_branch_name_input_or_pr_ref(wf):
+    # `github.sha` is main's commit for a manual run (the guard) and the tagged
+    # commit, which `resolve` requires to be on main, for a tag push.
+    allowed = {"${{ github.sha }}", "${{ needs.resolve.outputs.sha }}"}
+    seen = 0
+    for name, job in wf["jobs"].items():
+        for step in job["steps"]:
+            if _uses(step, "actions/checkout"):
+                seen += 1
+                assert step["with"]["ref"] in allowed, f"{name}: {step['with']['ref']}"
+    assert seen == 4
+    tooling = [
+        s
+        for job in wf["jobs"].values()
+        for s in job["steps"]
+        if _uses(s, "actions/checkout") and s["with"]["ref"] == "${{ needs.resolve.outputs.sha }}"
+    ]
+    assert len(tooling) == 1, "only the product checkout may use the resolved tag commit"
+    assert "path" not in tooling[0]["with"]
+
+
+def test_every_script_run_by_a_job_comes_from_the_workflows_own_commit(wf):
+    # release_integrity.py is only ever invoked from a `github.sha` checkout
+    # (tooling/, _release_tooling/ or the resolve job's own), never from the
+    # product checkout at the tag commit.
+    build = "\n".join(s.get("run", "") for s in wf["jobs"]["build"]["steps"])
+    assert "_release_tooling/desktop/scripts/release_integrity.py" in build
+    assert not re.search(r"(?<![\w/])desktop/scripts/release_integrity\.py", build.replace("_release_tooling/desktop/scripts", ""))
+    for s in wf["jobs"]["draft-release"]["steps"]:
+        run = s.get("run", "")
+        if "release_integrity.py" in run:
+            assert s.get("working-directory") == "tooling" or "tooling/desktop/scripts" in run, s.get("name")
+
+
+def test_the_builds_run_in_the_protected_signing_environment(wf):
+    assert wf["jobs"]["build"]["environment"] == "desktop-release"
+    # The approval gate is on the only job that can see a signing secret, and
+    # nothing else claims the environment (or its secrets).
+    for name, job in wf["jobs"].items():
+        if name != "build":
+            assert "environment" not in job, name
+
+
+def test_signing_secrets_are_referenced_only_by_the_build_job(wf):
+    pattern = re.compile(r"secrets\.|secrets:\s*inherit")
+    for name, job in wf["jobs"].items():
+        used = bool(pattern.search(json.dumps(job)))
+        assert used is (name == "build"), f"{name}: secrets used={used}"
+    # And only the documented signing secrets: no repository-wide token is read as a secret.
+    named = set(re.findall(r"secrets\.([A-Z_]+)", json.dumps(wf["jobs"]["build"])))
+    assert named == {
+        "APPLE_CERTIFICATE", "APPLE_CERTIFICATE_PASSWORD", "APPLE_SIGNING_IDENTITY", "APPLE_ID",
+        "APPLE_PASSWORD", "APPLE_TEAM_ID", "WINDOWS_CERTIFICATE", "WINDOWS_CERTIFICATE_PASSWORD",
+    }
+
+
+def test_the_workflow_never_runs_on_pull_request_events_or_other_triggers(wf):
+    text = WORKFLOW.read_text()
+    assert "pull_request" not in yaml.safe_dump(wf["on"])
+    assert "secrets: inherit" not in text

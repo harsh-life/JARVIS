@@ -8,6 +8,8 @@ only, so it runs on every runner without installing anything.
             remote, have a valid ``desktop-vX.Y.Z[-pre]`` name, peel to a
             commit, be reachable from ``main`` and name the version the app
             declares. On a tag push it must still point at the pushed commit.
+            A manual run must have been started from ``refs/heads/main`` and
+            execute a commit on main; any other ref is refused.
             Re-run with ``--expect-sha`` it proves the tag has not moved.
 
   inspect   What did this runner build? It runs in the build job after
@@ -121,6 +123,25 @@ def tag_from_event(event: str, ref: str, input_tag: str) -> str:
     raise IntegrityError(f"unsupported trigger {event!r}")
 
 
+def require_dispatch_from_main(event: str, ref: str, main_branch: str) -> None:
+    """A manual run is accepted only when it was started from `main` itself.
+
+    GitHub lets anyone with write access dispatch a workflow from any branch
+    or tag, and the run then executes that ref's copy of the workflow and of
+    this script. Refusing here keeps a manual run from ever resolving a
+    release on behalf of unreviewed code. Tag pushes are not affected: their
+    ref is the tag, and `resolve` separately requires the tagged commit to be
+    on main. The comparison is exact, so ``refs/heads/main-evil``,
+    ``refs/heads/feature/main`` and ``refs/tags/main`` are all refused.
+    """
+
+    if event == "workflow_dispatch" and ref != f"refs/heads/{main_branch}":
+        raise IntegrityError(
+            f"a manual run must be started from refs/heads/{main_branch}, not {ref!r}: "
+            "release tooling runs only from reviewed main code"
+        )
+
+
 def remote_tag_commit(repo: Path, remote: str, tag: str) -> str:
     """The commit `tag` peels to on `remote`, verified against a fresh fetch.
 
@@ -192,6 +213,7 @@ def resolve(
     main_branch: str = "main",
     expect_sha: str | None = None,
 ) -> Resolution:
+    require_dispatch_from_main(event, ref, main_branch)
     tag = tag_from_event(event, ref, input_tag)
     core = parse_tag(tag)
     sha = remote_tag_commit(repo, remote, tag)
@@ -209,6 +231,16 @@ def resolve(
 
     main_ref = f"refs/remotes/{remote}/{main_branch}"
     _git(repo, "fetch", "--no-tags", "--force", remote, f"+refs/heads/{main_branch}:{main_ref}")
+    if (
+        event == "workflow_dispatch"
+        and _git(repo, "merge-base", "--is-ancestor", event_sha, main_ref, check=False).returncode != 0
+    ):
+        # The ref said main, but the code this run executes is not main's history
+        # (a rewritten branch, or a mismatched event).
+        raise IntegrityError(
+            f"this manual run executes {event_sha}, which is not on {main_branch}: "
+            "release tooling runs only from reviewed main code"
+        )
     if _git(repo, "merge-base", "--is-ancestor", sha, main_ref, check=False).returncode != 0:
         raise IntegrityError(
             f"tag {tag} points at {sha}, which is not on {main_branch}: "

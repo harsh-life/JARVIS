@@ -11,13 +11,39 @@
 #   - This workflow never creates a tag. The tag must already exist on the
 #     remote, be named desktop-vX.Y.Z[-pre], peel to a commit on main, and name
 #     the version the app declares (`resolve`).
-#   - Every build checks out that exact commit, not the branch a manual run was
+#   - Every build checks out that exact commit, not the commit a manual run was
 #     started from, and records it next to its artifacts (`inspect`).
 #   - Before the draft is created, every record must name the same commit, every
 #     artifact must match its recorded hash, and the tag must still point at
 #     that commit (`assemble`, `resolve --expect-sha`). `gh release create
 #     --verify-tag` cannot create a tag. The tag is checked once more after the
 #     draft exists, and a mismatched draft is deleted.
+#
+# Manual runs only from main:
+#   `workflow_dispatch` cannot be limited to a branch in the `on:` block, so a
+#   manual run started from any ref runs *that ref's* copy of this file and of
+#   the release tooling. Three layers, from weakest to strongest:
+#     1. `guard` fails the run before anything else starts unless a manual run's
+#        ref is exactly refs/heads/main (and a push run's ref is a desktop-v* tag).
+#     2. `release_integrity.py resolve` refuses it again, and also requires the
+#        commit it executes to be on main. Every job that holds a token or a
+#        secret needs `guard` and `resolve`.
+#     3. The `desktop-release` environment (below) is the only layer a branch
+#        cannot edit away: its deployment-branch rule is enforced by GitHub.
+#   1 and 2 are defense in depth and cannot stop someone who can push a branch
+#   from editing them out of their own copy of this file. 3 can.
+#
+# Release tooling comes from `github.sha`, and `guard` guarantees that is a
+# commit on main for a manual run (for a tag push, `resolve` requires the
+# tagged commit to be on main). It is never taken from `inputs.*`, a branch name
+# or a PR ref.
+#
+# Environment `desktop-release` (docs/DESKTOP_RELEASE.md, "Before the first
+# release"): the `build` jobs run in it, so the signing secrets live there and
+# nowhere else, and required reviewers approve each release before any signing
+# secret is exposed. Create and protect it BEFORE the first run; GitHub creates
+# an unprotected environment of that name if a job references one that does
+# not exist.
 #
 # Nothing is ever *described* as signed. Each build verifies its artifacts
 # with the platform's own tool (codesign -dvvv, Get-AuthenticodeSignature).
@@ -26,7 +52,8 @@
 # signing secrets are configured but its artifact has no verified signature,
 # that build fails. When anything is unsigned, the release title and notes say so.
 #
-# Secrets (repository → Settings → Secrets; never pasted anywhere else):
+# Secrets (the `desktop-release` ENVIRONMENT's secrets, not repository secrets,
+# which any branch's workflow could read; never pasted anywhere else):
 #   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
 #   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD (app-specific), APPLE_TEAM_ID
 #   WINDOWS_CERTIFICATE (base64 .pfx), WINDOWS_CERTIFICATE_PASSWORD
@@ -52,8 +79,36 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  guard:
+    name: manual runs only from main
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # No checkout: nothing from the repository runs before this passes. The
+      # run fails (rather than being skipped) so a refused run is never green.
+      - name: Refuse a manual run from any ref but main
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          case "$EVENT" in
+            push)
+              case "$REF" in
+                refs/tags/desktop-v*) ;;
+                *) echo "::error::a push run is for a desktop-v* tag, not $REF"; exit 1 ;;
+              esac ;;
+            workflow_dispatch)
+              [ "$REF" = "refs/heads/main" ] || {
+                echo "::error::manual releases run only from refs/heads/main; this run was started from $REF. Re-run it from main."
+                exit 1
+              } ;;
+            *) echo "::error::unsupported trigger $EVENT"; exit 1 ;;
+          esac
+          echo "ok: $EVENT from $REF"
+
   resolve:
     name: resolve the release commit
+    needs: guard
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -62,7 +117,8 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
     steps:
       # The release tooling comes from the workflow's own commit, so the
-      # workflow and its checks always come from the same commit.
+      # workflow and its checks always come from the same commit. `guard` has
+      # established that this is main for a manual run.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -81,7 +137,12 @@ jobs:
 
   build:
     name: build (${{ matrix.os }})
-    needs: resolve
+    needs: [guard, resolve]
+    # The signing secrets belong to this environment and are available to no
+    # other job. Its required-reviewer rule is the approval gate and its
+    # deployment-branch rule (main + desktop-v* tags) is enforced by GitHub, not
+    # by this file. See the header comment before the first run.
+    environment: desktop-release
     strategy:
       fail-fast: false   # each platform's evidence is kept; draft-release still needs all three
       matrix:
@@ -218,7 +279,7 @@ jobs:
           if-no-files-found: error
 
   draft-release:
-    needs: [resolve, build]
+    needs: [guard, resolve, build]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
