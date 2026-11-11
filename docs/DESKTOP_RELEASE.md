@@ -17,11 +17,13 @@ unchanged:** every draft says that real user data is not cleared
    `desktop/package.json` and `desktop/src-tauri/Cargo.toml` all declare the
    version you are releasing (e.g. `0.1.0`).
 2. Create an annotated tag on that `main` commit and push it:
+
    ```bash
    git fetch origin && git checkout --detach origin/main
    git tag -a desktop-v0.1.0 -m "JARVIS Companion 0.1.0"
    git push origin desktop-v0.1.0
    ```
+
    The push starts the workflow. To rebuild an existing tag later (for example
    after adding signing secrets), use **Actions → Desktop release → Run workflow**,
    choose **Branch: `main`**, and give the tag. A manual run is **refused from any
@@ -37,7 +39,7 @@ unchanged:** every draft says that real user data is not cleared
 ## What the workflow checks
 
 | Stage | Check | On failure |
-|---|---|---|
+| --- | --- | --- |
 | `guard` | A manual run's ref is exactly `refs/heads/main`; a push run's ref is a `desktop-v*` tag. No checkout, nothing from the repository runs first. The run **fails** (it is never skipped, so never green) | stops, nothing else starts |
 | `resolve` | A manual run is refused again unless started from `refs/heads/main`, and the commit it executes is on `main`. This also runs in the re-checks in `draft-release` | stops |
 | | The tag name is `desktop-vMAJOR.MINOR.PATCH[-pre]`, with nothing a shell could interpret | stops, nothing built |
@@ -57,7 +59,7 @@ unchanged:** every draft says that real user data is not cleared
 ### What counts as signed
 
 | Platform | Reported as signed only when | Never counted as signed |
-|---|---|---|
+| --- | --- | --- |
 | macOS | `codesign --verify --deep --strict` passes on the `.app` inside the DMG **and** `codesign -dvvv` shows a `Developer ID Application:` authority with a team identifier | ad-hoc and linker signatures. On Apple Silicon every binary carries one, and `codesign --verify` accepts it. Apple Development certificates also don't count |
 | Windows | `Get-AuthenticodeSignature` reports `Valid` with a signer certificate | `NotSigned`, `UnknownError`, `NotTrusted`, `HashMismatch` |
 | Linux | never: `.deb` and AppImage are distributed with SHA-256 checksums | — |
@@ -75,7 +77,7 @@ on the ref the run was started from. Anyone with write access can start a run
 from any branch. So:
 
 | Layer | What it does | Can a branch edit it away? |
-|---|---|---|
+| --- | --- | --- |
 | `guard` job | Fails a manual run whose ref is not `refs/heads/main` | **Yes**: the branch's own copy of the workflow can drop it |
 | `release_integrity.py resolve` | Refuses it again; requires the executed commit to be on `main` | **Yes**: same reason |
 | Environment `desktop-release` | Deployment branches and tags limited to `main` and `desktop-v*`, plus required reviewers. Enforced by GitHub | **No** |
