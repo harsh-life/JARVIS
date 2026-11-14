@@ -115,6 +115,19 @@ from shared.schemas.enums import AuditResult, PermissionDecisionValue, RiskCateg
 
 logger = logging.getLogger("hypermind.agent.runtime")
 
+# asyncio runs a timer up to one tick of the monotonic clock early (its event
+# loop treats anything due before `time() + clock_resolution` as due). On
+# Linux and macOS that tick is nanoseconds; on Windows it is ~15.6 ms. So when
+# the wall-clock cap on a model call fired there, `remaining()` was still
+# slightly positive: the timeout was mistaken for a provider failure, the loop
+# went on, and a 0.3 s bound let a task run 2.5 s. A bound within one tick of
+# zero has been reached.
+_CLOCK_TICK = time.get_clock_info("monotonic").resolution
+
+
+def _out_of_time(remaining) -> bool:
+    return remaining() <= _CLOCK_TICK
+
 _MEMORY_SKIPPED_NOTE = "long-term memory was not updated for this task"
 
 _FAILURE_MESSAGES: dict[AgentFailureCode, str] = {
@@ -775,7 +788,7 @@ class AgentRuntime:
                     return await self._emergency_stop(env, state)
                 if state.cancelled:
                     return await self._finish(env, state, AgentTaskStatus.CANCELLED)
-                if remaining() <= 0:
+                if _out_of_time(remaining):
                     raise _Stop(AgentFailureCode.TIMEOUT)
                 if state.iterations >= self._bounds.max_iterations:
                     raise _Stop(AgentFailureCode.MAX_ITERATIONS)
@@ -907,7 +920,7 @@ class AgentRuntime:
             raise _Interrupted()
         if state.model_calls >= self._max_model_calls(state):
             raise _Stop(AgentFailureCode.MAX_MODEL_CALLS)
-        if remaining() <= 0:
+        if _out_of_time(remaining):
             raise _Stop(AgentFailureCode.TIMEOUT)
 
         spec = provider.spec
@@ -938,7 +951,7 @@ class AgentRuntime:
             raise
         except (ModelUnavailable, asyncio.TimeoutError):
             await self._meter_model(env, state, provider, units=0, cost=0.0)
-            if remaining() <= 0:
+            if _out_of_time(remaining):
                 # The task's own wall clock cut the call off: report the
                 # bound that was hit, not a provider outage (05 §3).
                 raise _Stop(AgentFailureCode.TIMEOUT) from None
@@ -1609,7 +1622,7 @@ class AgentRuntime:
         platform: ExecutionPlatform, arguments: dict, resource_ref: str | None,
         scope: dict[str, str] | None, remaining,
     ) -> ToolOutput:
-        if remaining() <= 0:
+        if _out_of_time(remaining):
             raise _Stop(AgentFailureCode.TIMEOUT)
         await self._precheck(env, state, handle.projected_cost_per_call)
 

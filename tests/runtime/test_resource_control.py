@@ -85,6 +85,21 @@ async def test_the_wall_clock_bound_is_enforced(make_harness):
     await _assert_explicit_failure(h, resp, "wall_clock_timeout")
 
 
+async def test_a_bound_within_one_clock_tick_of_zero_has_been_reached(monkeypatch):
+    """asyncio fires a timer up to one monotonic-clock tick early — ~15.6 ms on
+    Windows — so the wall-clock cap on a model call can fire while a few
+    milliseconds still appear to remain. Those milliseconds are clock
+    granularity, not time left: the bound has been reached."""
+
+    from server.agent import runtime
+
+    monkeypatch.setattr(runtime, "_CLOCK_TICK", 0.015625)   # Windows' monotonic resolution
+    assert runtime._out_of_time(lambda: 0.012)              # the cap fired this early
+    assert runtime._out_of_time(lambda: 0.0)
+    assert runtime._out_of_time(lambda: -0.5)
+    assert not runtime._out_of_time(lambda: 0.05)            # real time left: keep going
+
+
 async def test_per_user_rate_limits_contain_one_users_runaway(make_harness):
     """13 §2/§6 / US-T6: Alice exhausting her per-minute quota is refused
     explicitly — and Bob is still served."""
