@@ -349,7 +349,7 @@ async def test_no_module_outside_the_engine_reimplements_the_read_predicate():
         mentions_graph_visibility = "Visibility.GRAPH" in code
         mentions_owner_comparison = re.search(r"owner_user_id\s*==", code) is not None
         if mentions_graph_visibility and mentions_owner_comparison:
-            offenders.append(str(path))
+            offenders.append(path.as_posix())
 
     assert offenders == [], offenders
 
@@ -364,7 +364,7 @@ async def test_the_engine_is_the_only_producer_of_a_permission_decision():
     """
 
     writers = [
-        str(path)
+        path.as_posix()
         for path in sorted(Path("server").rglob("*.py"))
         if "record_permission_decision" in path.read_text(encoding="utf-8")
     ]

@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from tests.runtime.conftest import ask, call, failure_of, final, pending_of
+from tests.support import requires_descriptor_containment
 
 pytestmark = pytest.mark.asyncio
 
@@ -30,6 +31,7 @@ def _config(tmp_path: Path, **execution_overrides) -> dict:
     return {"execution": base}
 
 
+@requires_descriptor_containment
 async def test_agent_task_writes_and_reads_a_real_file_through_the_sandbox(make_harness, tmp_path):
     h = await make_harness(config=_config(tmp_path), use_real_execution_tools=True)
     alice = await h.user("alice")
@@ -55,6 +57,7 @@ async def test_agent_task_writes_and_reads_a_real_file_through_the_sandbox(make_
     assert on_disk.read_text(encoding="utf-8") == "real-sandbox-e2e"
 
 
+@requires_descriptor_containment
 async def test_agent_task_cannot_read_another_users_real_sandbox(make_harness, tmp_path):
     h = await make_harness(config=_config(tmp_path), use_real_execution_tools=True)
     alice = await h.user("alice")

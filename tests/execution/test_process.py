@@ -17,6 +17,7 @@ import pytest
 from server.execution.process import ConstrainedProcessExecutor
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode
 from tests.support import HAS_LANDLOCK, NO_LANDLOCK_REASON, DisposableHostExecutor
+from tests.support import requires_posix_process_controls
 
 pytestmark = pytest.mark.asyncio
 
@@ -51,6 +52,7 @@ def executor(**overrides) -> ConstrainedProcessExecutor:
 # ── executable allow-list ────────────────────────────────────────────────
 
 
+@requires_posix_process_controls
 async def test_default_allowlist_is_empty_deny_all():
     ex = ConstrainedProcessExecutor()
     with pytest.raises(ExecutionError) as excinfo:
@@ -58,6 +60,7 @@ async def test_default_allowlist_is_empty_deny_all():
     assert excinfo.value.code == ExecutionErrorCode.UNAUTHORIZED_EXECUTABLE
 
 
+@requires_posix_process_controls
 async def test_unauthorized_executable_is_rejected():
     ex = executor(allowed_executables=["echo"])
     with pytest.raises(ExecutionError) as excinfo:
@@ -71,6 +74,7 @@ async def test_allowlist_match_requires_exact_or_basename_not_substring():
         await ex.run(["/bin/echoevil"], cwd="/tmp")
 
 
+@requires_posix_process_controls
 async def test_a_decoy_absolute_path_sharing_an_allowlisted_basename_is_rejected():
     """Security-review finding: matching on `os.path.basename(argv[0])` alone
     let a bare allow-list entry like "echo" accept *any* absolute path whose
@@ -87,6 +91,7 @@ async def test_a_decoy_absolute_path_sharing_an_allowlisted_basename_is_rejected
     assert excinfo.value.code == ExecutionErrorCode.UNAUTHORIZED_EXECUTABLE
 
 
+@requires_posix_process_controls
 async def test_a_bare_allowlisted_name_resolves_to_exactly_one_path():
     import shutil
 
@@ -106,6 +111,7 @@ async def test_a_bare_allowlisted_name_resolves_to_exactly_one_path():
 # ── no shell, no injection ───────────────────────────────────────────────
 
 
+@requires_posix_process_controls
 async def test_shell_metacharacters_in_an_argument_are_inert():
     """Because argv is exec'd directly (never through a shell), a metachar
     string is just literal argv data to the child, not shell syntax."""
@@ -152,6 +158,7 @@ async def test_source_never_constructs_a_shell_string():
 # ── environment sanitization ─────────────────────────────────────────────
 
 
+@requires_posix_process_controls
 async def test_host_environment_is_not_inherited(monkeypatch):
     monkeypatch.setenv("HYPERMIND_TEST_HOST_SECRET", "should-not-leak")
     ex = executor()
@@ -167,6 +174,7 @@ async def test_credential_shaped_env_override_key_is_refused():
     assert excinfo.value.code == ExecutionErrorCode.INVALID_ARGUMENTS
 
 
+@requires_posix_process_controls
 async def test_safe_env_override_is_passed_through():
     ex = executor()
     result = await ex.run(["env"], cwd="/tmp", env_overrides={"HYPERMIND_TASK_LABEL": "unit-test"})
@@ -176,6 +184,7 @@ async def test_safe_env_override_is_passed_through():
 # ── timeout / cancellation / process-tree cleanup ────────────────────────
 
 
+@requires_posix_process_controls
 async def test_timeout_kills_the_process_and_reports_it():
     ex = executor(default_timeout_seconds=1.0)
     started = time.monotonic()
@@ -204,6 +213,7 @@ def _process_is_running(pid: int) -> bool:
         return False
 
 
+@requires_posix_process_controls
 async def test_timeout_kills_the_whole_process_group_not_just_the_shell():
     """A child that forks a grandchild must not survive the parent's kill —
     the real process-tree-cleanup test, not just 'the direct pid died'."""
@@ -232,6 +242,7 @@ async def test_timeout_kills_the_whole_process_group_not_just_the_shell():
             os.unlink(marker)
 
 
+@requires_posix_process_controls
 async def test_timeout_exceeding_max_is_clamped_not_rejected():
     ex = executor(default_timeout_seconds=1.0, max_timeout_seconds=1.0)
     result = await ex.run(["sleep", "5"], cwd="/tmp", timeout=9999.0)
@@ -247,6 +258,7 @@ async def test_nonpositive_timeout_is_rejected():
 # ── output capture limits ────────────────────────────────────────────────
 
 
+@requires_posix_process_controls
 async def test_output_over_cap_is_truncated_not_unbounded():
     ex = executor(allowed_executables=["python3"], max_output_bytes=1000)
     result = await ex.run(
@@ -257,6 +269,7 @@ async def test_output_over_cap_is_truncated_not_unbounded():
     assert result.metadata["truncated"] is True
 
 
+@requires_posix_process_controls
 async def test_small_output_is_not_marked_truncated():
     ex = executor()
     result = await ex.run(["echo", "small"], cwd="/tmp")
@@ -266,18 +279,21 @@ async def test_small_output_is_not_marked_truncated():
 # ── exit status / working directory ──────────────────────────────────────
 
 
+@requires_posix_process_controls
 async def test_nonzero_exit_status_is_reported_not_raised(tmp_path):
     ex = executor(allowed_executables=["sh"])
     result = await ex.run(["sh", "-c", "exit 7"], cwd=str(tmp_path))
     assert result.metadata["exit_code"] == 7
 
 
+@requires_posix_process_controls
 async def test_working_directory_is_the_one_requested(tmp_path):
     ex = executor(allowed_executables=["pwd"])
     result = await ex.run(["pwd"], cwd=str(tmp_path))
     assert result.content.strip() == str(tmp_path)
 
 
+@requires_posix_process_controls
 async def test_missing_executable_is_a_deterministic_failure():
     ex = executor(allowed_executables=["/nonexistent/definitely/not/here"])
     with pytest.raises(ExecutionError) as excinfo:
@@ -288,6 +304,7 @@ async def test_missing_executable_is_a_deterministic_failure():
 # ── resource limits (best-effort, POSIX) ─────────────────────────────────
 
 
+@requires_posix_process_controls
 async def test_memory_rlimit_is_applied_to_the_child():
     """A process that tries to allocate well past the configured RLIMIT_AS
     must fail rather than being allowed to exhaust host memory."""

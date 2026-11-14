@@ -35,6 +35,7 @@ from tests.agents.test_browser_runs import (
     _wait_finished,
     install_fake_runtime,
 )
+from tests.support import requires_unix_listener
 
 
 @pytest.fixture
@@ -69,6 +70,7 @@ def _done(fake_runtime, spec) -> int:
     return 0
 
 
+@requires_unix_listener
 async def test_row_46_a_compromised_runtime_reaches_no_host_outside_its_spec(make_harness, tmp_path, fake_runtime,
                                                                             no_internet):
     """compromised runtime → contained: every host goes through the run's
@@ -92,6 +94,7 @@ async def test_row_46_a_compromised_runtime_reaches_no_host_outside_its_spec(mak
     assert all(code in (400, 403, 405) for code in codes.values()), codes
 
 
+@requires_unix_listener
 async def test_row_47_a_compromised_runtime_cannot_rebind_an_allowed_name_to_an_internal_address(
         make_harness, tmp_path, fake_runtime, monkeypatch):
     """compromised runtime (with a hostile DNS answer) → contained: the
@@ -118,6 +121,7 @@ async def test_row_47_a_compromised_runtime_cannot_rebind_an_allowed_name_to_an_
     assert codes == [403] and attempts == []
 
 
+@requires_unix_listener
 async def test_row_48_a_compromised_runtime_holds_no_secret_and_no_one_elses_token(make_harness, tmp_path,
                                                                                   fake_runtime, monkeypatch):
     """compromised runtime → contained: its whole environment is its own
@@ -143,6 +147,7 @@ async def test_row_48_a_compromised_runtime_holds_no_secret_and_no_one_elses_tok
     assert seen["forged"] == 401
 
 
+@requires_unix_listener
 async def test_row_49_a_compromised_runtime_gains_no_authority_through_its_result(make_harness, tmp_path,
                                                                                  fake_runtime):
     """compromised runtime → contained: its result is data — bounded,
@@ -164,6 +169,7 @@ async def test_row_49_a_compromised_runtime_gains_no_authority_through_its_resul
     assert len([g for g in await h.rows(CapabilityGrant) if g.revoked_at is None]) == grants_before
 
 
+@requires_unix_listener
 async def test_row_50_a_compromised_runtime_is_cut_off_the_moment_it_is_stopped(make_harness, tmp_path,
                                                                                fake_runtime):
     """compromised runtime (ignoring SIGTERM) → contained: the owner's stop
@@ -193,6 +199,7 @@ async def test_row_50_a_compromised_runtime_is_cut_off_the_moment_it_is_stopped(
     assert row.status == "cancelled" and f"jarvis-run-{run_id}" in fake_runtime.stopped
 
 
+@requires_unix_listener
 async def test_row_51_a_compromised_runtime_cannot_spend_past_its_ceiling(make_harness, tmp_path, fake_runtime):
     """compromised runtime → contained: every model call is the gateway's —
     metered as the owner, bounded by the run's ceilings — and the first
@@ -220,6 +227,7 @@ async def test_row_51_a_compromised_runtime_cannot_spend_past_its_ceiling(make_h
     assert (row.status, row.failure_code) == ("failed", "max_model_calls")
 
 
+@requires_unix_listener
 async def test_row_52_the_owner_granted_form_submission_on_its_hosts(make_harness, tmp_path, fake_runtime,
                                                                     no_internet):
     """authorized → **REACHABLE by design** (OD-AF-15, the recorded
@@ -240,6 +248,7 @@ async def test_row_52_the_owner_granted_form_submission_on_its_hosts(make_harnes
     assert summary and "connect_failed=1" in summary[0] and "host_not_allowed" not in summary[0]
 
 
+@requires_unix_listener
 async def test_row_53_in_process_code_reads_a_live_runs_token(make_harness, tmp_path, fake_runtime):
     """app-RCE → **REACHABLE** (accepted class, OD-A1 (a)): the server holds
     each live run's model token in memory and owns its workspace, as it holds

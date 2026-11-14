@@ -44,6 +44,7 @@ from server.storage.models import (
 from shared.schemas.enums import SecretClass, SecretOwnerScopeType, UsageKind
 from tests.runtime.conftest import ask, call, failure_of, final, pending_of, say
 from tests.support import requires_landlock
+from tests.support import requires_descriptor_containment
 
 pytestmark = pytest.mark.asyncio
 
@@ -85,6 +86,7 @@ async def actions(h) -> list[str]:
 # ── CASE A — ordinary low-risk request ────────────────────────────────────
 
 
+@requires_descriptor_containment
 async def test_case_a_low_risk_request_runs_automatically_end_to_end(make_harness, tmp_path):
     h = await make_harness(config=real_tools(tmp_path), use_real_execution_tools=True)
     alice = await h.user("alice")
@@ -119,6 +121,7 @@ async def test_case_a_low_risk_request_runs_automatically_end_to_end(make_harnes
 # ── CASE B — confirmation-required request ────────────────────────────────
 
 
+@requires_descriptor_containment
 async def test_case_b_consequential_action_waits_for_the_human(make_harness, tmp_path):
     h = await make_harness(config=real_tools(tmp_path), use_real_execution_tools=True)
     alice = await h.user("alice")
@@ -236,6 +239,7 @@ async def test_case_d_a_floor_capability_is_never_confirmable(make_harness, tmp_
 # ── CASE E — cross-user attempt ───────────────────────────────────────────
 
 
+@requires_descriptor_containment
 async def test_case_e_one_user_can_never_reach_anothers_data_or_actions(make_harness, tmp_path):
     h = await make_harness(config=real_tools(tmp_path), use_real_execution_tools=True)
     alice, bob = await h.user("alice"), await h.user("bob")
@@ -286,6 +290,7 @@ async def test_case_e_one_user_can_never_reach_anothers_data_or_actions(make_har
 # ── CASE F — execution sandbox violation ──────────────────────────────────
 
 
+@requires_descriptor_containment
 async def test_case_f_the_execution_boundary_blocks_hostile_targets(make_harness, tmp_path):
     # This case measures each boundary on its own, so the circuit breaker's
     # violation trigger (18 §5.1, default 3) is raised above the five probes
@@ -524,6 +529,7 @@ async def test_case_i_cancelling_a_task_kills_its_running_process(make_harness, 
     assert AuditAction.AGENT_TASK_CANCELLED.value in await actions(h)
 
 
+@requires_descriptor_containment
 async def test_case_i_cancelling_a_paused_task_drops_the_action(make_harness, tmp_path):
     h = await make_harness(config=real_tools(tmp_path), use_real_execution_tools=True)
     alice = await h.user("alice")

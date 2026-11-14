@@ -20,6 +20,7 @@ from server.execution.containers import ContainerError, container_name
 from server.storage.models import AuditEvent
 from tests.agents.harness import AGENTS_ON, create_agent
 from tests.runtime.conftest import base_config_payload
+from tests.support import requires_posix_host
 
 
 class FakeEngine:
@@ -49,6 +50,7 @@ def test_containers_are_off_by_default() -> None:
     assert _config().agents.containers.enabled is False
 
 
+@requires_posix_host
 def test_enabling_containers_needs_the_factory_an_absolute_engine_and_a_run_directory() -> None:
     _config(enabled=True, podman="/usr/bin/podman", run_dir="/var/lib/jarvis/runs")
     for bad in ({"enabled": True, "run_dir": None}, {"enabled": True, "podman": "podman", "run_dir": "/x/runs"},
@@ -116,6 +118,7 @@ async def test_start_reconciles_at_once(make_harness) -> None:
         await reconciler.stop()
 
 
+@requires_posix_host
 async def test_the_composition_root_wires_the_reconciler_only_when_switched_on(make_harness, tmp_path) -> None:
     off = await make_harness(config=AGENTS_ON, agent_tools=True)
     assert off.app.state.container_reconciler is None

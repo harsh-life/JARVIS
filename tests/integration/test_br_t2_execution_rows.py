@@ -40,6 +40,7 @@ from server.tools.platforms import FileReadAdapter
 from shared.schemas.agent import ExecutionPlatform, ToolInvocation
 from shared.schemas.execution import ExecutionError
 from tests.support import make_superuser
+from tests.support import requires_descriptor_containment
 
 pytestmark = pytest.mark.asyncio
 
@@ -64,6 +65,7 @@ def _b_file(sandbox: FilesystemSandbox, user_b: uuid.UUID) -> Path:
     return Path(root) / "diary.txt"
 
 
+@requires_descriptor_containment
 async def test_br_t2_execution_dimensions(tmp_path, capsys, monkeypatch):
     superuser = make_superuser(monkeypatch)
     sandbox = FilesystemSandbox(base_root=str(tmp_path / "sandboxes"))

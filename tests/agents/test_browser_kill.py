@@ -55,6 +55,7 @@ from tests.agents.test_browser_runs import (
     browser_config,
     install_fake_runtime,
 )
+from tests.support import requires_unix_listener
 
 
 @pytest.fixture
@@ -148,6 +149,7 @@ async def _assert_torn_down(h, fake_runtime, run_id: uuid.UUID, hang: Hang) -> N
 # ── the owner ──────────────────────────────────────────────────────────────
 
 
+@requires_unix_listener
 async def test_the_owners_stop_revokes_the_tokens_at_once_and_cancels(make_harness, tmp_path, fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
     run_id, hang = await _start_hanging(h, alice, agent, fake_runtime)
@@ -166,6 +168,7 @@ async def test_the_owners_stop_revokes_the_tokens_at_once_and_cancels(make_harne
     assert "agent.run.cancelled" in actions and "agent.token.revoked" in actions
 
 
+@requires_unix_listener
 async def test_pausing_the_agent_stops_its_contained_run(make_harness, tmp_path, fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
     run_id, hang = await _start_hanging(h, alice, agent, fake_runtime)
@@ -175,6 +178,7 @@ async def test_pausing_the_agent_stops_its_contained_run(make_harness, tmp_path,
     await _assert_torn_down(h, fake_runtime, run_id, hang)
 
 
+@requires_unix_listener
 async def test_deleting_the_agent_stops_its_contained_run(make_harness, tmp_path, fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
     run_id, hang = await _start_hanging(h, alice, agent, fake_runtime)
@@ -190,6 +194,7 @@ async def test_deleting_the_agent_stops_its_contained_run(make_harness, tmp_path
 # ── the operator ───────────────────────────────────────────────────────────
 
 
+@requires_unix_listener
 @pytest.mark.parametrize("how", ["task", "user", "agent_pause", "global"])
 async def test_every_operator_stop_reaches_a_contained_run(make_harness, tmp_path, fake_runtime, monkeypatch,
                                                            how) -> None:
@@ -219,6 +224,7 @@ async def test_every_operator_stop_reaches_a_contained_run(make_harness, tmp_pat
     await _assert_torn_down(h, fake_runtime, run_id, hang)
 
 
+@requires_unix_listener
 async def test_the_global_latch_tripped_by_any_path_stops_a_contained_run(make_harness, tmp_path,
                                                                         fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
@@ -232,6 +238,7 @@ async def test_the_global_latch_tripped_by_any_path_stops_a_contained_run(make_h
     await _assert_torn_down(h, fake_runtime, run_id, hang)
 
 
+@requires_unix_listener
 async def test_a_task_closed_by_any_other_path_ends_the_run(make_harness, tmp_path, fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
     run_id, hang = await _start_hanging(h, alice, agent, fake_runtime)
@@ -248,6 +255,7 @@ async def test_a_task_closed_by_any_other_path_ends_the_run(make_harness, tmp_pa
 # ── the system ─────────────────────────────────────────────────────────────
 
 
+@requires_unix_listener
 async def test_the_deadline_stops_a_run_that_does_not_finish(make_harness, tmp_path, fake_runtime) -> None:
     config = browser_config(tmp_path)
     config["agent"] = {"bounds": {"wall_clock_timeout_seconds": 1.0}}
@@ -260,6 +268,7 @@ async def test_the_deadline_stops_a_run_that_does_not_finish(make_harness, tmp_p
     await _assert_torn_down(h, fake_runtime, run_id, hang)
 
 
+@requires_unix_listener
 async def test_a_run_that_hits_its_model_call_ceiling_is_stopped(make_harness, tmp_path, fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
 
@@ -288,6 +297,7 @@ def test_which_gateway_refusals_end_the_run(code, ends) -> None:
     assert run_ending_refusal(ModelGatewayReply(status=200, payload={"choices": []})) is None
 
 
+@requires_unix_listener
 async def test_a_token_revoked_elsewhere_ends_the_run(make_harness, tmp_path, fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
     run_id, hang = await _start_hanging(h, alice, agent, fake_runtime)
@@ -299,6 +309,7 @@ async def test_a_token_revoked_elsewhere_ends_the_run(make_harness, tmp_path, fa
     await _assert_torn_down(h, fake_runtime, run_id, hang)
 
 
+@requires_unix_listener
 async def test_a_container_the_engine_loses_track_of_is_stopped_and_failed(make_harness, tmp_path,
                                                                          fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
@@ -315,6 +326,7 @@ async def test_a_container_the_engine_loses_track_of_is_stopped_and_failed(make_
     await _assert_torn_down(h, fake_runtime, run_id, hang)
 
 
+@requires_unix_listener
 async def test_the_runtimes_own_failure_words_never_become_jarviss(make_harness, tmp_path, fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
     await h.grant(alice, BROWSER_CAPABILITY)
@@ -329,6 +341,7 @@ async def test_the_runtimes_own_failure_words_never_become_jarviss(make_harness,
     assert (row.status, row.failure_code) == ("failed", "runtime_failed")
 
 
+@requires_unix_listener
 async def test_a_failed_run_logs_what_the_runtime_reported_and_nothing_it_could_smuggle(
         make_harness, tmp_path, fake_runtime, caplog) -> None:
     """The runtime's error token is the only account of *why* a real browser run
@@ -357,6 +370,7 @@ async def test_a_failed_run_logs_what_the_runtime_reported_and_nothing_it_could_
 # ── a restart ──────────────────────────────────────────────────────────────
 
 
+@requires_unix_listener
 async def test_after_a_restart_an_unfinished_run_is_closed_and_its_container_removed(make_harness, tmp_path,
                                                                                     fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
@@ -390,6 +404,7 @@ async def test_after_a_restart_an_unfinished_run_is_closed_and_its_container_rem
 # ── attribution and metering ───────────────────────────────────────────────
 
 
+@requires_unix_listener
 async def test_the_runs_model_calls_and_egress_are_metered_to_the_owner_and_attributed(make_harness, tmp_path,
                                                                                       fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
@@ -411,6 +426,7 @@ async def test_the_runs_model_calls_and_egress_are_metered_to_the_owner_and_attr
 # ── never unattended ───────────────────────────────────────────────────────
 
 
+@requires_unix_listener
 async def test_a_browser_agent_is_never_unattended(make_harness, tmp_path, fake_runtime) -> None:
     config = browser_config(tmp_path)
     config["agents"].update({k: v for k, v in UNATTENDED_ON["agents"].items()

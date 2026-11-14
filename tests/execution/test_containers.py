@@ -41,6 +41,7 @@ from server.execution.containers import (
     remove_workspace,
     run_argv,
 )
+from tests.support import requires_posix_host
 
 DIGEST = "sha256:" + "a" * 64
 IMAGE = f"ghcr.io/harsh-life/jarvis-browser-use@{DIGEST}"
@@ -133,6 +134,7 @@ def test_only_the_runs_own_environment_values_are_accepted(tmp_path, env) -> Non
         _spec(tmp_path, env=env)
 
 
+@requires_posix_host
 @pytest.mark.parametrize("field,value", [
     ("socket_dir", "relative/sockets"), ("scratch_dir", "relative"), ("socket_dir", "/"),
     ("scratch_dir", "/home"), ("socket_dir", "/var/run/docker.sock"),
@@ -145,6 +147,7 @@ def test_mounts_are_the_runs_own_directories_only(tmp_path, field, value) -> Non
 # ── the per-run workspace ───────────────────────────────────────────────────
 
 
+@requires_posix_host
 def test_a_runs_workspace_is_private_and_removed(tmp_path) -> None:
     sockets, scratch = prepare_workspace(tmp_path, RUN)
     for directory in (sockets, scratch, sockets.parent):
@@ -155,6 +158,7 @@ def test_a_runs_workspace_is_private_and_removed(tmp_path) -> None:
     remove_workspace(tmp_path, RUN)   # idempotent
 
 
+@requires_posix_host
 def test_a_workspace_path_cannot_escape_its_base(tmp_path) -> None:
     sockets, _ = prepare_workspace(tmp_path, RUN)
     assert sockets.resolve().is_relative_to(tmp_path.resolve())
@@ -229,6 +233,7 @@ async def test_the_engine_refuses_to_run_as_root(fake) -> None:
         await engine.verify()
 
 
+@requires_posix_host
 async def test_the_engine_must_be_rootless_with_runsc(fake) -> None:
     fake.set(rootless=False)
     with pytest.raises(ContainerError, match="rootless"):
@@ -240,6 +245,7 @@ async def test_the_engine_must_be_rootless_with_runsc(fake) -> None:
     await _engine(fake).verify()
 
 
+@requires_posix_host
 async def test_podman_gets_none_of_the_servers_environment(fake, tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "TEST-ONLY-sk-provider-key")
     monkeypatch.setenv("HYPERMIND_KEK", "TEST-ONLY-kek")
@@ -252,6 +258,7 @@ async def test_podman_gets_none_of_the_servers_environment(fake, tmp_path, monke
     assert set(call["env"]) <= {"PATH", "HOME", "XDG_RUNTIME_DIR", "LANG", "FAKE_LOG", "FAKE_STATE"}
 
 
+@requires_posix_host
 async def test_start_launches_exactly_the_built_argv(fake, tmp_path) -> None:
     name = await _engine(fake).start(_spec(tmp_path))
     assert name == container_name(RUN)
@@ -260,6 +267,7 @@ async def test_start_launches_exactly_the_built_argv(fake, tmp_path) -> None:
                                                     gid=1000)
 
 
+@requires_posix_host
 async def test_a_failed_start_is_an_error_and_leaves_nothing(fake, tmp_path) -> None:
     fake.set(rc={"run": 125})
     with pytest.raises(ContainerError):
@@ -267,12 +275,14 @@ async def test_a_failed_start_is_an_error_and_leaves_nothing(fake, tmp_path) -> 
     assert [c["argv"][0] for c in fake.calls()] == ["run", "rm"]
 
 
+@requires_posix_host
 async def test_the_kill_path_stops_after_the_grace_then_removes(fake) -> None:
     await _engine(fake, kill_grace_seconds=10).stop(container_name(RUN))
     argvs = [c["argv"] for c in fake.calls()]
     assert argvs == [["stop", "--time=10", container_name(RUN)], ["rm", "--force", container_name(RUN)]]
 
 
+@requires_posix_host
 async def test_the_kill_path_removes_even_when_stop_fails(fake) -> None:
     fake.set(rc={"stop": 125})
     await _engine(fake).stop(container_name(RUN))
@@ -286,11 +296,13 @@ async def test_a_container_name_is_only_ever_a_runs(fake) -> None:
     assert fake.calls() == []
 
 
+@requires_posix_host
 async def test_wait_reports_the_exit_code(fake) -> None:
     fake.set(exit=3)
     assert await _engine(fake).wait(container_name(RUN), timeout=5) == 3
 
 
+@requires_posix_host
 async def test_reconciliation_removes_every_managed_container_that_is_not_a_live_run(fake) -> None:
     live, orphan = uuid.uuid4(), uuid.uuid4()
     ids = {"live": "1" * 64, "orphan": "2" * 64, "forged": "3" * 64}
@@ -313,6 +325,7 @@ async def test_reconciliation_removes_every_managed_container_that_is_not_a_live
     assert not any(ids["live"] in argv for argv in argvs)
 
 
+@requires_posix_host
 async def test_reconciliation_ignores_an_entry_without_a_proper_id(fake) -> None:
     fake.set(containers=[{"Id": "--all", "Names": ["x"], "Labels": {"io.jarvis.managed": "1"}, "State": "running"}])
     assert await _engine(fake).reconcile(set()) == []

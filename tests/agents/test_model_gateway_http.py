@@ -58,6 +58,7 @@ from shared.schemas.enums import AgentConfigScopeType, UsageKind
 from tests.agents.harness import AGENTS_ON, create_agent
 from tests.agents.test_model_routing_runs import Wire
 from tests.runtime.conftest import base_config_payload
+from tests.support import requires_unix_listener
 
 COMPLETIONS = "/v1/chat/completions"
 SOCKET = "unix:/run/jarvis/model-gateway.sock"
@@ -673,11 +674,18 @@ async def test_an_external_runs_context_and_answers_carry_no_identity(make_harne
 # ── the real listener ───────────────────────────────────────────────────────
 
 
+@requires_unix_listener
 async def test_the_listener_serves_only_on_its_owner_only_unix_socket(make_harness, tmp_path) -> None:
     import os
+    import pathlib
+    import shutil
     import stat
+    import tempfile
 
-    sock = tmp_path / "mg.sock"
+    # sun_path is 104 bytes on macOS and pytest's tmp_path there already
+    # exceeds it ("AF_UNIX path too long"): a short private directory instead.
+    short = pathlib.Path(tempfile.mkdtemp(prefix="mg-", dir="/tmp" if os.path.isdir("/tmp") else None))
+    sock = short / "mg.sock"
     h = await make_harness(config=_gateway_on(listen=f"unix:{sock}"), agent_tools=True)
     listener = h.app.state.model_gateway_listener
     await listener.start()
@@ -692,9 +700,11 @@ async def test_the_listener_serves_only_on_its_owner_only_unix_socket(make_harne
             assert (await client.get("/openapi.json")).status_code == 404
     finally:
         await listener.stop()
-    assert not sock.exists()
+    assert not sock.exists()  # removed by stop(), not by the cleanup below
+    shutil.rmtree(short, ignore_errors=True)
 
 
+@requires_unix_listener
 async def test_the_listener_refuses_to_replace_a_file_that_is_not_its_socket(make_harness, tmp_path) -> None:
     path = tmp_path / "not-a-socket"
     path.write_text("keep me", encoding="utf-8", newline="\n")

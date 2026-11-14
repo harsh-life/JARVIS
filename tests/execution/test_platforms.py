@@ -33,6 +33,7 @@ from server.tools.registry import ToolRegistry
 from shared.schemas.agent import ExecutionPlatform, ToolInvocation
 from shared.schemas.execution import EgressPolicy
 from tests.support import landlock_or_disposable_executor
+from tests.support import requires_descriptor_containment, requires_posix_process_controls
 
 
 def invocation(tool_id, operation, *, user_id=None, task_id=None, arguments=None, scope=None,
@@ -53,6 +54,7 @@ def fs(tmp_path) -> FilesystemSandbox:
     return FilesystemSandbox(base_root=str(tmp_path / "sandboxes"))
 
 
+@requires_descriptor_containment
 async def test_file_write_then_read_round_trips(fs):
     write_adapter = FileWriteAdapter(fs)
     read_adapter = FileReadAdapter(fs)
@@ -82,6 +84,7 @@ async def test_file_read_missing_sandbox_root_scope_fails_closed(fs):
     assert out.error == "missing_execution_context"
 
 
+@requires_descriptor_containment
 async def test_file_read_traversal_attempt_fails_closed_via_the_adapter(fs):
     read_adapter = FileReadAdapter(fs)
     out = await read_adapter.execute(invocation(
@@ -166,6 +169,7 @@ def fs_for_process(tmp_path) -> FilesystemSandbox:
     return FilesystemSandbox(base_root=str(tmp_path / "sandboxes"))
 
 
+@requires_posix_process_controls
 async def test_shell_adapter_runs_an_allowlisted_command(fs_for_process):
     executor = landlock_or_disposable_executor(allowed_executables=["echo"], default_timeout_seconds=5.0)
     adapter = ShellCommandAdapter(executor, sandbox=fs_for_process)
@@ -176,6 +180,7 @@ async def test_shell_adapter_runs_an_allowlisted_command(fs_for_process):
     assert "hi" in out.content
 
 
+@requires_posix_process_controls
 async def test_shell_adapter_refuses_unauthorized_executable(fs_for_process):
     executor = landlock_or_disposable_executor(allowed_executables=["echo"])
     adapter = ShellCommandAdapter(executor, sandbox=fs_for_process)
@@ -186,6 +191,7 @@ async def test_shell_adapter_refuses_unauthorized_executable(fs_for_process):
     assert out.error == "unauthorized_executable"
 
 
+@requires_posix_process_controls
 async def test_shell_adapter_runs_in_the_tasks_own_sandbox_temp(fs_for_process):
     executor = landlock_or_disposable_executor(allowed_executables=["pwd"])
     adapter = ShellCommandAdapter(executor, sandbox=fs_for_process)

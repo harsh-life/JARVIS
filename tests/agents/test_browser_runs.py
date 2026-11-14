@@ -49,6 +49,7 @@ from server.storage.models import (
     UsageEvent,
 )
 from tests.agents.harness import AGENTS_ON, API, create_agent, run_agent
+from tests.support import requires_unix_listener
 
 HOST = "advisories.example.org"
 IMAGE = "ghcr.io/harsh-life/jarvis-browser-use@sha256:" + "b" * 64
@@ -197,6 +198,7 @@ async def _wait_finished(h, run_id: str, timeout: float = 10.0) -> AgentRunRow:
 # ── compile ─────────────────────────────────────────────────────────────────
 
 
+@requires_unix_listener
 async def test_a_browser_agent_compiles_to_browse_on_exactly_its_hosts(make_harness, tmp_path, fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
     detail = (await h.client.get(f"{API}/{agent['agent_id']}", headers=alice.auth)).json()
@@ -215,6 +217,7 @@ async def test_a_browser_agent_compiles_to_browse_on_exactly_its_hosts(make_harn
     assert (entry.capability, entry.operations, dict(entry.scope)) == ("browser.session", ("browse",), {"hosts": HOST})
 
 
+@requires_unix_listener
 async def test_without_the_runtime_switched_on_a_browser_agent_has_no_runtime(make_harness, tmp_path,
                                                                              fake_runtime) -> None:
     config = browser_config(tmp_path)
@@ -225,6 +228,7 @@ async def test_without_the_runtime_switched_on_a_browser_agent_has_no_runtime(ma
     assert compiled.json()["kind"] == "rejected" and "no_runtime" in compiled.json()["reason_codes"]
 
 
+@requires_unix_listener
 async def test_a_browser_agent_needs_a_url_to_browse(make_harness, tmp_path, fake_runtime) -> None:
     h = await make_harness(config=browser_config(tmp_path), agent_tools=True)
     alice = await h.user("alice")
@@ -233,6 +237,7 @@ async def test_a_browser_agent_needs_a_url_to_browse(make_harness, tmp_path, fak
     assert any(q["code"] == "browser_hosts_needed" for q in compiled.json()["questions"])
 
 
+@requires_unix_listener
 @pytest.mark.parametrize("missing", ["containers", "model_gateway", "image"])
 async def test_the_runtime_cannot_be_switched_on_without_its_infrastructure(make_harness, tmp_path, fake_runtime,
                                                                             monkeypatch, missing) -> None:
@@ -248,6 +253,7 @@ async def test_the_runtime_cannot_be_switched_on_without_its_infrastructure(make
 # ── start ───────────────────────────────────────────────────────────────────
 
 
+@requires_unix_listener
 async def test_a_run_without_the_owners_browser_grant_never_starts(make_harness, tmp_path, fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
     resp = await run_agent(h, alice, agent["agent_id"])
@@ -256,6 +262,7 @@ async def test_a_run_without_the_owners_browser_grant_never_starts(make_harness,
     assert fake_runtime.started == []
 
 
+@requires_unix_listener
 async def test_a_host_the_operator_no_longer_allows_never_starts(make_harness, tmp_path, fake_runtime) -> None:
     # Approved while the operator allowed the host; the operator has since
     # narrowed egress. The run checks again, at start, from config — never
@@ -272,6 +279,7 @@ async def test_a_host_the_operator_no_longer_allows_never_starts(make_harness, t
     assert fake_runtime.started == []
 
 
+@requires_unix_listener
 async def test_the_engine_has_the_last_word_even_with_a_grant(make_harness, tmp_path, fake_runtime,
                                                              monkeypatch) -> None:
     from server.agent.ports import Verdict
@@ -293,6 +301,7 @@ async def test_the_engine_has_the_last_word_even_with_a_grant(make_harness, tmp_
     assert await h.rows(AgentRunTokenRow) == []
 
 
+@requires_unix_listener
 async def test_a_granted_run_starts_its_container_with_only_what_the_spec_allows(make_harness, tmp_path,
                                                                                fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
@@ -317,6 +326,7 @@ async def test_a_granted_run_starts_its_container_with_only_what_the_spec_allows
     assert row.status == "completed"
 
 
+@requires_unix_listener
 async def test_the_container_holds_the_model_token_and_never_the_tool_token(make_harness, tmp_path,
                                                                            fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
@@ -335,6 +345,7 @@ async def test_the_container_holds_the_model_token_and_never_the_tool_token(make
     assert seen["model"] == 200
 
 
+@requires_unix_listener
 async def test_the_runs_result_reaches_only_the_owners_inbox_and_everything_is_cleaned_up(make_harness, tmp_path,
                                                                                          fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
@@ -364,6 +375,7 @@ async def test_the_runs_result_reaches_only_the_owners_inbox_and_everything_is_c
     assert "agent.run.started" in actions and "agent.run.finished" in actions
 
 
+@requires_unix_listener
 async def test_another_runs_token_is_refused_on_this_runs_socket(make_harness, tmp_path, fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
     await h.grant(alice, BROWSER_CAPABILITY)
@@ -391,6 +403,7 @@ async def test_another_runs_token_is_refused_on_this_runs_socket(make_harness, t
     assert h.model.seen == []
 
 
+@requires_unix_listener
 async def test_the_proxy_takes_its_hosts_from_the_spec_not_the_runtime(make_harness, tmp_path, fake_runtime,
                                                                        monkeypatch) -> None:
     async def connect(ip, port):
@@ -417,6 +430,7 @@ async def test_the_proxy_takes_its_hosts_from_the_spec_not_the_runtime(make_harn
     assert summary and "host_not_allowed=1" in summary[0]
 
 
+@requires_unix_listener
 async def test_untrusted_result_text_changes_no_authority(make_harness, tmp_path, fake_runtime) -> None:
     h, alice, agent = await _browser_harness(make_harness, tmp_path, fake_runtime)
     await h.grant(alice, BROWSER_CAPABILITY)
@@ -435,6 +449,7 @@ async def test_untrusted_result_text_changes_no_authority(make_harness, tmp_path
     assert len([g for g in await h.rows(CapabilityGrant) if g.revoked_at is None]) == grants_before
 
 
+@requires_unix_listener
 @pytest.mark.parametrize("document,failure", [
     (b"not json", "result_unreadable"),
     ({"status": "completed", "final": "x", "steps": 1, "error": None, "extra": 1}, "result_unreadable"),

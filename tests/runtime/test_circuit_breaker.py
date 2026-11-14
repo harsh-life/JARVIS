@@ -37,6 +37,7 @@ from shared.schemas.authorization import Principal
 from shared.schemas.enums import AuditActor, AuditResult, UsageKind, Visibility
 from shared.schemas.execution import ExecutionErrorCode
 from tests.runtime.conftest import ask, call, failure_of, final, pending_of
+from tests.support import requires_descriptor_containment
 
 pytestmark = pytest.mark.asyncio
 
@@ -100,6 +101,7 @@ async def test_repeated_authorization_denials_trip_the_breaker(make_harness):
     assert len(await _audit(h, AuditAction.AGENT_TASK_FAILED)) == 1
 
 
+@requires_descriptor_containment
 async def test_repeated_boundary_violations_trip_the_breaker(make_harness, tmp_path):
     """Acceptance case F's hostile probes, at the default `violation_limit` (3):
     the third boundary refusal stops the task and the remaining probes never

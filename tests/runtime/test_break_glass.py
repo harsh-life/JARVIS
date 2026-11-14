@@ -65,6 +65,7 @@ from tests.runtime.conftest import (  # noqa: F401
     make_harness,
     pending_of,
 )
+from tests.support import requires_posix_process_controls
 
 pytestmark = pytest.mark.asyncio
 
@@ -215,6 +216,7 @@ async def test_an_ordinary_user_cannot_activate_break_glass(bg):
     assert await audit(h, AuditAction.BREAK_GLASS_ACTIVATED) == []
 
 
+@requires_posix_process_controls
 async def test_a_superuser_activates_and_the_approved_run_is_unconfined(bg):
     h = await bg()
     alice = await h.user("alice")
@@ -356,6 +358,7 @@ async def test_executables_outside_the_record_or_the_list_are_not_unconfined(bg)
     assert OUTSIDE not in h.model.all_text()
 
 
+@requires_posix_process_controls
 async def test_enabling_break_glass_does_not_widen_the_normal_allow_list(bg):
     h = await bg(allowed=("cat",), normal=())
     alice = await h.user("alice")
@@ -405,6 +408,7 @@ async def test_activation_is_bound_to_a_live_task_its_owner_and_the_limits(bg):
 # ── BG-T7: the record ends ─────────────────────────────────────────────────
 
 
+@requires_posix_process_controls
 async def test_the_record_ends_when_its_invocations_are_spent(bg):
     h = await bg()
     alice = await h.user("alice")
@@ -426,6 +430,7 @@ async def test_the_record_ends_when_its_invocations_are_spent(bg):
     assert len(await audit(h, AuditAction.BREAK_GLASS_INVOKED)) == 1
 
 
+@requires_posix_process_controls
 async def test_the_record_ends_when_it_expires(bg):
     h = await bg()
     alice = await h.user("alice")
@@ -463,6 +468,7 @@ async def test_the_record_ends_when_the_task_ends(bg):
     assert h.break_glass.active() == [] and await listed(h) == []
 
 
+@requires_posix_process_controls
 async def test_the_record_ends_when_a_superuser_revokes_it(bg):
     h = await bg()
     alice = await h.user("alice")
@@ -578,6 +584,7 @@ async def test_an_operator_stop_kills_an_unconfined_process(bg):
     assert ":cancelled:-:" in invoked.resource
 
 
+@requires_posix_process_controls
 async def test_the_timeout_applies_to_an_unconfined_run(bg):
     h = await bg()
     alice = await h.user("alice")
@@ -598,6 +605,7 @@ async def test_the_timeout_applies_to_an_unconfined_run(bg):
 # ── other boundaries are untouched ─────────────────────────────────────────
 
 
+@requires_posix_process_controls
 async def test_file_and_network_boundaries_hold_while_a_record_is_live(bg):
     h = await bg()
     alice = await h.user("alice")
@@ -655,6 +663,7 @@ async def test_no_worker_or_recovery_path_can_create_a_record(bg):
     assert excinfo.value.code is RefusalCode.NOT_SUPERUSER
 
 
+@requires_posix_process_controls
 async def test_a_worker_switch_never_touches_break_glass(bg):
     """18 §4 recovery replaces the worker; it never activates, extends or
     re-enables break-glass — only the operator does."""
@@ -790,6 +799,7 @@ async def test_a_record_never_changes_what_the_task_mode_allows(bg):
     assert await audit(h, AuditAction.BREAK_GLASS_INVOKED) == []
 
 
+@requires_posix_process_controls
 async def test_an_activation_whose_audit_cannot_be_written_never_goes_live(bg, monkeypatch):
     """Audit first, then live: if the activation cannot be recorded (e.g. the
     store is held by a running task past its busy timeout), no record exists."""

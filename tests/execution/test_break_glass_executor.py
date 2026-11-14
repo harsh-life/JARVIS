@@ -30,6 +30,7 @@ from shared.schemas.agent import ExecutionPlatform, ToolInvocation
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode
 from tests.execution.test_process import _process_is_running
 from tests.support import DisposableHostBreakGlass, make_superuser, make_test_config
+from tests.support import requires_posix_process_controls
 
 pytestmark = pytest.mark.asyncio
 
@@ -136,6 +137,7 @@ async def test_disabled_config_hands_the_executor_no_break_glass(no_landlock, tm
     assert granting.claims == []
 
 
+@requires_posix_process_controls
 async def test_enabled_config_wires_the_store_into_the_executor(no_landlock, tmp_path, superuser):
     config = make_test_config(execution={
         "filesystem": {"base_root": str(tmp_path / "sandboxes")},
@@ -154,6 +156,7 @@ async def test_enabled_config_wires_the_store_into_the_executor(no_landlock, tmp
 # ── the claim: task, user, executable, count, time ─────────────────────────
 
 
+@requires_posix_process_controls
 async def test_a_live_record_runs_its_executable_unconfined(no_landlock, tmp_path, superuser):
     reg = registry()
     record = live(reg, superuser)
@@ -171,6 +174,7 @@ async def test_a_live_record_runs_its_executable_unconfined(no_landlock, tmp_pat
     assert ended.resource == f"bg:{record.record_id}:{TASK}:exhausted"
 
 
+@requires_posix_process_controls
 @pytest.mark.parametrize("mismatch", ["task", "user", "executable"])
 async def test_a_record_binds_task_user_and_executable(no_landlock, tmp_path, superuser, mismatch):
     reg = registry()
@@ -189,6 +193,7 @@ async def test_a_record_binds_task_user_and_executable(no_landlock, tmp_path, su
     assert reg.active()[0].remaining == 1  # nothing was spent
 
 
+@requires_posix_process_controls
 async def test_bg_t6_an_executable_off_the_break_glass_list_never_runs_unconfined(no_landlock, tmp_path,
                                                                                   superuser):
     # The record cannot name it (activation refuses), and a lookup that would
@@ -201,6 +206,7 @@ async def test_bg_t6_an_executable_off_the_break_glass_list_never_runs_unconfine
     assert granting.claims == []
 
 
+@requires_posix_process_controls
 async def test_the_break_glass_list_does_not_widen_the_normal_allow_list(tmp_path):
     ex = ConstrainedProcessExecutor(allowed_executables=[], break_glass_executables=["cat"],
                                     break_glass=registry())
@@ -208,6 +214,7 @@ async def test_the_break_glass_list_does_not_widen_the_normal_allow_list(tmp_pat
     assert ex._normal.entries == frozenset()
 
 
+@requires_posix_process_controls
 async def test_a_bare_break_glass_name_is_execd_by_its_resolved_path(no_landlock, tmp_path, superuser):
     decoy_dir = tmp_path / "decoy"
     decoy_dir.mkdir()
@@ -224,6 +231,7 @@ async def test_a_bare_break_glass_name_is_execd_by_its_resolved_path(no_landlock
         ExecutionErrorCode.UNAUTHORIZED_EXECUTABLE
 
 
+@requires_posix_process_controls
 async def test_repeated_invocation_after_max_is_rejected(no_landlock, tmp_path, superuser):
     reg = registry()
     live(reg, superuser, max_invocations=2)
@@ -234,6 +242,7 @@ async def test_repeated_invocation_after_max_is_rejected(no_landlock, tmp_path, 
     assert [e.resource.rsplit(":", 1)[1] for e in reg.drain(TASK)] == ["cat", "cat", "exhausted"]
 
 
+@requires_posix_process_controls
 async def test_an_expired_record_is_rejected(no_landlock, tmp_path, superuser):
     now = [datetime.now(timezone.utc)]
     reg = BreakGlassRegistry(BreakGlassConfig(enabled=True, allowed_executables=["cat"]), clock=lambda: now[0])
@@ -269,6 +278,7 @@ async def test_without_a_task_identity_nothing_is_claimed(no_landlock, tmp_path,
 # ── BG-T8: every limit still applies ───────────────────────────────────────
 
 
+@requires_posix_process_controls
 async def test_the_environment_is_still_built_from_scratch(no_landlock, tmp_path, superuser, monkeypatch):
     monkeypatch.setenv("SECRET_FROM_THE_HOST", "TEST-ONLY-must-not-leak")
     reg = registry()
@@ -278,6 +288,7 @@ async def test_the_environment_is_still_built_from_scratch(no_landlock, tmp_path
     assert "PATH=/usr/bin:/bin" in result.content
 
 
+@requires_posix_process_controls
 async def test_output_caps_and_timeouts_still_apply(no_landlock, tmp_path, superuser):
     reg = registry()
     live(reg, superuser, executables=("python3", "sleep"), max_invocations=2)
@@ -290,6 +301,7 @@ async def test_output_caps_and_timeouts_still_apply(no_landlock, tmp_path, super
     assert ":exited:0:" in invoked[0] and ":timed_out:-1:" in invoked[1]
 
 
+@requires_posix_process_controls
 async def test_rlimits_still_apply(no_landlock, tmp_path, superuser):
     reg = registry()
     live(reg, superuser, executables=("python3",))
@@ -299,6 +311,7 @@ async def test_rlimits_still_apply(no_landlock, tmp_path, superuser):
     assert result.content.split() == [str(512 * 1024 * 1024), "64"]
 
 
+@requires_posix_process_controls
 async def test_cancellation_kills_the_unconfined_process_group(no_landlock, tmp_path, superuser):
     reg = registry()
     live(reg, superuser, executables=("sh",))
@@ -323,6 +336,7 @@ async def test_cancellation_kills_the_unconfined_process_group(no_landlock, tmp_
     assert f":{InvocationOutcome.CANCELLED.value}:-:" in invoked.resource
 
 
+@requires_posix_process_controls
 async def test_a_run_that_never_starts_is_still_recorded(no_landlock, tmp_path, superuser):
     reg = BreakGlassRegistry(BreakGlassConfig(enabled=True, allowed_executables=["/nonexistent/tool"]))
     live(reg, superuser, executables=("/nonexistent/tool",))
@@ -389,6 +403,7 @@ async def test_values_that_merely_mention_confinement_are_still_fine():
     assert parsed.arguments["argv"][1] == "unconfined landlock break-glass"
 
 
+@requires_posix_process_controls
 async def test_the_shell_adapter_refuses_unknown_arguments_and_passes_its_task_identity(no_landlock, tmp_path):
     granting = DisposableHostBreakGlass()
     ex = ConstrainedProcessExecutor(break_glass_executables=["cat"], break_glass=granting)
@@ -423,6 +438,7 @@ async def test_without_a_task_identity_even_a_granting_store_is_not_asked(no_lan
     assert granting.claims == []
 
 
+@requires_posix_process_controls
 async def test_a_store_that_fails_to_record_does_not_break_the_run(no_landlock, tmp_path):
     class Failing(DisposableHostBreakGlass):
         def record_invocation(self, claim, **details):

@@ -383,12 +383,12 @@ async def test_change_visibility_is_the_only_writer_of_a_visibility_field(world)
             if line.lstrip().startswith("#"):
                 continue
             if direct.search(line):
-                offenders.append(f"{path}:{lineno}: {line.strip()}")
+                offenders.append(f"{path.as_posix()}:{lineno}: {line.strip()}")
     assert offenders == [], offenders
 
     # (b) The indirect writer is confined to one module and one function.
     writers = [
-        str(path)
+        path.as_posix()
         for path in sorted(Path("server").rglob("*.py"))
         if "visibility_attr" in path.read_text(encoding="utf-8")
     ]

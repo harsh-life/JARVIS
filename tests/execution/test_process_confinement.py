@@ -25,6 +25,7 @@ from server.execution import confinement
 from server.execution.process import ConstrainedProcessExecutor
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode
 from tests.support import DisposableHostExecutor
+from tests.support import requires_posix_process_controls
 
 pytestmark = pytest.mark.asyncio
 
@@ -216,6 +217,7 @@ async def test_there_is_no_confinement_mode_to_choose():
 # ── allow-list integrity (both paths) ─────────────────────────────────────
 
 
+@requires_posix_process_controls
 @pytest.mark.parametrize("mode", ["break_glass", confinement.LANDLOCK])
 async def test_a_path_override_cannot_swap_the_allow_listed_binary(mode, tmp_path):
     """A bare allow-list name is exec'd by its resolved absolute path. Before,

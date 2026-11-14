@@ -75,6 +75,12 @@ requires_unix_listener = pytest.mark.skipif(
     reason=f"needs Unix-domain sockets ({UNIX_LISTENER_MISSING}); the egress proxy and unix: listeners "
            "refuse to start on this host (asserted in test_platform_support.py)",
 )
+requires_posix_host = pytest.mark.skipif(
+    os.name != "posix",
+    reason="exercises the rootless-Podman container engine with POSIX semantics (shell-script fakes, "
+           "absolute POSIX paths, 0o700 modes, uid/gid); ContainerEngine refuses a non-POSIX host "
+           "(asserted in test_platform_support.py)",
+)
 
 
 # ── subprocesses: the same bytes on every host ──────────────────────────────
