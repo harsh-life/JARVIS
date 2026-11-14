@@ -45,7 +45,7 @@ class ProviderMap(BaseModel):
 
     @classmethod
     def load(cls, path: Path) -> "ProviderMap":
-        return cls.model_validate(yaml.safe_load(path.read_text()) or {})
+        return cls.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
 
 
 Responder = Callable[[Sequence[ChatMessage]], "str | ModelResult | Exception"]

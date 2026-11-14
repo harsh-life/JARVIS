@@ -33,10 +33,10 @@ from experiments.tasks import load_suite
 
 
 def _load(directory: Path) -> tuple[dict, list[dict], list[dict]]:
-    meta = json.loads((directory / "run.json").read_text())
-    outputs = [json.loads(line) for line in (directory / "outputs.jsonl").read_text().splitlines() if line]
+    meta = json.loads((directory / "run.json").read_text(encoding="utf-8"))
+    outputs = [json.loads(line) for line in (directory / "outputs.jsonl").read_text(encoding="utf-8").splitlines() if line]
     calls_path = directory / "calls.jsonl"
-    calls = [json.loads(line) for line in calls_path.read_text().splitlines() if line] if calls_path.exists() else []
+    calls = [json.loads(line) for line in calls_path.read_text(encoding="utf-8").splitlines() if line] if calls_path.exists() else []
     return meta, outputs, calls
 
 
@@ -224,8 +224,8 @@ def compare(directories: list[Path], out_dir: Path) -> dict:
         "runs": runs,
     }
     out_dir.mkdir(parents=True, exist_ok=False)
-    (out_dir / "compare.json").write_text(json.dumps(report, indent=2, default=str))
-    (out_dir / "compare.md").write_text(render_markdown(report))
+    (out_dir / "compare.json").write_text(json.dumps(report, indent=2, default=str), encoding="utf-8", newline="\n")
+    (out_dir / "compare.md").write_text(render_markdown(report), encoding="utf-8", newline="\n")
     return report
 
 

@@ -105,7 +105,7 @@ async def bg(make_harness, monkeypatch, tmp_path):
     # A disposable test host without Landlock (OD-BG-2): confined runs fail closed.
     monkeypatch.setattr(confinement, "landlock_abi", lambda: 0)
     outside = tmp_path / "outside.txt"
-    outside.write_text(OUTSIDE)
+    outside.write_text(OUTSIDE, encoding="utf-8", newline="\n")
 
     async def _make(*, agent: dict | None = None, models: dict | None = None, **kwargs):
         cfg = config(tmp_path, **kwargs)
@@ -642,9 +642,9 @@ async def test_no_worker_or_recovery_path_can_create_a_record(bg):
         "claim", "record_invocation"}
     for package in ("agent", "tools", "execution", "models", "modeltools", "memory"):
         for source in (REPO_ROOT / "server" / package).rglob("*.py"):
-            text = source.read_text()
+            text = source.read_text(encoding="utf-8")
             assert "BreakGlassRegistry" not in text and "composition.break_glass" not in text, source
-    pyproject = (REPO_ROOT / "pyproject.toml").read_text()
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert '"server.composition.break_glass",' in pyproject
 
     h = await bg()

@@ -422,7 +422,7 @@ async def test_inv_20_the_package_does_not_claim_isolation_it_has_not_earned():
         "BR-T2's deliverable is the measured blast radius, recorded at "
         f"{REPORT} (14 §4, 17 §4)"
     )
-    text = REPORT.read_text()
+    text = REPORT.read_text(encoding="utf-8")
 
     # It must be honest about status: decided, and decided as an *accepted
     # residual* — never as "solved".
@@ -452,7 +452,7 @@ async def test_inv_20_the_package_does_not_claim_isolation_it_has_not_earned():
 async def test_the_residual_table_is_present_with_owner_actions():
     """BR-T4 (14 §7) — "residual table present, each has owner action"."""
 
-    text = REPORT.read_text()
+    text = REPORT.read_text(encoding="utf-8")
     assert "Residual" in text or "residual" in text
     assert "Owner action" in text or "owner action" in text
     # The four residuals 14 §5 enumerates that are in this branch's scope.
@@ -469,7 +469,7 @@ async def test_real_user_data_readiness_is_not_overclaimed():
     than reading the OD-A1 decision as real-user readiness.
     """
 
-    text = REPORT.read_text().lower()
+    text = REPORT.read_text(encoding="utf-8").lower()
     assert "disposable" in text
     assert "real-user-ready" in text
     for pending_subsystem in ("`09`", "`10`", "`11`"):
@@ -480,7 +480,7 @@ async def test_the_decision_register_records_od_a1_as_an_accepted_residual():
     """The owner's decision lives in the decision register, and it says what was
     accepted and what was not weakened."""
 
-    register = Path("docs/DECISION_REGISTER.md").read_text()
+    register = Path("docs/DECISION_REGISTER.md").read_text(encoding="utf-8")
     assert "RESOLVED FOR PILOT — ACCEPTED RESIDUAL" in register
     assert "not an isolation claim" in register.lower()
     assert "cross-user logical isolation is mandatory" in register.lower()

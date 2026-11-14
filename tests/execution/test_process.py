@@ -194,7 +194,7 @@ def _process_is_running(pid: int) -> bool:
     about."""
 
     try:
-        with open(f"/proc/{pid}/stat") as handle:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
             # Field 3 (after the "(comm)" parenthesised part, which may itself
             # contain spaces/parens) is the state char; splitting on ')' and
             # taking the remainder sidesteps that.
@@ -223,7 +223,7 @@ async def test_timeout_kills_the_whole_process_group_not_just_the_shell():
         )
         await asyncio.sleep(1.0)
         assert os.path.exists(marker), "the grandchild never started — test setup is broken"
-        grandchild_pid = int(open(marker).read().strip())
+        grandchild_pid = int(open(marker, encoding="utf-8").read().strip())
         assert not _process_is_running(grandchild_pid), (
             "the grandchild survived the timeout kill — process-tree cleanup failed"
         )

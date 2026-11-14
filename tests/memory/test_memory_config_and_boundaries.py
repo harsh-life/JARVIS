@@ -65,7 +65,7 @@ def test_unsupported_vault_settings_are_load_time_failures(payload):
 def test_the_example_config_loads_with_memory_and_vault_off():
     config = load_config(REPO / "config.example.yaml")
     assert config.memory.enabled is False and config.vault.enabled is False
-    text = (REPO / "config.example.yaml").read_text()
+    text = (REPO / "config.example.yaml").read_text(encoding="utf-8")
     assert "sk-" not in text and "api_key:" not in text
 
 
@@ -148,7 +148,7 @@ def test_the_provision_command_is_idempotent_and_offline_once_provisioned(tmp_pa
     config = make_test_config(memory={"mem0": {"embedder_cache": str(EMBEDDER_CACHE), "path": str(tmp_path / "m")}},
                               vault={"embedder_cache": str(EMBEDDER_CACHE), "index_path": str(tmp_path / "v")})
     path = tmp_path / "config.yaml"
-    path.write_text(yaml.safe_dump(config.model_dump(mode="json")))
+    path.write_text(yaml.safe_dump(config.model_dump(mode="json")), encoding="utf-8", newline="\n")
     egress.active = True
     assert main(["provision", "--config", str(path)]) == 0
     egress.active = False
@@ -258,7 +258,7 @@ def test_every_memory_contract_is_declared_and_kept():
     assert result.returncode == 0, result.stdout
     for name in MEMORY_CONTRACTS:
         assert re.search(re.escape(name) + r"\s*KEPT", result.stdout), name
-    contracts = tomllib.loads((REPO / "pyproject.toml").read_text())["tool"]["importlinter"]["contracts"]
+    contracts = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["importlinter"]["contracts"]
     superuser = next(c for c in contracts if c["name"] == MEMORY_CONTRACTS[4])
     assert {"server.memory", "server.vault"} <= set(superuser["source_modules"])
 
@@ -275,25 +275,25 @@ def _fixture_project(tmp_path: Path, violation: tuple[str, str]) -> Path:
                 "server/config", "server/storage", "shared", "mem0"]
     for pkg in packages:
         (root / pkg).mkdir(parents=True, exist_ok=True)
-        (root / pkg / "__init__.py").write_text("")
-    (root / "server/security/superuser.py").write_text("")
-    (root / "server/gateway/superuser_auth.py").write_text("")
-    (root / "server/gateway/control_port.py").write_text("")
-    (root / "server/gateway/evaluation_control_port.py").write_text("")
-    (root / "server/gateway/console_port.py").write_text("")
+        (root / pkg / "__init__.py").write_text("", encoding="utf-8", newline="\n")
+    (root / "server/security/superuser.py").write_text("", encoding="utf-8", newline="\n")
+    (root / "server/gateway/superuser_auth.py").write_text("", encoding="utf-8", newline="\n")
+    (root / "server/gateway/control_port.py").write_text("", encoding="utf-8", newline="\n")
+    (root / "server/gateway/evaluation_control_port.py").write_text("", encoding="utf-8", newline="\n")
+    (root / "server/gateway/console_port.py").write_text("", encoding="utf-8", newline="\n")
     (root / "server/gateway/routers").mkdir()
-    (root / "server/gateway/routers/__init__.py").write_text("")
+    (root / "server/gateway/routers/__init__.py").write_text("", encoding="utf-8", newline="\n")
     # import-linter >= 2.16 rejects a contract that names a module absent from
     # the graph, so every forbidden module of the superuser contract must exist.
     for name in ("control", "evaluation_control", "admin"):
-        (root / f"server/gateway/routers/{name}.py").write_text("")
+        (root / f"server/gateway/routers/{name}.py").write_text("", encoding="utf-8", newline="\n")
     for name in ("supervisor", "latch", "break_glass", "improvements", "evaluation", "console"):
-        (root / f"server/composition/{name}.py").write_text("")
-    (root / "server/memory/mem0_provider.py").write_text("import mem0\n")
+        (root / f"server/composition/{name}.py").write_text("", encoding="utf-8", newline="\n")
+    (root / "server/memory/mem0_provider.py").write_text("import mem0\n", encoding="utf-8", newline="\n")
     source, target = violation
-    (root / source).write_text(f"import {target}\n")
+    (root / source).write_text(f"import {target}\n", encoding="utf-8", newline="\n")
 
-    contracts = tomllib.loads((REPO / "pyproject.toml").read_text())["tool"]["importlinter"]["contracts"]
+    contracts = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["importlinter"]["contracts"]
     chosen = [c for c in contracts if c["name"] in MEMORY_CONTRACTS]
     lines = ['[tool.importlinter]', 'root_packages = ["server", "shared", "mem0"]', ""]
     for contract in chosen:
@@ -301,7 +301,7 @@ def _fixture_project(tmp_path: Path, violation: tuple[str, str]) -> Path:
         for key, value in contract.items():
             lines.append(f"{key} = {value!r}".replace("'", '"').replace("True", "true").replace("False", "false"))
         lines.append("")
-    (root / "fixture.toml").write_text("\n".join(lines))
+    (root / "fixture.toml").write_text("\n".join(lines), encoding="utf-8", newline="\n")
     return root
 
 
@@ -327,7 +327,7 @@ def test_each_memory_contract_detects_a_deliberate_violation(tmp_path, violation
 
 def _imports(path: Path) -> set[str]:
     names: set[str] = set()
-    for node in ast.walk(ast.parse(path.read_text())):
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Import):
             names.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
@@ -356,6 +356,6 @@ def test_third_party_stores_and_process_primitives_are_confined_to_their_one_mod
 def test_no_secret_or_endpoint_literal_in_memory_code():
     for folder in ("server/memory", "server/vault"):
         for path in (REPO / folder).rglob("*.py"):
-            text = path.read_text()
+            text = path.read_text(encoding="utf-8")
             assert "api.openai.com" not in text and "api.mem0.ai" not in text, path
             assert not re.search(r"sk-[A-Za-z0-9]{20,}", text), path

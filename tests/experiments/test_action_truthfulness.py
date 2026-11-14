@@ -553,12 +553,12 @@ async def test_compare_refinalizes_a_phase0_format_run_without_touching_it(tmp_p
     phase01 = {"final_output", "raw_output", "model_text", "model_fields", "score_final", "finalization",
                "truthfulness", "protocol", "repetition", "prompt_version"}
     rows = [{k: v for k, v in json.loads(line).items() if k not in phase01}
-            for line in (run_dir / "outputs.jsonl").read_text().splitlines()]
-    (run_dir / "outputs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-    meta = json.loads((run_dir / "run.json").read_text())
+            for line in (run_dir / "outputs.jsonl").read_text(encoding="utf-8").splitlines()]
+    (run_dir / "outputs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8", newline="\n")
+    meta = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     for key in ("finalizer_version", "prompt_version", "prompt_profile", "prompt_sha256"):
         meta.pop(key)
-    (run_dir / "run.json").write_text(json.dumps(meta))
+    (run_dir / "run.json").write_text(json.dumps(meta), encoding="utf-8", newline="\n")
     before = {p.name: p.read_bytes() for p in run_dir.iterdir()}
 
     result = compare([run_dir], tmp_path / "cmp")
@@ -568,7 +568,7 @@ async def test_compare_refinalizes_a_phase0_format_run_without_touching_it(tmp_p
     assert c["raw_completion_claims"]["mean"] == 3 and c["unsupported_completion_claims"]["mean"] == 0
     assert r["all"]["B_protocol"]["citations_not_supplied"] == 2   # "E1" cited on two tasks with no evidence
     assert {p.name: p.read_bytes() for p in run_dir.iterdir()} == before
-    assert (tmp_path / "cmp" / "compare.md").read_text().startswith("# Phase 0.1 corrected comparison")
+    assert (tmp_path / "cmp" / "compare.md").read_text(encoding="utf-8").startswith("# Phase 0.1 corrected comparison")
     with pytest.raises(FileExistsError):
         compare([run_dir], tmp_path / "cmp")      # never overwrites a report either
 

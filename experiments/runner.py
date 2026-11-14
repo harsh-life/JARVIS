@@ -231,7 +231,7 @@ async def _orchestrated(task: Task, pool: ModelPool, snapshot: ExperimentSnapsho
 
 
 def load_synthesis_cases() -> list[tuple[Task, list[ResultBundle]]]:
-    raw = yaml.safe_load((SUITE_DIR / "synthesis_v1.yaml").read_text())
+    raw = yaml.safe_load((SUITE_DIR / "synthesis_v1.yaml").read_text(encoding="utf-8"))
     cases = []
     for case in raw["cases"]:
         task = Task.model_validate(case["task"])
@@ -408,14 +408,14 @@ def rescore(directory: Path) -> dict:
     structured reply, and the original `summary.json` is left untouched.
     Writes `rescored.json`."""
 
-    meta = json.loads((directory / "run.json").read_text())
+    meta = json.loads((directory / "run.json").read_text(encoding="utf-8"))
     reply_model = REPLY_MODELS[meta.get("prompt_version", "1") if meta.get("arm") != "E0" else "1"]
     if meta["experiment"] == "synthesis":
         tasks = {t.id: t for t, _ in load_synthesis_cases()}
     else:
         tasks = {t.id: t for t in load_suite(meta["suite_id"]).tasks}
-    outputs = [json.loads(line) for line in (directory / "outputs.jsonl").read_text().splitlines()]
-    calls = [json.loads(line) for line in (directory / "calls.jsonl").read_text().splitlines()]
+    outputs = [json.loads(line) for line in (directory / "outputs.jsonl").read_text(encoding="utf-8").splitlines()]
+    calls = [json.loads(line) for line in (directory / "calls.jsonl").read_text(encoding="utf-8").splitlines()]
     scores = []
     for o in outputs:
         structured = o.get("structured")
@@ -429,7 +429,7 @@ def rescore(directory: Path) -> dict:
     result = {"run_id": meta["run_id"], "arm": meta["arm"], "config_hash": meta["config_hash"],
               "rescored_at": datetime.now(timezone.utc).isoformat(), "summary": summary,
               "per_task": {o["task_id"]: o["rescored"] for o in outputs}}
-    (directory / "rescored.json").write_text(json.dumps(result, indent=2))
+    (directory / "rescored.json").write_text(json.dumps(result, indent=2), encoding="utf-8", newline="\n")
     return result
 
 

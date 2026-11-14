@@ -48,7 +48,7 @@ def evidence_lines(items: Sequence[EvidenceItem], max_chars: int | None = None) 
 
 # ── E0: the production prompt ───────────────────────────────────────────
 
-BASELINE_SYSTEM_V1 = (Path(__file__).parent / "prompt_profiles" / "central_baseline_v1.txt").read_text()
+BASELINE_SYSTEM_V1 = (Path(__file__).parent / "prompt_profiles" / "central_baseline_v1.txt").read_text(encoding="utf-8")
 
 
 def baseline_context(prompt: str, knowledge: Sequence[str]) -> ChatMessage:

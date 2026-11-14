@@ -283,7 +283,7 @@ async def test_only_the_superuser_module_mints_a_grant():
     issue_callers, auth_callers = set(), set()
     for path in (REPO_ROOT / "server").rglob("*.py"):
         rel = path.relative_to(REPO_ROOT).as_posix()
-        for node in ast.walk(ast.parse(path.read_text())):  # real calls, not docstrings
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):  # real calls, not docstrings
             name = called(node)
             if name == "_issue":
                 issue_callers.add(rel)
@@ -328,7 +328,7 @@ async def test_the_superuser_import_contract_catches_a_violation(tmp_path, modul
                     ignore=shutil.ignore_patterns("__pycache__", "results"))
     shutil.copy(REPO_ROOT / "pyproject.toml", copy / "pyproject.toml")
     target = copy / module
-    target.write_text(line + target.read_text())
+    target.write_text(line + target.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
 
     result = subprocess.run([_lint_imports(), "--config", "pyproject.toml", "--no-cache"],
                             cwd=copy, capture_output=True, text=True)

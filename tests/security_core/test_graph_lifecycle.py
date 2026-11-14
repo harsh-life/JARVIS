@@ -379,7 +379,7 @@ async def test_change_visibility_is_the_only_writer_of_a_visibility_field(world)
     direct = re.compile(r"\.visibility\s*=(?!=)")
     offenders: list[str] = []
     for path in sorted(Path("server").rglob("*.py")):
-        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if line.lstrip().startswith("#"):
                 continue
             if direct.search(line):
@@ -390,11 +390,11 @@ async def test_change_visibility_is_the_only_writer_of_a_visibility_field(world)
     writers = [
         str(path)
         for path in sorted(Path("server").rglob("*.py"))
-        if "visibility_attr" in path.read_text()
+        if "visibility_attr" in path.read_text(encoding="utf-8")
     ]
     assert writers == ["server/graph/service.py"], writers
 
-    source = Path("server/graph/service.py").read_text()
+    source = Path("server/graph/service.py").read_text(encoding="utf-8")
     setattr_lines = [
         line.strip()
         for line in source.splitlines()

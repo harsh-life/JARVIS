@@ -104,7 +104,7 @@ async def test_case_a_low_risk_request_runs_automatically_end_to_end(make_harnes
     assert body["counters"]["tool_calls"] == 2
     # The real sandbox, derived from the server-side user id — not a path the
     # model supplied.
-    assert (sandbox(tmp_path, alice.user_id, "notes") / "todo.txt").read_text() == "buy milk"
+    assert (sandbox(tmp_path, alice.user_id, "notes") / "todo.txt").read_text(encoding="utf-8") == "buy milk"
     # The read result reached the model as an observation (data, not authority).
     assert "buy milk" in h.model.all_text()
 
@@ -336,7 +336,7 @@ async def test_case_f_an_approved_process_is_still_confined(make_harness, tmp_pa
     )
     alice = await h.user("alice")
     await h.grant(alice, "system.restricted")
-    hostname = Path("/etc/hostname").read_text().strip() if Path("/etc/hostname").exists() else None
+    hostname = Path("/etc/hostname").read_text(encoding="utf-8").strip() if Path("/etc/hostname").exists() else None
 
     h.model.push(
         ask("system.restricted"),

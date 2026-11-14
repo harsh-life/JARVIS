@@ -273,7 +273,7 @@ def test_evidence_instructions_are_signals_of_evidence_origin_only():
 
 def test_the_annotation_packet_hides_labels_predictions_and_categories():
     packet = REPO / "experiments" / "annotation" / "phase03_packet"
-    text = (packet / "requests.yaml").read_text()
+    text = (packet / "requests.yaml").read_text(encoding="utf-8")
     for leak in ("classification", "route", "category", "p3-", "action_status", "clarify", "target_specified"):
         assert leak not in text, leak
     assert not (packet / "phase03_key.yaml").exists()

@@ -240,10 +240,10 @@ def _bumped_research():
     from server.agents.registry.templates import TEMPLATE_DIR
 
     tmp = Path(tempfile.mkdtemp())
-    text = (TEMPLATE_DIR / "research_digest.yaml").read_text().replace(
+    text = (TEMPLATE_DIR / "research_digest.yaml").read_text(encoding="utf-8").replace(
         "abilities: [read_web_allowlisted, read_user_memory, read_vault]",
         "abilities: [read_web_allowlisted, read_user_memory, read_vault, invoke_model_tool]")
-    (tmp / "research_digest.yaml").write_text(text)
+    (tmp / "research_digest.yaml").write_text(text, encoding="utf-8", newline="\n")
     return _model_tool_registries(enabled_templates=("research_digest",), template_dir=tmp)
 
 

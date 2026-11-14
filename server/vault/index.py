@@ -73,14 +73,14 @@ class VaultIndex:
 
     def indexed_commit(self) -> str | None:
         try:
-            return json.loads((self.path / _STATE_FILE).read_text())["commit"]
+            return json.loads((self.path / _STATE_FILE).read_text(encoding="utf-8"))["commit"]
         except (OSError, ValueError, KeyError):
             return None
 
     def record_commit(self, commit: str) -> None:
         state = self.path / _STATE_FILE
         tmp = state.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"commit": commit}))
+        tmp.write_text(json.dumps({"commit": commit}), encoding="utf-8", newline="\n")
         os.replace(tmp, state)
 
     async def query(self, *, question: str, domain: str | None, top_k: int) -> list[VaultQueryResultItem]:

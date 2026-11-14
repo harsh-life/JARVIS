@@ -195,7 +195,7 @@ def commit_files(repo: Path, files: dict[str, str | None], message: str = "vault
             git(repo, "rm", "-q", rel)
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text)
+        target.write_text(text, encoding="utf-8", newline="\n")
         git(repo, "add", rel)
     git(repo, "-c", "user.name=Vault Curator", "-c", "user.email=curator@example.test",
         "commit", "-q", "-m", message)

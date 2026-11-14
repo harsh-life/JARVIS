@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "phase04-eval":
         from experiments import intent_eval_v4 as v4
 
-        raw = json.loads((args.replay / "model_raw.json").read_text()) if args.replay else None
+        raw = json.loads((args.replay / "model_raw.json").read_text(encoding="utf-8")) if args.replay else None
         if args.out.exists():
             print(f"refusing to overwrite {args.out}", file=sys.stderr)
             return 2
@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
                                       suite=args.suite, label="phase03")
             print(f"raw model outputs: {args.replay}")
         if args.replay is not None:
-            raw = json.loads((args.replay / "model_raw.json").read_text())
+            raw = json.loads((args.replay / "model_raw.json").read_text(encoding="utf-8"))
         if args.out.exists():
             print(f"refusing to overwrite {args.out}", file=sys.stderr)
             return 2
@@ -190,8 +190,8 @@ def main(argv: list[str] | None = None) -> int:
             args.out.mkdir(parents=True, exist_ok=False)
             for suite in intent_eval.SUITES:
                 rep = intent_eval.evaluate(None, suite=suite)
-                (args.out / f"{suite}.md").write_text(intent_eval.render_markdown(rep))
-                (args.out / f"{suite}.json").write_text(json.dumps(rep, indent=2))
+                (args.out / f"{suite}.md").write_text(intent_eval.render_markdown(rep), encoding="utf-8", newline="\n")
+                (args.out / f"{suite}.json").write_text(json.dumps(rep, indent=2), encoding="utf-8", newline="\n")
         print(f"wrote {args.out}")
         return 0
 
@@ -216,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "make-snapshot":
         snap = make_snapshot(args.document, args.config, profile_id=args.profile_id)
-        args.out.write_text(json.dumps(snap.model_dump(mode="json"), indent=2))
+        args.out.write_text(json.dumps(snap.model_dump(mode="json"), indent=2), encoding="utf-8", newline="\n")
         print(f"wrote {args.out} (config hash {snap.config_hash})")
         return 0
 

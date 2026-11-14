@@ -78,7 +78,7 @@ class Item(BaseModel):
 
 
 def load_items(name: str = "intent_v1") -> list[Item]:
-    raw = yaml.safe_load((SUITE_DIR / f"{name}.yaml").read_text())
+    raw = yaml.safe_load((SUITE_DIR / f"{name}.yaml").read_text(encoding="utf-8"))
     items = [Item.model_validate(i) for i in raw["items"]]
     if len({i.id for i in items}) != len(items):
         raise ValueError("duplicate item ids")
@@ -398,27 +398,27 @@ def run_live(snapshot, provider_map, out_dir: Path, *, label: str = "") -> Path:
             "completion_tokens": sum(c["completion_tokens"] for c in calls),
             "cost": round(sum(c["cost"] for c in calls), 6),
             "latency_ms_p50": sorted(c["latency_ms"] for c in calls)[len(calls) // 2] if calls else None}
-    (run_dir / "model_raw.json").write_text(scanner.redact(json.dumps(raw, indent=2)))
-    (run_dir / "calls.jsonl").write_text("".join(scanner.redact(json.dumps(c)) + "\n" for c in calls))
-    (run_dir / "run.json").write_text(json.dumps(meta, indent=2))
+    (run_dir / "model_raw.json").write_text(scanner.redact(json.dumps(raw, indent=2)), encoding="utf-8", newline="\n")
+    (run_dir / "calls.jsonl").write_text("".join(scanner.redact(json.dumps(c)) + "\n" for c in calls), encoding="utf-8", newline="\n")
+    (run_dir / "run.json").write_text(json.dumps(meta, indent=2), encoding="utf-8", newline="\n")
     return run_dir
 
 
 def replay(run_dir: Path, out_dir: Path) -> dict:
     """Score a stored live run (no model calls) into a NEW directory."""
 
-    raw = json.loads((run_dir / "model_raw.json").read_text())
+    raw = json.loads((run_dir / "model_raw.json").read_text(encoding="utf-8"))
     out_dir.mkdir(parents=True, exist_ok=False)
     reports = {}
     for suite in SUITES:
         rep = evaluate(raw, suite=suite)
         reports[suite] = rep
-        (out_dir / f"{suite}.json").write_text(json.dumps(rep, indent=2))
-        (out_dir / f"{suite}.md").write_text(render_markdown(rep))
-        (out_dir / f"{suite}.responses.json").write_text(json.dumps(response_eval(raw, suite), indent=2))
+        (out_dir / f"{suite}.json").write_text(json.dumps(rep, indent=2), encoding="utf-8", newline="\n")
+        (out_dir / f"{suite}.md").write_text(render_markdown(rep), encoding="utf-8", newline="\n")
+        (out_dir / f"{suite}.responses.json").write_text(json.dumps(response_eval(raw, suite), indent=2), encoding="utf-8", newline="\n")
         items = load_items(suite)
         rules_only = {i.id: recognize_rules(i.prompt, i.evidence)[0] for i in items}
-        (out_dir / f"{suite}.decomposition.json").write_text(json.dumps(decomposition(rules_only, suite), indent=2))
+        (out_dir / f"{suite}.decomposition.json").write_text(json.dumps(decomposition(rules_only, suite), indent=2), encoding="utf-8", newline="\n")
     return reports
 
 
@@ -479,12 +479,12 @@ def render_markdown(report: dict) -> str:
 def write(report: dict, out_dir: Path, raw_model: dict | None = None, meta: dict | None = None) -> None:
     out_dir.mkdir(parents=True, exist_ok=False)
     slim = json.loads(json.dumps(report))
-    (out_dir / "intent_eval.json").write_text(json.dumps(slim, indent=2))
-    (out_dir / "intent_eval.md").write_text(render_markdown(report))
+    (out_dir / "intent_eval.json").write_text(json.dumps(slim, indent=2), encoding="utf-8", newline="\n")
+    (out_dir / "intent_eval.md").write_text(render_markdown(report), encoding="utf-8", newline="\n")
     if raw_model is not None:
-        (out_dir / "model_raw.json").write_text(json.dumps(raw_model, indent=2))
+        (out_dir / "model_raw.json").write_text(json.dumps(raw_model, indent=2), encoding="utf-8", newline="\n")
     if meta is not None:
-        (out_dir / "run.json").write_text(json.dumps(meta, indent=2))
+        (out_dir / "run.json").write_text(json.dumps(meta, indent=2), encoding="utf-8", newline="\n")
 
 
 __all__ = ["SUITES", "Item", "Ref", "aggregate", "decomposition", "response_eval", "replay", "run_live", "by_category", "call_model", "coverage", "coverage_inputs", "evaluate",

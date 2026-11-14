@@ -538,7 +538,7 @@ async def test_the_control_modules_are_import_restricted(tmp_path, module, line)
                     ignore=shutil.ignore_patterns("__pycache__", "results"))
     shutil.copy(REPO_ROOT / "pyproject.toml", copy / "pyproject.toml")
     target = copy / module
-    target.write_text(line + target.read_text())
+    target.write_text(line + target.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
 
     result = subprocess.run([str(script), "--config", "pyproject.toml", "--no-cache"],
                             cwd=copy, capture_output=True, text=True)
@@ -570,7 +570,7 @@ async def test_the_judge_cannot_reach_authority_or_execution(tmp_path, line):
                     ignore=shutil.ignore_patterns("__pycache__", "results"))
     shutil.copy(REPO_ROOT / "pyproject.toml", copy / "pyproject.toml")
     target = copy / "server" / "evaluation" / "__init__.py"
-    target.write_text(line + target.read_text())
+    target.write_text(line + target.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
 
     result = subprocess.run([str(script), "--config", "pyproject.toml", "--no-cache"],
                             cwd=copy, capture_output=True, text=True)
@@ -588,7 +588,7 @@ async def test_the_runtime_cannot_depend_on_the_judge(tmp_path):
                     ignore=shutil.ignore_patterns("__pycache__", "results"))
     shutil.copy(REPO_ROOT / "pyproject.toml", copy / "pyproject.toml")
     target = copy / "server" / "agent" / "runtime.py"
-    target.write_text("import server.evaluation\n" + target.read_text())
+    target.write_text("import server.evaluation\n" + target.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
 
     result = subprocess.run([str(script), "--config", "pyproject.toml", "--no-cache"],
                             cwd=copy, capture_output=True, text=True)

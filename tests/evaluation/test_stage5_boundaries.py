@@ -39,7 +39,7 @@ def test_every_stage5_contract_is_declared_and_kept():
     flat = re.sub(r"\s+", " ", result.stdout)
     for name in CONTRACTS:
         assert re.search(re.escape(name) + r" ?KEPT", flat), name
-    contracts = tomllib.loads((REPO / "pyproject.toml").read_text())["tool"]["importlinter"]["contracts"]
+    contracts = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["importlinter"]["contracts"]
     superuser = next(c for c in contracts if c["name"] == SUPERUSER)
     for module in ("server.gateway.evaluation_control_port", "server.gateway.routers.evaluation_control",
                    "server.gateway.console_port", "server.gateway.routers.admin",
@@ -76,31 +76,31 @@ def _fixture(tmp_path: Path, violation: tuple[str, str]) -> Path:
     root = tmp_path / "fixture"
     for pkg in _PACKAGES:
         (root / pkg).mkdir(parents=True, exist_ok=True)
-        (root / pkg / "__init__.py").write_text("")
+        (root / pkg / "__init__.py").write_text("", encoding="utf-8", newline="\n")
     for module in _MODULES:
-        (root / module).write_text("")
-    (root / "server/security/audit.py").write_text("import server.secrets.audit_port\n")
+        (root / module).write_text("", encoding="utf-8", newline="\n")
+    (root / "server/security/audit.py").write_text("import server.secrets.audit_port\n", encoding="utf-8", newline="\n")
     # What the real packages legitimately import, so a clean fixture is clean.
     (root / "server/evaluation/ok.py").write_text(
         "import server.models.provider\nimport server.security.secret_patterns\n"
-        "import server.config.schema\nimport shared.schemas.evaluation\n"
+        "import server.config.schema\nimport shared.schemas.evaluation\n", encoding="utf-8", newline="\n"
     )
     (root / "server/dashboard/ok.py").write_text(
         "import server.storage.models\nimport server.config.schema\nimport shared.schemas.evaluation\n"
-        "import server.security.secret_patterns\n"
+        "import server.security.secret_patterns\n", encoding="utf-8", newline="\n"
     )
     source, target = violation
     path = root / source
-    path.write_text(path.read_text() + f"import {target}\n" if path.exists() else f"import {target}\n")
+    path.write_text(path.read_text(encoding="utf-8") + f"import {target}\n" if path.exists() else f"import {target}\n", encoding="utf-8", newline="\n")
 
-    contracts = tomllib.loads((REPO / "pyproject.toml").read_text())["tool"]["importlinter"]["contracts"]
+    contracts = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["importlinter"]["contracts"]
     lines = ["[tool.importlinter]", 'root_packages = ["server", "shared"]', "include_external_packages = true", ""]
     for contract in (c for c in contracts if c["name"] in CONTRACTS):
         lines.append("[[tool.importlinter.contracts]]")
         for key, value in contract.items():
             lines.append(f"{key} = {value!r}".replace("'", '"').replace("True", "true").replace("False", "false"))
         lines.append("")
-    (root / "fixture.toml").write_text("\n".join(lines))
+    (root / "fixture.toml").write_text("\n".join(lines), encoding="utf-8", newline="\n")
     return root
 
 

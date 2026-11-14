@@ -288,7 +288,7 @@ async def test_repo_t7_the_boundary_check_actually_runs_in_ci():
     assert workflows, "no CI workflow exists, so no boundary contract is enforced (16 §6)"
 
     def steps_of(path):
-        parsed = yaml.safe_load(path.read_text())
+        parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
         for job in (parsed.get("jobs") or {}).values():
             yield from (job.get("steps") or [])
 
@@ -305,7 +305,7 @@ async def test_repo_t7_the_boundary_check_actually_runs_in_ci():
     # And it must trigger on pull requests, or a violation reaches main unchecked.
     triggers = set()
     for path in workflows:
-        parsed = yaml.safe_load(path.read_text())
+        parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
         # PyYAML parses the bare key `on:` as the boolean True.
         raw = parsed.get("on", parsed.get(True)) or {}
         triggers.update(raw if isinstance(raw, (dict, list)) else [raw])
@@ -366,7 +366,7 @@ async def test_the_engine_is_the_only_producer_of_a_permission_decision():
     writers = [
         str(path)
         for path in sorted(Path("server").rglob("*.py"))
-        if "record_permission_decision" in path.read_text()
+        if "record_permission_decision" in path.read_text(encoding="utf-8")
     ]
     assert writers == ["server/graph/authorization.py", "server/security/audit.py"], writers
 

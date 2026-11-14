@@ -64,7 +64,7 @@ def render_file() -> str:
 def main(argv: list[str]) -> int:
     command = argv[0] if argv else "check"
     if command == "export":
-        PATH.write_text(render_file(), encoding="ascii")
+        PATH.write_text(render_file(), encoding="ascii", newline="\n")
         print(f"wrote {PATH}")
         return 0
     ok = PATH.exists() and PATH.read_text(encoding="ascii") == render_file()

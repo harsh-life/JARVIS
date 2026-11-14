@@ -26,12 +26,12 @@ async def test_e0_runs_every_task_with_the_production_prompt_and_records_the_has
     assert all(o["status"] == "completed" for o in report.outputs)
     assert all(c["role"] == "central" and c["status"] == "ok" for c in report.calls)
     assert providers[0].calls[0][0].content.startswith("You are the planning component of an assistant.")
-    run_meta = json.loads((report.directory / "run.json").read_text())
+    run_meta = json.loads((report.directory / "run.json").read_text(encoding="utf-8"))
     assert run_meta["config_hash"] == snap.config_hash and run_meta["mode"] == "scripted"
     assert run_meta["token_counts"].startswith("estimated")
-    lines = (report.directory / "outputs.jsonl").read_text().splitlines()
+    lines = (report.directory / "outputs.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == len(SUITE) and all(json.loads(l)["input_ref"].startswith("sha256:") for l in lines)
-    assert len((report.directory / "calls.jsonl").read_text().splitlines()) == len(report.calls)
+    assert len((report.directory / "calls.jsonl").read_text(encoding="utf-8").splitlines()) == len(report.calls)
     assert report.summary["safety"]["tools_executed"] == 0
 
 

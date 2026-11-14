@@ -52,7 +52,7 @@ async def test_agent_task_writes_and_reads_a_real_file_through_the_sandbox(make_
     # actually exist on disk, under this principal's own derived root.
     expected_root = tmp_path / "sandboxes" / "users" / str(alice.user_id) / "private" / "notes"
     on_disk = expected_root / "hello.txt"
-    assert on_disk.read_text() == "real-sandbox-e2e"
+    assert on_disk.read_text(encoding="utf-8") == "real-sandbox-e2e"
 
 
 async def test_agent_task_cannot_read_another_users_real_sandbox(make_harness, tmp_path):

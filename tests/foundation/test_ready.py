@@ -134,5 +134,5 @@ def test_a_remote_primary_without_an_allow_list_does_not_start():
 def test_the_entrypoint_checks_the_preconditions_before_building_the_app():
     from pathlib import Path
 
-    source = (Path(__file__).resolve().parents[2] / "server" / "composition" / "main.py").read_text()
+    source = (Path(__file__).resolve().parents[2] / "server" / "composition" / "main.py").read_text(encoding="utf-8")
     assert "check_deployment(load_config())" in source

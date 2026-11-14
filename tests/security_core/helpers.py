@@ -59,7 +59,7 @@ def code_only(path) -> str:
     import tokenize
     from pathlib import Path
 
-    source = Path(path).read_text()
+    source = Path(path).read_text(encoding="utf-8")
     out: list[str] = []
     try:
         tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))

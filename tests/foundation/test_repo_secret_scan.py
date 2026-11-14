@@ -86,7 +86,7 @@ def test_the_scan_catches_a_planted_key(tmp_path):
         "e.py": 'X = "sk-proj-TESTONLY' + "q" * 24 + '"  # a fixture\n',
     }
     for name, text in planted.items():
-        (tmp_path / name).write_text(text)
+        (tmp_path / name).write_text(text, encoding="utf-8", newline="\n")
     hits = findings(sorted(planted), root=tmp_path)
     assert {h.split(": ")[1] for h in hits} == {"openai_style_key", "google_api_key", "private_key_block",
                                                  "groq_api_key"}

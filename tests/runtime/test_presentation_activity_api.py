@@ -142,7 +142,7 @@ def test_nothing_outside_the_presentation_package_reads_the_report():
     readers = {
         path for path in (ROOT / "server").rglob("*.py")
         if path not in allowed
-        and any(word in path.read_text() for word in
+        and any(word in path.read_text(encoding="utf-8") for word in
                 ("ActivityPresentation", "presentation.activity", "score_activity", "ActivityPolicy"))
     }
     assert readers == set()

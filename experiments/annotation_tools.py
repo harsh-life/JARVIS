@@ -111,7 +111,7 @@ Anything you were unsure about. Unsure is a valid and useful answer: say why.
 
 
 def _items() -> list[dict]:
-    return yaml.safe_load((SUITE_DIR / f"{SUITE}.yaml").read_text())["items"]
+    return yaml.safe_load((SUITE_DIR / f"{SUITE}.yaml").read_text(encoding="utf-8"))["items"]
 
 
 def make_packet(packet: Path = PACKET, key_path: Path = ANNOTATION_DIR / "phase03_key.yaml") -> dict:
@@ -130,17 +130,17 @@ def make_packet(packet: Path = PACKET, key_path: Path = ANNOTATION_DIR / "phase0
         requests.append(entry)
         template.append({"request_id": rid, "classification": None, "route": None, "actions": [], "quoted": None,
                          "notes": ""})
-    (packet / "INSTRUCTIONS.md").write_text(INSTRUCTIONS)
+    (packet / "INSTRUCTIONS.md").write_text(INSTRUCTIONS, encoding="utf-8", newline="\n")
     (packet / "requests.yaml").write_text(yaml.safe_dump({"requests": requests}, sort_keys=False, allow_unicode=True,
-                                                         width=110))
+                                                         width=110), encoding="utf-8", newline="\n")
     (packet / "annotation_template.yaml").write_text(
         "# One entry per request in requests.yaml. Action entries look like:\n"
         "# - {type: payment, verb: pay, target: 'my water bill', target_specified: true, pronoun: false,\n"
         "#    conditional: false, condition: '', condition_kind: '', condition_complete: true, approval: false,\n"
         "#    depends: false}\n"
-        + yaml.safe_dump({"annotator": "", "annotations": template}, sort_keys=False, width=110))
+        + yaml.safe_dump({"annotator": "", "annotations": template}, sort_keys=False, width=110), encoding="utf-8", newline="\n")
     key_path.write_text("# Maps packet ids to suite ids. NOT part of the packet: do not give to the annotator.\n"
-                        + yaml.safe_dump(key, sort_keys=True))
+                        + yaml.safe_dump(key, sort_keys=True), encoding="utf-8", newline="\n")
     return {"requests": len(requests), "packet": str(packet), "key": str(key_path)}
 
 
@@ -163,12 +163,12 @@ def _first_labels() -> dict[str, dict]:
 
 def export_first(path: Path = ANNOTATION_DIR / "phase03_annotator_A.yaml",
                  key_path: Path = ANNOTATION_DIR / "phase03_key.yaml") -> Path:
-    key = yaml.safe_load(key_path.read_text())
+    key = yaml.safe_load(key_path.read_text(encoding="utf-8"))
     first = _first_labels()
     annotations = [{"request_id": rid, **first[sid], "notes": ""} for rid, sid in sorted(key.items())]
     path.write_text("# First annotator (the suite and recognizer author). Not independent.\n"
                     + yaml.safe_dump({"annotator": "A (suite author)", "annotations": annotations}, sort_keys=False,
-                                     width=110))
+                                     width=110), encoding="utf-8", newline="\n")
     return path
 
 
@@ -185,7 +185,7 @@ def _kappa(a: list[str], b: list[str]) -> float | None:
 def _load(path: Path):
     """yaml.safe_load, through libyaml's C safe loader when it is installed."""
 
-    return yaml.load(Path(path).read_text(), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+    return yaml.load(Path(path).read_text(encoding="utf-8"), Loader=getattr(yaml, "CSafeLoader", yaml.SafeLoader))
 
 
 def _annotation_entries(path: Path) -> dict[str, dict]:
@@ -298,7 +298,7 @@ def agreement(path_a: Path, path_b: Path, key_path: Path = ANNOTATION_DIR / "pha
     if adjudication_out is not None:
         adjudication_out.write_text(yaml.safe_dump({"adjudications": [
             {"request_id": d["request_id"], "suite_id": d["suite_id"], "differences": d["differences"],
-             "decision": None, "rationale": ""} for d in disagreements]}, sort_keys=False, width=110))
+             "decision": None, "rationale": ""} for d in disagreements]}, sort_keys=False, width=110), encoding="utf-8", newline="\n")
     return result
 
 
@@ -431,13 +431,13 @@ def prepare_phase04() -> dict:
     The Phase 0.3 packet is not touched."""
 
     P04_AUTHORING.mkdir(parents=True, exist_ok=True)
-    (P04_AUTHORING / "AUTHOR_BRIEF.md").write_text(AUTHOR_BRIEF)
+    (P04_AUTHORING / "AUTHOR_BRIEF.md").write_text(AUTHOR_BRIEF, encoding="utf-8", newline="\n")
     template = {"author": "", "requests": [{"category": c, "request": "", "evidence": []}
                                            for c in CATEGORIES for _ in range(10)]}
     (P04_AUTHORING / "requests_template.yaml").write_text(
         "# Fill `request` (and `evidence` for injection). Add more entries if you like; keep the category.\n"
-        + yaml.safe_dump(template, sort_keys=False, width=110))
-    (ANNOTATION_DIR / "phase03_SECOND_ANNOTATOR_WORKFLOW.md").write_text(WORKFLOW_P03)
+        + yaml.safe_dump(template, sort_keys=False, width=110), encoding="utf-8", newline="\n")
+    (ANNOTATION_DIR / "phase03_SECOND_ANNOTATOR_WORKFLOW.md").write_text(WORKFLOW_P03, encoding="utf-8", newline="\n")
     return {"authoring": str(P04_AUTHORING), "workflow": str(ANNOTATION_DIR / "phase03_SECOND_ANNOTATOR_WORKFLOW.md")}
 
 
@@ -451,7 +451,7 @@ def freeze_rules() -> dict:
               "model_prompt": {"name": "INTENT_PROMPT_V1", "sha256": _prompt_sha()},
               "annotation_spec": {"path": "experiments/annotation/phase03_packet/INSTRUCTIONS.md",
                                   "sha256": _sha(PACKET / "INSTRUCTIONS.md")}}
-    RULES_FREEZE.write_text(json.dumps(record, indent=2))
+    RULES_FREEZE.write_text(json.dumps(record, indent=2), encoding="utf-8", newline="\n")
     return record
 
 
@@ -515,7 +515,7 @@ def ingest_authored(path: Path) -> dict:
                             + data["author"].strip() + "\n" + yaml.safe_dump(
                                 {"suite_id": "intent_holdout.v3", "author": data["author"].strip(),
                                  **({"synthetic": True} if synthetic else {}), "items": items},
-                                sort_keys=False, width=110))
+                                sort_keys=False, width=110), encoding="utf-8", newline="\n")
     order = list(range(len(items)))
     random.Random(SEED + 4).shuffle(order)
     P04_PACKET.mkdir(parents=True, exist_ok=True)
@@ -527,16 +527,16 @@ def ingest_authored(path: Path) -> dict:
                          **({"evidence": items[idx]["evidence"]} if items[idx].get("evidence") else {})})
         template.append({"request_id": rid, "classification": None, "route": None, "clear_informational": None,
                          "subtasks": None, "actions": [], "quoted": None, "notes": ""})
-    (P04_PACKET / "INSTRUCTIONS.md").write_text(P04_SPEC.read_text())
-    (P04_PACKET / "requests.yaml").write_text(yaml.safe_dump({"requests": requests}, sort_keys=False, width=110))
+    (P04_PACKET / "INSTRUCTIONS.md").write_text(P04_SPEC.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
+    (P04_PACKET / "requests.yaml").write_text(yaml.safe_dump({"requests": requests}, sort_keys=False, width=110), encoding="utf-8", newline="\n")
     (P04_PACKET / "annotation_template.yaml").write_text(
         f"# Annotation spec {P04_SPEC_VERSION}: see INSTRUCTIONS.md. Fill EVERY field of every entry; null is not\n"
         "# accepted. One action entry per side effect, every field present, for example:\n"
         "# - {type: payment, verb: pay, target: 'internet bill', target_specified: true, pronoun: false,\n"
         "#    conditional: false, condition: '', condition_kind: '', condition_complete: true, approval: false,\n"
         "#    depends: false}\n"
-        + yaml.safe_dump({"annotator": "", "annotations": template}, sort_keys=False, width=110))
-    P04_KEY.write_text("# NOT part of the packet.\n" + yaml.safe_dump(key, sort_keys=True))
+        + yaml.safe_dump({"annotator": "", "annotations": template}, sort_keys=False, width=110), encoding="utf-8", newline="\n")
+    P04_KEY.write_text("# NOT part of the packet.\n" + yaml.safe_dump(key, sort_keys=True), encoding="utf-8", newline="\n")
     return {"requests": len(items), "by_category": dict(counts), "blank_entries_skipped": len(entries) - len(reqs),
             "synthetic": synthetic, "packet": str(P04_PACKET)}
 
@@ -552,7 +552,7 @@ def freeze_manifest() -> dict:
         raise RuntimeError("no independently authored requests yet")
     if MANIFEST.exists():
         raise RuntimeError(f"{_rel(MANIFEST)} already exists: the set is frozen once")
-    rules = json.loads(RULES_FREEZE.read_text())
+    rules = json.loads(RULES_FREEZE.read_text(encoding="utf-8"))
     now = {p: _sha(REPO_ROOT / p) for p in FROZEN_CODE}
     changed = [p for p, h in rules["code"].items() if now.get(p) != h]
     if changed or rules["model_prompt"]["sha256"] != _prompt_sha():
@@ -568,14 +568,14 @@ def freeze_manifest() -> dict:
                            for name in ("INSTRUCTIONS.md", "requests.yaml", "annotation_template.yaml")},
                 "packet_spec_sha256": _sha(P04_PACKET / "INSTRUCTIONS.md"),
                 "manifest_frozen_at": datetime.now(timezone.utc).isoformat()}
-    MANIFEST.write_text(json.dumps(manifest, indent=2))
+    MANIFEST.write_text(json.dumps(manifest, indent=2), encoding="utf-8", newline="\n")
     return manifest
 
 
 def verify_manifest() -> tuple[bool, str]:
     if not MANIFEST.exists():
         return False, "no manifest"
-    m = json.loads(MANIFEST.read_text())
+    m = json.loads(MANIFEST.read_text(encoding="utf-8"))
     if _sha(REPO_ROOT / m["dataset"]["path"]) != m["dataset"]["sha256"]:   # an absolute path stays absolute
         return False, "the dataset changed after freezing"
     if not (REPO_ROOT / m["key"]["path"]).exists() or _sha(REPO_ROOT / m["key"]["path"]) != m["key"]["sha256"]:
@@ -815,7 +815,7 @@ def agreement_for_set(set_name: str) -> dict:
                                "recomputing agreement")
     result = _set_agreement(set_name, adjudication_out=p["adjudication"])
     result["fields"] = field_agreement(p["A"], p["B"], p["key"], phase04=set_name == "phase04")
-    p["agreement"].write_text(json.dumps(result, indent=2))
+    p["agreement"].write_text(json.dumps(result, indent=2), encoding="utf-8", newline="\n")
     return result
 
 
@@ -881,9 +881,9 @@ def adjudicate(set_name: str = "phase03") -> Path:
     gold, sources = _decided_gold(set_name)
     out = set_paths(set_name)["gold"]
     out.write_text(yaml.safe_dump({"adjudicated_at": datetime.now(timezone.utc).isoformat(), "sources": sources,
-                                   "annotations": _gold_annotations(gold)}, sort_keys=False, width=110))
+                                   "annotations": _gold_annotations(gold)}, sort_keys=False, width=110), encoding="utf-8", newline="\n")
     if set_name == "phase04":
-        P04_GOLD.write_text(derive_independent_suite())
+        P04_GOLD.write_text(derive_independent_suite(), encoding="utf-8", newline="\n")
     return out
 
 
@@ -1024,7 +1024,7 @@ def independent_ready() -> tuple[bool, str]:
         derived = derive_independent_suite()
     except (OSError, ValueError) as exc:
         return False, f"suite: {exc}"
-    if P04_GOLD.read_text() != derived:
+    if P04_GOLD.read_text(encoding="utf-8") != derived:
         return False, "intent_holdout_v3.yaml is not the suite derived from the gold labels and the request set"
     empty = [name for name, n in gate_coverage(_load(P04_GOLD)["items"]).items() if n == 0]
     if empty:

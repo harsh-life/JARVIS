@@ -115,7 +115,7 @@ class Suite(BaseModel):
 
 def load_suite(suite_id: str = "synthetic.v1") -> Suite:
     path = SUITE_DIR / f"{suite_id.replace('.', '_')}.yaml"
-    suite = Suite.model_validate(yaml.safe_load(path.read_text()))
+    suite = Suite.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
     ids = [t.id for t in suite.tasks]
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate task ids")

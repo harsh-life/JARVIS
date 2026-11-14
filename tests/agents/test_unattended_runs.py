@@ -496,7 +496,7 @@ async def test_an_interrupted_unattended_run_is_closed_when_the_loop_starts(h):
 def test_the_scheduler_has_no_path_to_an_unattended_run():
     import pathlib
     for path in pathlib.Path("server/scheduler").glob("*.py"):
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "server.agents" not in text and "agent_triggers" not in text and "DelegatedPrincipal" not in text
 
 

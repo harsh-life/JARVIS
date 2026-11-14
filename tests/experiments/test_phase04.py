@@ -266,10 +266,10 @@ def _authored(n_per=10, dup=None):
 def test_ingestion_refuses_short_or_duplicated_sets(tool_paths):
     at, tmp = tool_paths
     f = tmp / "authored.yaml"
-    f.write_text(yaml.safe_dump(_authored(n_per=9)))
+    f.write_text(yaml.safe_dump(_authored(n_per=9)), encoding="utf-8", newline="\n")
     with pytest.raises(ValueError, match="at least 10"):
         at.ingest_authored(f)
-    f.write_text(yaml.safe_dump(_authored(dup="Turn it off.")))
+    f.write_text(yaml.safe_dump(_authored(dup="Turn it off.")), encoding="utf-8", newline="\n")
     with pytest.raises(ValueError, match="duplicating"):
         at.ingest_authored(f)
 
@@ -277,19 +277,19 @@ def test_ingestion_refuses_short_or_duplicated_sets(tool_paths):
 def test_ingestion_builds_a_blind_packet_and_the_manifest_detects_later_rule_changes(tool_paths, monkeypatch):
     at, tmp = tool_paths
     f = tmp / "authored.yaml"
-    f.write_text(yaml.safe_dump(_authored()))
+    f.write_text(yaml.safe_dump(_authored()), encoding="utf-8", newline="\n")
     info = at.ingest_authored(f)
     assert info["requests"] == 140
-    text = (tmp / "packet" / "requests.yaml").read_text()
+    text = (tmp / "packet" / "requests.yaml").read_text(encoding="utf-8")
     assert "category" not in text and "p4-" not in text and "classification" not in text
     fake = tmp / "rule.py"
-    fake.write_text("x = 1\n")
+    fake.write_text("x = 1\n", encoding="utf-8", newline="\n")
     monkeypatch.setattr(at, "FROZEN_CODE", (str(fake.relative_to(at.REPO_ROOT)) if fake.is_relative_to(at.REPO_ROOT)
                                             else "experiments/rules_v3.py",))
     at.freeze_rules()
     m = at.freeze_manifest()
     assert m["dataset"]["sha256"] and at.verify_manifest() == (True, "ok")
-    (tmp / "intent_holdout_v3_requests.yaml").write_text("tampered\n")
+    (tmp / "intent_holdout_v3_requests.yaml").write_text("tampered\n", encoding="utf-8", newline="\n")
     assert at.verify_manifest()[0] is False
 
 
@@ -298,7 +298,7 @@ def test_adjudication_refuses_undecided_disagreements(tmp_path, monkeypatch):
 
     monkeypatch.setattr(at, "ANNOTATION_DIR", tmp_path)
     (tmp_path / "x_adjudication.yaml").write_text(yaml.safe_dump({"adjudications": [
-        {"request_id": "R001", "decision": None}]}))
+        {"request_id": "R001", "decision": None}]}), encoding="utf-8", newline="\n")
     with pytest.raises(RuntimeError, match="undecided"):
         at.adjudicate("x")
 

@@ -157,7 +157,7 @@ def render() -> str:
 def main(argv: list[str]) -> int:
     command = argv[0] if argv else "check"
     if command == "export":
-        PATH.write_text(render(), encoding="ascii")
+        PATH.write_text(render(), encoding="ascii", newline="\n")
         print(f"wrote {PATH} ({len(cases())} cases)")
         return 0
     ok = PATH.exists() and PATH.read_text(encoding="ascii") == render()

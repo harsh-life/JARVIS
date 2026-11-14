@@ -90,8 +90,8 @@ async def test_the_decision_records_do_not_claim_isolation():
     record OD-A1 as an *accepted residual*, never as isolation."""
 
     for path in ("docs/CAPABILITY_MATRIX.md", "docs/DECISION_REGISTER.md"):
-        text = Path(path).read_text().lower()
+        text = Path(path).read_text(encoding="utf-8").lower()
         for false_claim in ("fully isolated", "isolation is proven", "od-a1 is solved", "rce-proof"):
             assert false_claim not in text, (path, false_claim)
-    register = Path("docs/DECISION_REGISTER.md").read_text()
+    register = Path("docs/DECISION_REGISTER.md").read_text(encoding="utf-8")
     assert "RESOLVED FOR PILOT — ACCEPTED RESIDUAL" in register

@@ -484,7 +484,7 @@ class BrowserRuns:
         live = self.live.get(run_id)
         if live is None or live.agent_id != agent_id:
             raise ContainerError("no such run")
-        (live.scratch_dir / "task.json").write_text(task_document(task_input, live.hosts, max_steps=live.max_steps))
+        (live.scratch_dir / "task.json").write_text(task_document(task_input, live.hosts, max_steps=live.max_steps), encoding="utf-8", newline="\n")
         return await self.engine.start(ContainerSpec(
             run_id=run_id, agent_id=agent_id, image=self._image, socket_dir=str(live.socket_dir),
             scratch_dir=str(live.scratch_dir), env=dict(env)))

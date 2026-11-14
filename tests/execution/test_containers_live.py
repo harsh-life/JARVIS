@@ -157,7 +157,7 @@ async def test_the_runtime_reaches_only_its_sockets_and_the_proxy_decides(tmp_pa
     proxy, the allowed host is reachable and nothing else is."""
 
     sockets, scratch = _workspace(tmp_path)
-    (scratch / "probe.py").write_text(PROBE)
+    (scratch / "probe.py").write_text(PROBE, encoding="utf-8", newline="\n")
 
     async def connect(ip, port):
         reader, writer = await asyncio.open_connection("127.0.0.1", echo_server)
@@ -171,7 +171,7 @@ async def test_the_runtime_reaches_only_its_sockets_and_the_proxy_decides(tmp_pa
     finally:
         await proxy.stop()
     assert code == 0
-    out = json.loads((scratch / "probe.json").read_text())
+    out = json.loads((scratch / "probe.json").read_text(encoding="utf-8"))
     assert all(not result.startswith("CONNECTED") for result in out["direct"].values()), out["direct"]
     assert out["dns"] != "RESOLVED"
     assert set(out["interfaces"]) <= {"lo"}
@@ -184,10 +184,10 @@ async def test_the_runtime_is_unprivileged_and_confined_to_its_scratch(tmp_path)
     sockets, scratch = _workspace(tmp_path)
     (scratch / "probe.py").write_text(PROBE.replace('out["proxy_allowed"] = via_proxy("advisories.example.org")\n'
                                                     'out["proxy_denied"] = via_proxy("evil.example.com")\n'
-                                                    'out["proxy_metadata"] = via_proxy("169.254.169.254")\n', ""))
+                                                    'out["proxy_metadata"] = via_proxy("169.254.169.254")\n', ""), encoding="utf-8", newline="\n")
     code = await _run(_engine(), _spec(sockets, scratch, uuid.uuid4(), "python3", "/scratch/probe.py"))
     assert code == 0
-    out = json.loads((scratch / "probe.json").read_text())
+    out = json.loads((scratch / "probe.json").read_text(encoding="utf-8"))
     assert out["uid"] != 0
     assert out["capeff"] == "0000000000000000"
     assert out["nonewprivs"] == "1"
@@ -208,7 +208,7 @@ async def test_no_provider_key_or_server_secret_reaches_the_container(tmp_path, 
     monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
     sockets, scratch = _workspace(tmp_path)
     (scratch / "probe.py").write_text(
-        "import os, json; json.dump({'environ': open('/proc/self/environ').read()}, open('/scratch/env.json','w'))")
+        "import os, json; json.dump({'environ': open('/proc/self/environ').read()}, open('/scratch/env.json','w'))", encoding="utf-8", newline="\n")
     engine = _engine()
     run_id = uuid.uuid4()
     name = await engine.start(_spec(sockets, scratch, run_id, "python3", "/scratch/probe.py"))
@@ -217,7 +217,7 @@ async def test_no_provider_key_or_server_secret_reaches_the_container(tmp_path, 
         inspect = subprocess.run([shutil.which("podman"), "inspect", name], capture_output=True, text=True).stdout
     finally:
         await engine.stop(name)
-    leaked_anywhere = inspect + "".join(p.read_text(errors="replace") for p in scratch.rglob("*") if p.is_file())
+    leaked_anywhere = inspect + "".join(p.read_text(errors="replace", encoding="utf-8") for p in scratch.rglob("*") if p.is_file())
     for secret in (key, kek, "proxy.invalid", "OPENAI_API_KEY", "HYPERMIND_KEK"):
         assert secret not in leaked_anywhere, secret
 

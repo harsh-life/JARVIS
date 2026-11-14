@@ -49,9 +49,14 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         )
 
     try:
-        raw_text = resolved.read_text()
+        # Always UTF-8, never the platform's locale encoding: the same file must
+        # load identically on every host (a Windows default of cp1252 would
+        # mis-decode or reject a non-ASCII value that Linux reads correctly).
+        raw_text = resolved.read_text(encoding="utf-8")
     except OSError as exc:
         raise ConfigError(f"could not read config file {resolved}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise ConfigError(f"config file {resolved} is not valid UTF-8: {exc.reason} at byte {exc.start}") from None
 
     try:
         raw = yaml.safe_load(raw_text)

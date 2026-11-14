@@ -26,8 +26,8 @@ from shared.schemas.presentation import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-VECTORS = json.loads((ROOT / "shared/android/presentation_activity_policy_vectors.json").read_text())
-SAMPLES = json.loads((ROOT / "shared/android/presentation_activity_samples.json").read_text())
+VECTORS = json.loads((ROOT / "shared/android/presentation_activity_policy_vectors.json").read_text(encoding="utf-8"))
+SAMPLES = json.loads((ROOT / "shared/android/presentation_activity_samples.json").read_text(encoding="utf-8"))
 DEFAULTS_FILE = ROOT / "assets/character/presentation.json"
 BASE_SCORES = {"happy": 1, "satisfied": 1, "default": 5, "sleepy": 1, "surprised": 1, "angry": 1, "sad": 1}
 COMPONENTS = dict.fromkeys(
@@ -170,7 +170,7 @@ def test_next_change_at_names_the_staleness_and_the_surprise_hold():
 
 
 def test_the_shipped_default_settings_are_the_built_in_defaults():
-    assert CharacterPresentationSettings.model_validate_json(DEFAULTS_FILE.read_text()) == (
+    assert CharacterPresentationSettings.model_validate_json(DEFAULTS_FILE.read_text(encoding="utf-8")) == (
         CharacterPresentationSettings()
     )
 

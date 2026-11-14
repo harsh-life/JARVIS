@@ -20,7 +20,7 @@ from experiments.tasks import SUITE_DIR, load_suite
 
 
 def corpus(name: str = "claim_screen_v1") -> list[dict]:
-    return yaml.safe_load((SUITE_DIR / f"{name}.yaml").read_text())["items"]
+    return yaml.safe_load((SUITE_DIR / f"{name}.yaml").read_text(encoding="utf-8"))["items"]
 
 
 def _context() -> str:
@@ -64,7 +64,7 @@ def evaluate(items: list[dict] | None = None) -> dict:
 def main(out: Path | None = None) -> dict:
     result = evaluate()
     if out is not None:
-        out.write_text(json.dumps(result, indent=2))
+        out.write_text(json.dumps(result, indent=2), encoding="utf-8", newline="\n")
     return result
 
 

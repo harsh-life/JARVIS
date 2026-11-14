@@ -1550,7 +1550,7 @@ MUTANTS: tuple[Mutant, ...] = (
 
 
 def anchor_count(mutant: Mutant) -> int:
-    return (ROOT / mutant.path).read_text().count(mutant.old)
+    return (ROOT / mutant.path).read_text(encoding="utf-8").count(mutant.old)
 
 
 def _verdict(mutant: Mutant, done: subprocess.CompletedProcess) -> str:
@@ -1578,7 +1578,7 @@ def run(mutant: Mutant) -> tuple[str, float]:
         return "ANCHOR MISSING", 0.0
     started = time.monotonic()
     try:
-        path.write_text(text.replace(mutant.old, mutant.new, 1))
+        path.write_text(text.replace(mutant.old, mutant.new, 1), encoding="utf-8", newline="\n")
         env = {**os.environ, "HYPERMIND_REQUIRE_MEMORY_STACK": os.environ.get("HYPERMIND_REQUIRE_MEMORY_STACK", "1")}
         done = subprocess.run(list(mutant.command), cwd=ROOT / mutant.cwd, capture_output=True, text=True,
                               env=env, timeout=1800)

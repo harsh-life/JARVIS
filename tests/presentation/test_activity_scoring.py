@@ -351,7 +351,7 @@ async def test_measurement_issues_exactly_one_query_and_no_historical_lookup():
 
 
 def test_the_scorer_has_no_lookback_beyond_the_window():
-    source = (ROOT / "server/presentation/activity.py").read_text()
+    source = (ROOT / "server/presentation/activity.py").read_text(encoding="utf-8")
     assert "LOOKBACK" not in source and "func." not in source and "hours=" not in source
     assert source.count("session.execute(") == 1
 
@@ -368,7 +368,7 @@ def test_the_scorer_sees_operational_fields_only():
 
 
 def test_the_scorer_selects_only_operational_columns_and_writes_nothing():
-    source = (ROOT / "server/presentation/activity.py").read_text()
+    source = (ROOT / "server/presentation/activity.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     columns = {
         node.attr for node in ast.walk(tree)
@@ -385,7 +385,7 @@ def test_the_scorer_imports_nothing_that_decides_or_acts():
     """Mirrors the import-linter contract "The activity scorer reads task rows
     and nothing else (OD-CHAR-4)"."""
 
-    tree = ast.parse((ROOT / "server/presentation/activity.py").read_text())
+    tree = ast.parse((ROOT / "server/presentation/activity.py").read_text(encoding="utf-8"))
     modules = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
     servers = {m for m in modules if m and m.startswith("server.")}
     assert servers == {"server.storage.models"}

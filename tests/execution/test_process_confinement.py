@@ -55,7 +55,7 @@ async def _python(ex, code: str, cwd) -> tuple[int, str]:
 async def test_another_users_sandbox_file_is_unreadable(tmp_path):
     other = tmp_path / "sandboxes" / "users" / "user-b" / "private" / "notes"
     other.mkdir(parents=True)
-    (other / "diary.txt").write_text("user B's private text")
+    (other / "diary.txt").write_text("user B's private text", encoding="utf-8", newline="\n")
     workdir = tmp_path / "sandboxes" / "tasks" / "task-a" / "tmp"
     workdir.mkdir(parents=True)
 
@@ -108,7 +108,7 @@ async def test_a_file_the_process_wrote_cannot_be_executed(tmp_path):
     binary/script and run it to get past the allow-list."""
 
     script = tmp_path / "payload.sh"
-    script.write_text("#!/bin/sh\necho ran\n")
+    script.write_text("#!/bin/sh\necho ran\n", encoding="utf-8", newline="\n")
     script.chmod(script.stat().st_mode | stat.S_IXUSR)
     result = await confined().run(["sh", "-c", "./payload.sh"], cwd=str(tmp_path))
     assert "ran" not in result.content
@@ -227,9 +227,9 @@ async def test_a_path_override_cannot_swap_the_allow_listed_binary(mode, tmp_pat
     decoy_dir = tmp_path / "decoy"
     decoy_dir.mkdir()
     decoy = decoy_dir / "cat"
-    decoy.write_text("#!/bin/sh\necho DECOY\n")
+    decoy.write_text("#!/bin/sh\necho DECOY\n", encoding="utf-8", newline="\n")
     decoy.chmod(0o755)
-    (tmp_path / "f.txt").write_text("genuine")
+    (tmp_path / "f.txt").write_text("genuine", encoding="utf-8", newline="\n")
 
     ex = (DisposableHostExecutor(allowed_executables=["cat"]) if mode == "break_glass"
           else ConstrainedProcessExecutor(allowed_executables=["cat"]))

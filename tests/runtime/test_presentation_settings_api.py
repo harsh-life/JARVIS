@@ -85,7 +85,7 @@ def test_nothing_outside_the_store_reads_the_settings():
     readers = {
         path for path in (ROOT / "server").rglob("*.py")
         if path not in allowed
-        and ("PresentationSettingsRow" in path.read_text() or "presentation_settings" in path.read_text())
+        and ("PresentationSettingsRow" in path.read_text(encoding="utf-8") or "presentation_settings" in path.read_text(encoding="utf-8"))
         and "migrations" not in path.parts
     }
     assert readers == set()

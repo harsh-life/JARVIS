@@ -24,12 +24,12 @@ class SnapshotInvalid(Exception):
 
 
 def load_snapshot(path: Path) -> ExperimentSnapshot:
-    return ExperimentSnapshot.model_validate_json(path.read_text())
+    return ExperimentSnapshot.model_validate_json(path.read_text(encoding="utf-8"))
 
 
 def make_snapshot(document_path: Path, config_path: Path, *, profile_id: str = "local") -> ExperimentSnapshot:
     config = load_config(config_path)
-    document = IntelligenceProfileDocument.model_validate(json.loads(document_path.read_text()))
+    document = IntelligenceProfileDocument.model_validate(json.loads(document_path.read_text(encoding="utf-8")))
     issues = validate_profile(document, config)
     errors = [i for i in issues if i.severity == "error"]
     if errors:

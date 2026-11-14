@@ -17,7 +17,7 @@ SPEC = REPO / "experiments" / "annotation" / "phase04_annotation_spec_v2.md"
 
 
 def _text() -> str:
-    return HANDOFF.read_text()
+    return HANDOFF.read_text(encoding="utf-8")
 
 
 def _commands() -> list[list[str]]:
@@ -67,7 +67,7 @@ def test_every_required_annotation_field_is_explained():
         assert f"`{f}`" in text, f
     for f in ACTION_FIELDS:
         assert f"`actions[].{f}`" in text, f
-    spec = SPEC.read_text()
+    spec = SPEC.read_text(encoding="utf-8")
     for f in (ENTRY_FIELDS - {"request_id"}) | set(P04_ITEM_FIELDS) | ACTION_FIELDS:
         assert re.search(rf"(\*\*{f}\*\*|^## \d+\. {f}\b)", spec, re.M), f     # defined in the spec too
 

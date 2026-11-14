@@ -54,8 +54,8 @@ async def test_reindex_indexes_the_committed_tree_and_records_its_commit(vault_i
 
 
 async def test_uncommitted_edits_never_reach_the_index(vault_index, vault_repo, tmp_path):
-    (vault_repo / "product" / "units.md").write_text("# Units\n\nUNREVIEWED-EDIT miles only.\n")
-    (vault_repo / "product" / "draft.md").write_text("# Draft\n\nUNREVIEWED-NEW-FILE content.\n")
+    (vault_repo / "product" / "units.md").write_text("# Units\n\nUNREVIEWED-EDIT miles only.\n", encoding="utf-8", newline="\n")
+    (vault_repo / "product" / "draft.md").write_text("# Draft\n\nUNREVIEWED-NEW-FILE content.\n", encoding="utf-8", newline="\n")
     report = reindex(vault_index, repo=vault_repo, chunk_chars=1200)
     assert report.chunks_embedded == 0
     everything = await chunks(vault_index, "units draft miles unreviewed", top_k=10)
@@ -114,7 +114,7 @@ async def test_a_directory_that_is_not_a_git_repository_is_refused(tmp_path):
     require_memory_stack()
     plain = tmp_path / "not_git"
     plain.mkdir()
-    (plain / "a.md").write_text("# A\n\ncontent")
+    (plain / "a.md").write_text("# A\n\ncontent", encoding="utf-8", newline="\n")
     index = open_vault_index(vault_section(tmp_path, plain))
     with pytest.raises(VaultIngestError):
         reindex(index, repo=plain, chunk_chars=1200)
@@ -265,9 +265,9 @@ def test_the_operator_reindex_and_status_commands(tmp_path, vault_repo, capsys):
         "embedder_cache": str(EMBEDDER_CACHE),
     }, memory={"mem0": {"path": str(tmp_path / "cli_mem")}})
     path = tmp_path / "config.yaml"
-    path.write_text(yaml.safe_dump(config.model_dump(mode="json")))
+    path.write_text(yaml.safe_dump(config.model_dump(mode="json")), encoding="utf-8", newline="\n")
     assert main(["reindex", "--config", str(path)]) == 0
     assert f"indexed commit {head_commit(vault_repo)}" in capsys.readouterr().out
     assert main(["status", "--config", str(path)]) == 0
     assert "(current)" in capsys.readouterr().out
-    AppConfig.model_validate(yaml.safe_load(path.read_text()))
+    AppConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))

@@ -376,6 +376,6 @@ def test_deterministic_recognition_does_not_regress():
 
 
 def test_the_screening_limitation_is_documented_where_it_applies():
-    assert "not a truthfulness guarantee" in (REPO / "experiments" / "routing.py").read_text()
-    doc = (REPO / "docs" / "31_INTELLIGENCE_EXPERIMENTS.md").read_text()
+    assert "not a truthfulness guarantee" in (REPO / "experiments" / "routing.py").read_text(encoding="utf-8")
+    doc = (REPO / "docs" / "31_INTELLIGENCE_EXPERIMENTS.md").read_text(encoding="utf-8")
     assert "## 10. Phase 0.2" in doc and "not a truthfulness guarantee" in doc.split("## 10. Phase 0.2")[1]

@@ -152,7 +152,7 @@ class FakeRuntime:
         (Path(spec.scratch_dir) / "result.json").write_bytes(raw)
 
     async def well_behaved(self, spec) -> int:
-        task = json.loads((Path(spec.scratch_dir) / "task.json").read_text())
+        task = json.loads((Path(spec.scratch_dir) / "task.json").read_text(encoding="utf-8"))
         answer = await self.model_call(spec)
         final = answer.json()["choices"][0]["message"]["content"] if answer.status_code == 200 else None
         self.write_result(spec, {"status": "completed" if final else "failed", "final": final,
@@ -311,7 +311,7 @@ async def test_a_granted_run_starts_its_container_with_only_what_the_spec_allows
     raw = json.dumps(spec.env) + spec.socket_dir + spec.scratch_dir
     for identity in (str(alice.user_id), str(alice.device_id), alice.token, alice.credential):
         assert identity not in raw
-    task = json.loads((Path(spec.scratch_dir) / "task.json").read_text())
+    task = json.loads((Path(spec.scratch_dir) / "task.json").read_text(encoding="utf-8"))
     assert task["hosts"] == [HOST] and task["max_steps"] >= 1
     row = await _wait_finished(h, run_id)
     assert row.status == "completed"

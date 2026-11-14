@@ -21,7 +21,7 @@ def main(argv: list[str]) -> int:
     command = argv[0] if argv else "check"
     if command == "export":
         MAPPING_ARTIFACT_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MAPPING_ARTIFACT_PATH.write_text(export_mapping(), encoding="ascii")
+        MAPPING_ARTIFACT_PATH.write_text(export_mapping(), encoding="ascii", newline="\n")
         print(f"wrote {MAPPING_ARTIFACT_PATH} ({MAPPING_VERSION})")
         return 0
     if command == "check":

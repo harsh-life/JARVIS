@@ -697,11 +697,11 @@ async def test_the_listener_serves_only_on_its_owner_only_unix_socket(make_harne
 
 async def test_the_listener_refuses_to_replace_a_file_that_is_not_its_socket(make_harness, tmp_path) -> None:
     path = tmp_path / "not-a-socket"
-    path.write_text("keep me")
+    path.write_text("keep me", encoding="utf-8", newline="\n")
     h = await make_harness(config=_gateway_on(listen=f"unix:{path}"), agent_tools=True)
     with pytest.raises(RuntimeError, match="not a socket"):
         await h.app.state.model_gateway_listener.start()
-    assert path.read_text() == "keep me"
+    assert path.read_text(encoding="utf-8") == "keep me"
 
 
 # ── an unattended run (docs/29 §15) ─────────────────────────────────────────

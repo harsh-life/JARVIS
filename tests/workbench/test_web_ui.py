@@ -21,19 +21,19 @@ def test_the_client_exists_and_is_plain_files():
 
 
 def test_no_inline_script_or_style_and_no_other_origin():
-    html = (WEB_ROOT / "index.html").read_text()
+    html = (WEB_ROOT / "index.html").read_text(encoding="utf-8")
     for tag in re.findall(r"<script\b[^>]*>(.*?)</script>", html, flags=re.S):
         assert tag.strip() == "", "inline script"
     assert "<style" not in html and " style=" not in html
     assert not re.search(r"\son[a-z]+=", html), "inline event handler"
     for path in FILES:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert not re.search(r"https?://", text), f"{path.name} references another origin"
 
 
 def test_no_token_persistence_no_string_markup_no_eval():
     for path in JS:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         for forbidden in ("localStorage", "sessionStorage", "document.cookie", "indexedDB", "innerHTML",
                           "outerHTML", "insertAdjacentHTML", "eval(", "new Function", "setAttribute(\"style\""):
             assert forbidden not in text, f"{path.name} uses {forbidden}"
@@ -43,7 +43,7 @@ def test_no_authorization_logic_in_the_client():
     # The page renders what the server says; it never decides a tier, a
     # capability or whether something is allowed.
     for path in JS:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         for forbidden in ("risk_tier", "low_read", "consequential", "grant", "capabilit" + "y_id"):
             assert forbidden not in text, f"{path.name} mentions {forbidden}"
 

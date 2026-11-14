@@ -43,14 +43,14 @@ def test_missing_config_file_fails_closed(tmp_path: Path) -> None:
 
 def test_malformed_yaml_fails_closed(tmp_path: Path) -> None:
     bad = tmp_path / "config.yaml"
-    bad.write_text("server: [this is not: valid: yaml")
+    bad.write_text("server: [this is not: valid: yaml", encoding="utf-8", newline="\n")
     with pytest.raises(ConfigError):
         load_config(bad)
 
 
 def test_minimal_valid_config_loads(tmp_path: Path) -> None:
     cfg_file = tmp_path / "config.yaml"
-    cfg_file.write_text(MINIMAL_VALID_YAML)
+    cfg_file.write_text(MINIMAL_VALID_YAML, encoding="utf-8", newline="\n")
     cfg = load_config(cfg_file)
     assert cfg.intelligence.enabled is False  # INTEL-003 default
     assert cfg.memory.mem0.collection != cfg.vault.collection
@@ -65,7 +65,7 @@ def test_the_supported_database_urls_load(tmp_path: Path, url: str) -> None:
     """H-1: PostgreSQL (the pilot's runtime store) and SQLite (development)."""
 
     cfg_file = tmp_path / "config.yaml"
-    cfg_file.write_text(MINIMAL_VALID_YAML + f'database_url: "{url}"\n')
+    cfg_file.write_text(MINIMAL_VALID_YAML + f'database_url: "{url}"\n', encoding="utf-8", newline="\n")
     assert load_config(cfg_file).database_url == url
 
 
@@ -82,7 +82,7 @@ def test_an_unsupported_or_credential_bearing_database_url_fails_closed(tmp_path
     rather than at the first request. The refusal never echoes the value."""
 
     cfg_file = tmp_path / "config.yaml"
-    cfg_file.write_text(MINIMAL_VALID_YAML + f'database_url: "{url}"\n')
+    cfg_file.write_text(MINIMAL_VALID_YAML + f'database_url: "{url}"\n', encoding="utf-8", newline="\n")
     with pytest.raises(ConfigError) as refused:
         load_config(cfg_file)
     assert "TESTONLYpw" not in str(refused.value)
@@ -101,7 +101,7 @@ def test_literal_secret_rejected_at_load(tmp_path: Path) -> None:
               model: "gpt-4"
               secret_ref: "NOT-A-SECRET-REF-literal-value-for-CFG-T6-do-not-use"
             """
-        )
+        ), encoding="utf-8", newline="\n"
     )
     with pytest.raises(ConfigError) as refused:
         load_config(cfg_file)
@@ -126,7 +126,7 @@ def test_mem0_and_vault_same_collection_rejected(tmp_path: Path) -> None:
             vault:
               collection: "same_name"
             """
-        )
+        ), encoding="utf-8", newline="\n"
     )
     with pytest.raises(ConfigError):
         load_config(cfg_file)
@@ -137,7 +137,7 @@ def test_intelligence_defaults_disabled(tmp_path: Path) -> None:
     false when omitted entirely."""
 
     cfg_file = tmp_path / "config.yaml"
-    cfg_file.write_text(MINIMAL_VALID_YAML)
+    cfg_file.write_text(MINIMAL_VALID_YAML, encoding="utf-8", newline="\n")
     cfg = load_config(cfg_file)
     assert cfg.intelligence.enabled is False
 
@@ -147,7 +147,7 @@ def test_no_secret_literal_in_repo_config_templates() -> None:
     secret — every credential-shaped field is a secret_ref or absent."""
 
     example = Path(__file__).parents[2] / "config.example.yaml"
-    text = example.read_text()
+    text = example.read_text(encoding="utf-8")
     # Every non-comment, non-empty line assigning *_ref/kek_source must use
     # the env:/secretstore: convention if present at all.
     for line in text.splitlines():

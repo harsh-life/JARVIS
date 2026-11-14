@@ -54,7 +54,7 @@ EXPECTED_MAPPING = {
 
 
 def _profile() -> CharacterProfile:
-    return CharacterProfile.model_validate_json((DEFAULT_DIR / "profile.json").read_text())
+    return CharacterProfile.model_validate_json((DEFAULT_DIR / "profile.json").read_text(encoding="utf-8"))
 
 
 def _image_header(data: bytes) -> tuple[str, int, int, bool]:
@@ -236,7 +236,7 @@ def test_no_authority_package_imports_the_presentation_contract():
     offenders = []
     for package in AUTHORITY_PACKAGES:
         for path in (ROOT / "server" / package).rglob("*.py"):
-            for node in ast.walk(ast.parse(path.read_text(), str(path))):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"), str(path))):
                 names = []
                 if isinstance(node, ast.Import):
                     names = [a.name for a in node.names]
@@ -248,5 +248,5 @@ def test_no_authority_package_imports_the_presentation_contract():
 
 
 def test_the_data_contracts_package_does_not_pull_in_the_presentation_module():
-    init = (ROOT / "shared" / "schemas" / "__init__.py").read_text()
+    init = (ROOT / "shared" / "schemas" / "__init__.py").read_text(encoding="utf-8")
     assert "presentation" not in init

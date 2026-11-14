@@ -86,7 +86,7 @@ async def test_br_t2_execution_dimensions(tmp_path, capsys, monkeypatch):
 
     # ── 13. B's file by opening it directly in-process ───────────────────────
     try:
-        direct = b_path.read_text()
+        direct = b_path.read_text(encoding="utf-8")
     except OSError:
         direct = ""
     rows.append(Row("read B's sandbox file by opening its path in-process", "app-RCE",

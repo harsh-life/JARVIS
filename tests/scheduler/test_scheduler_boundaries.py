@@ -43,7 +43,7 @@ def _lint(config: Path, cwd: Path) -> subprocess.CompletedProcess:
 
 def _imports(path: Path) -> set[str]:
     names: set[str] = set()
-    for node in ast.walk(ast.parse(path.read_text())):
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Import):
             names.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
@@ -66,7 +66,7 @@ def test_the_scheduler_never_names_the_runtime_or_an_operation():
     forbidden = {"submit", "run_tool", "run", "send", "build_operation", "confirm", "issue", "grant",
                  "create_grant", "authorize", "execute", "activate"}
     for path in sorted(SCHEDULER.glob("*.py")):
-        for node in ast.walk(ast.parse(path.read_text())):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Call):
                 func = node.func
                 name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
@@ -82,7 +82,7 @@ def test_every_scheduler_contract_is_declared_and_kept():
     flat = re.sub(r"\s+", " ", result.stdout)
     for name in CONTRACTS:
         assert re.search(re.escape(name) + r" KEPT", flat), name
-    contracts = tomllib.loads((REPO / "pyproject.toml").read_text())["tool"]["importlinter"]["contracts"]
+    contracts = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["importlinter"]["contracts"]
     superuser = next(c for c in contracts if c["name"] == CONTRACTS[2])
     assert "server.scheduler" in superuser["source_modules"]
 
@@ -98,14 +98,14 @@ def _fixture_project(tmp_path: Path, violation: tuple[str, str]) -> Path:
     ]
     for pkg in packages:
         (root / pkg).mkdir(parents=True, exist_ok=True)
-        (root / pkg / "__init__.py").write_text("")
+        (root / pkg / "__init__.py").write_text("", encoding="utf-8", newline="\n")
     for name in ("store", "kek", "crypto", "requester", "audit_port"):
-        (root / f"server/secrets/{name}.py").write_text("")
-    (root / "server/security/audit.py").write_text("import server.secrets.audit_port\n")
+        (root / f"server/secrets/{name}.py").write_text("", encoding="utf-8", newline="\n")
+    (root / "server/security/audit.py").write_text("import server.secrets.audit_port\n", encoding="utf-8", newline="\n")
     source, target = violation
-    (root / source).write_text(f"import {target}\n")
+    (root / source).write_text(f"import {target}\n", encoding="utf-8", newline="\n")
 
-    contracts = tomllib.loads((REPO / "pyproject.toml").read_text())["tool"]["importlinter"]["contracts"]
+    contracts = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["importlinter"]["contracts"]
     chosen = [c for c in contracts if c["name"] in CONTRACTS[:2]]
     lines = ["[tool.importlinter]", 'root_packages = ["server", "shared"]', "include_external_packages = true", ""]
     for contract in chosen:
@@ -113,7 +113,7 @@ def _fixture_project(tmp_path: Path, violation: tuple[str, str]) -> Path:
         for key, value in contract.items():
             lines.append(f"{key} = {value!r}".replace("'", '"').replace("True", "true").replace("False", "false"))
         lines.append("")
-    (root / "fixture.toml").write_text("\n".join(lines))
+    (root / "fixture.toml").write_text("\n".join(lines), encoding="utf-8", newline="\n")
     return root
 
 

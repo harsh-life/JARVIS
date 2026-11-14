@@ -25,7 +25,7 @@ from shared.schemas.presentation import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-VECTORS = json.loads((ROOT / "shared" / "android" / "presentation_intensity_vectors.json").read_text())
+VECTORS = json.loads((ROOT / "shared" / "android" / "presentation_intensity_vectors.json").read_text(encoding="utf-8"))
 DEFAULTS_FILE = ROOT / "assets" / "character" / "presentation.json"
 
 
@@ -102,7 +102,7 @@ def test_the_intensity_block_is_optional_and_validated_whole():
 
 
 def test_the_shipped_settings_carry_the_intensity_defaults():
-    shipped = json.loads(DEFAULTS_FILE.read_text())
+    shipped = json.loads(DEFAULTS_FILE.read_text(encoding="utf-8"))
     assert shipped["intensity"] == CharacterPresentationSettings().model_dump(mode="json")["intensity"]
     assert shipped["schema_version"] == 1
 

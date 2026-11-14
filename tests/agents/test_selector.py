@@ -82,18 +82,18 @@ def test_an_unhealthy_runtime_is_never_selected():
 def test_a_runtime_below_the_templates_isolation_is_never_selected(tmp_path):
     """M-AG4: `min_isolation` is a hard filter."""
 
-    text = (TEMPLATE_DIR / "research_digest.yaml").read_text().replace(
+    text = (TEMPLATE_DIR / "research_digest.yaml").read_text(encoding="utf-8").replace(
         "min_isolation: in_process", "min_isolation: container_netns")
-    (tmp_path / "research_digest.yaml").write_text(text)
+    (tmp_path / "research_digest.yaml").write_text(text, encoding="utf-8", newline="\n")
     reg = registries(enabled_templates=("research_digest",), template_dir=tmp_path)
     result = select(inp(reg))
     assert result.kind == "rejected" and "no_runtime" in result.reason_codes
 
 
 def test_a_template_needing_missing_infrastructure_is_filtered(tmp_path):
-    text = (TEMPLATE_DIR / "research_digest.yaml").read_text().replace(
+    text = (TEMPLATE_DIR / "research_digest.yaml").read_text(encoding="utf-8").replace(
         "required_infrastructure: [none]", "required_infrastructure: [container]")
-    (tmp_path / "research_digest.yaml").write_text(text)
+    (tmp_path / "research_digest.yaml").write_text(text, encoding="utf-8", newline="\n")
     reg = registries(enabled_templates=("research_digest",), template_dir=tmp_path)
     result = select(inp(reg))
     assert result.kind != "selected"
@@ -137,13 +137,13 @@ def test_zero_candidates_offers_the_closest_templates():
 
 
 def _write_twin_templates(tmp_path: Path) -> None:
-    base = (TEMPLATE_DIR / "research_digest.yaml").read_text()
-    (tmp_path / "digest_a.yaml").write_text(base.replace("template_id: research_digest", "template_id: digest_a"))
+    base = (TEMPLATE_DIR / "research_digest.yaml").read_text(encoding="utf-8")
+    (tmp_path / "digest_a.yaml").write_text(base.replace("template_id: research_digest", "template_id: digest_a"), encoding="utf-8", newline="\n")
     (tmp_path / "digest_b.yaml").write_text(
         base.replace("template_id: research_digest", "template_id: digest_b")
         .replace("abilities: [read_web_allowlisted, read_user_memory, read_vault]",
                  "abilities: [read_web_allowlisted, read_agent_notebook, write_agent_notebook]")
-        .replace("notebook: none", "notebook: read_write")
+        .replace("notebook: none", "notebook: read_write"), encoding="utf-8", newline="\n"
     )
 
 

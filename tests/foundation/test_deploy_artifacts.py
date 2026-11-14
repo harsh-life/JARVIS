@@ -76,7 +76,7 @@ def test_the_pilot_store_is_postgres_with_no_password(pilot):
 
 
 def test_the_pilot_config_holds_references_not_secrets():
-    raw = yaml.safe_load(PILOT.read_text())
+    raw = yaml.safe_load(PILOT.read_text(encoding="utf-8"))
     assert raw["agent"]["secret_ref"].startswith("env:")
     assert raw["secrets"]["kek_source"] == "env:HYPERMIND_KEK"
 
@@ -99,7 +99,7 @@ def _directives(text: str) -> list[tuple[str, str]]:
 
 
 def test_the_unit_runs_unprivileged_owner_only_and_restarts():
-    directives = _directives((DEPLOY / "jarvis.service").read_text())
+    directives = _directives((DEPLOY / "jarvis.service").read_text(encoding="utf-8"))
     values = dict(directives)
     assert values["User"] == values["Group"] == "jarvis"
     assert values["UMask"] == "0077"
@@ -111,7 +111,7 @@ def test_the_unit_runs_unprivileged_owner_only_and_restarts():
 
 
 def test_the_unit_holds_no_secret_and_takes_the_kek_as_a_credential():
-    text = (DEPLOY / "jarvis.service").read_text()
+    text = (DEPLOY / "jarvis.service").read_text(encoding="utf-8")
     directives = _directives(text)
     credentials = [v for k, v in directives if k == "LoadCredential"]
     assert "kek:/etc/jarvis/credentials/kek" in credentials
@@ -122,7 +122,7 @@ def test_the_unit_holds_no_secret_and_takes_the_kek_as_a_credential():
 
 
 def test_the_start_script_binds_loopback_and_logs_no_request_lines():
-    text = (DEPLOY / "jarvis-start.sh").read_text()
+    text = (DEPLOY / "jarvis-start.sh").read_text(encoding="utf-8")
     assert '"$CREDENTIALS_DIRECTORY/kek"' in text
     assert "--host 127.0.0.1" in text
     assert "--forwarded-allow-ips=127.0.0.1" in text
@@ -140,7 +140,7 @@ def test_the_scripts_parse(shell, script):
 # ── F2: the bootstrap never replaces what exists ───────────────────────────
 
 def test_the_bootstrap_creates_the_kek_and_config_only_when_absent():
-    text = (DEPLOY / "bootstrap.sh").read_text()
+    text = (DEPLOY / "bootstrap.sh").read_text(encoding="utf-8")
     assert 'if [ ! -s "$CRED_DIR/kek" ]; then' in text
     assert 'if [ ! -f "$CONFIG" ]; then' in text
     assert 'if [ "$WITH_SUPERUSER" -eq 1 ] && [ ! -s "$CRED_DIR/superuser_token" ]; then' in text
@@ -149,7 +149,7 @@ def test_the_bootstrap_creates_the_kek_and_config_only_when_absent():
 
 
 def test_the_bootstrap_never_puts_the_kek_on_a_command_line():
-    for line in (DEPLOY / "bootstrap.sh").read_text().splitlines():
+    for line in (DEPLOY / "bootstrap.sh").read_text(encoding="utf-8").splitlines():
         if "as_jarvis" in line and "KEK" in line:
             assert "export HYPERMIND_KEK" in line, line
 
@@ -157,7 +157,7 @@ def test_the_bootstrap_never_puts_the_kek_on_a_command_line():
 # ── F5: the proxies expose exactly the server's public surface ─────────────
 
 def _caddy_paths() -> set[str]:
-    match = re.search(r"@jarvis path (.+)", (DEPLOY / "Caddyfile").read_text())
+    match = re.search(r"@jarvis path (.+)", (DEPLOY / "Caddyfile").read_text(encoding="utf-8"))
     assert match
     return set(match.group(1).split())
 
@@ -167,7 +167,7 @@ def _caddy_admits(path: str, patterns: set[str]) -> bool:
 
 
 def _tunnel_regex() -> re.Pattern[str]:
-    ingress = yaml.safe_load((DEPLOY / "cloudflared.example.yml").read_text())["ingress"]
+    ingress = yaml.safe_load((DEPLOY / "cloudflared.example.yml").read_text(encoding="utf-8"))["ingress"]
     assert ingress[-1] == {"service": "http_status:404"}
     return re.compile(ingress[0]["path"])
 
@@ -198,7 +198,7 @@ def test_nothing_else_is_forwarded(path):
 
 
 def test_caddy_throttles_the_unauthenticated_endpoints_and_strips_query_strings():
-    text = (DEPLOY / "Caddyfile").read_text()
+    text = (DEPLOY / "Caddyfile").read_text(encoding="utf-8")
     assert "@unauthenticated path /api/v1/auth/* /api/v1/sessions/token" in text
     assert "rate_limit @unauthenticated" in text
     assert "reverse_proxy 127.0.0.1:8000" in text

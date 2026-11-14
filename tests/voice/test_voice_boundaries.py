@@ -36,7 +36,7 @@ def test_every_voice_contract_is_declared_and_kept():
     flat = re.sub(r"\s+", " ", result.stdout)
     for name in CONTRACTS:
         assert re.search(re.escape(name) + r" KEPT", flat), name
-    contracts = tomllib.loads((REPO / "pyproject.toml").read_text())["tool"]["importlinter"]["contracts"]
+    contracts = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["importlinter"]["contracts"]
     superuser = next(c for c in contracts if c["name"].startswith("Only the gateway reaches superuser authority"))
     assert "server.voice" in superuser["source_modules"]
 
@@ -52,14 +52,14 @@ def _fixture_project(tmp_path: Path, violation: tuple[str, str]) -> Path:
     ]
     for pkg in packages:
         (root / pkg).mkdir(parents=True, exist_ok=True)
-        (root / pkg / "__init__.py").write_text("")
+        (root / pkg / "__init__.py").write_text("", encoding="utf-8", newline="\n")
     for name in ("store", "kek", "crypto", "requester", "audit_port"):
-        (root / f"server/secrets/{name}.py").write_text("")
-    (root / "server/security/audit.py").write_text("import server.secrets.audit_port\n")
+        (root / f"server/secrets/{name}.py").write_text("", encoding="utf-8", newline="\n")
+    (root / "server/security/audit.py").write_text("import server.secrets.audit_port\n", encoding="utf-8", newline="\n")
     source, target = violation
-    (root / source).write_text(f"import {target}\n")
+    (root / source).write_text(f"import {target}\n", encoding="utf-8", newline="\n")
 
-    contracts = tomllib.loads((REPO / "pyproject.toml").read_text())["tool"]["importlinter"]["contracts"]
+    contracts = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["importlinter"]["contracts"]
     chosen = [c for c in contracts if c["name"] in CONTRACTS]
     lines = ["[tool.importlinter]", 'root_packages = ["server", "shared"]', "include_external_packages = true", ""]
     for contract in chosen:
@@ -67,7 +67,7 @@ def _fixture_project(tmp_path: Path, violation: tuple[str, str]) -> Path:
         for key, value in contract.items():
             lines.append(f"{key} = {value!r}".replace("'", '"').replace("True", "true").replace("False", "false"))
         lines.append("")
-    (root / "fixture.toml").write_text("\n".join(lines))
+    (root / "fixture.toml").write_text("\n".join(lines), encoding="utf-8", newline="\n")
     return root
 
 

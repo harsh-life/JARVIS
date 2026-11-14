@@ -74,10 +74,10 @@ class TraceWriter:
         return self.scanner.redact(json.dumps(value, ensure_ascii=False, default=str))
 
     def write_json(self, name: str, value) -> None:
-        (self.dir / name).write_text(self.scanner.redact(json.dumps(value, ensure_ascii=False, indent=2, default=str)))
+        (self.dir / name).write_text(self.scanner.redact(json.dumps(value, ensure_ascii=False, indent=2, default=str)), encoding="utf-8", newline="\n")
 
     def append(self, name: str, value) -> None:
-        with (self.dir / name).open("a") as fh:
+        with (self.dir / name).open("a", encoding="utf-8", newline="\n") as fh:
             fh.write(self._dump(value) + "\n")
 
 

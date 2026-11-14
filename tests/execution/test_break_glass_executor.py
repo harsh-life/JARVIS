@@ -105,7 +105,7 @@ async def test_the_config_file_template_is_still_valid():
     import yaml
     from pathlib import Path
 
-    payload = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.example.yaml").read_text())
+    payload = yaml.safe_load((Path(__file__).resolve().parents[2] / "config.example.yaml").read_text(encoding="utf-8"))
     assert AppConfig.model_validate(payload).execution.process.break_glass.enabled is False
 
 
@@ -158,7 +158,7 @@ async def test_a_live_record_runs_its_executable_unconfined(no_landlock, tmp_pat
     reg = registry()
     record = live(reg, superuser)
     outside = tmp_path / "outside.txt"
-    outside.write_text("outside")
+    outside.write_text("outside", encoding="utf-8", newline="\n")
     workdir = tmp_path / "work"
     workdir.mkdir()
 
@@ -211,9 +211,9 @@ async def test_the_break_glass_list_does_not_widen_the_normal_allow_list(tmp_pat
 async def test_a_bare_break_glass_name_is_execd_by_its_resolved_path(no_landlock, tmp_path, superuser):
     decoy_dir = tmp_path / "decoy"
     decoy_dir.mkdir()
-    (decoy_dir / "cat").write_text("#!/bin/sh\necho DECOY\n")
+    (decoy_dir / "cat").write_text("#!/bin/sh\necho DECOY\n", encoding="utf-8", newline="\n")
     (decoy_dir / "cat").chmod(0o755)
-    (tmp_path / "f.txt").write_text("genuine")
+    (tmp_path / "f.txt").write_text("genuine", encoding="utf-8", newline="\n")
     reg = registry()
     live(reg, superuser, max_invocations=2)
 
@@ -306,10 +306,10 @@ async def test_cancellation_kills_the_unconfined_process_group(no_landlock, tmp_
     running = asyncio.ensure_future(run(executor(reg), ["sh", "-c", f"sleep 30 & echo $! > {pidfile}; wait"],
                                         tmp_path, timeout=10))
     for _ in range(100):
-        if pidfile.exists() and pidfile.read_text().strip():
+        if pidfile.exists() and pidfile.read_text(encoding="utf-8").strip():
             break
         await asyncio.sleep(0.05)
-    grandchild = int(pidfile.read_text())
+    grandchild = int(pidfile.read_text(encoding="utf-8"))
     running.cancel()
     with pytest.raises(asyncio.CancelledError):
         await running
@@ -335,7 +335,7 @@ async def test_a_run_that_never_starts_is_still_recorded(no_landlock, tmp_path, 
 @pytest.mark.skipif(not confinement.available(), reason="needs Landlock to tell the two paths apart")
 async def test_on_a_landlock_host_the_record_is_what_removes_confinement(tmp_path, superuser):
     outside = tmp_path / "outside.txt"
-    outside.write_text("outside")
+    outside.write_text("outside", encoding="utf-8", newline="\n")
     workdir = tmp_path / "work"
     workdir.mkdir()
     reg = registry()

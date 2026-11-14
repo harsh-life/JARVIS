@@ -138,11 +138,11 @@ def test_templates_live_in_the_repository_with_a_review_checklist():
 
 
 def _write(dirpath: Path, name: str, text: str) -> None:
-    (dirpath / f"{name}.yaml").write_text(text)
+    (dirpath / f"{name}.yaml").write_text(text, encoding="utf-8", newline="\n")
 
 
 def _copy_template(tmp_path: Path, name: str, **replace: str) -> Path:
-    text = (TEMPLATE_DIR / f"{name}.yaml").read_text()
+    text = (TEMPLATE_DIR / f"{name}.yaml").read_text(encoding="utf-8")
     for old, new in replace.items():
         assert old in text, old
         text = text.replace(old, new)

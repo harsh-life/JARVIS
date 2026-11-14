@@ -288,11 +288,11 @@ def test_agent_t33_a_tampered_spec_no_longer_verifies():
 
 
 def _bumped(tmp_path, *, widen: bool):
-    text = (TEMPLATE_DIR / "research_digest.yaml").read_text().replace("version: 1", "version: 2")
+    text = (TEMPLATE_DIR / "research_digest.yaml").read_text(encoding="utf-8").replace("version: 1", "version: 2")
     if widen:
         text = text.replace("abilities: [read_web_allowlisted, read_user_memory, read_vault]",
                             "abilities: [read_web_allowlisted, read_user_memory, read_vault, invoke_model_tool]")
-    (tmp_path / "research_digest.yaml").write_text(text)
+    (tmp_path / "research_digest.yaml").write_text(text, encoding="utf-8", newline="\n")
     return registries(enabled_templates=("research_digest",), template_dir=tmp_path)
 
 

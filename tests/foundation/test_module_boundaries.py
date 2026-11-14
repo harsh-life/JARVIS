@@ -63,8 +63,8 @@ def test_import_linter_detects_a_deliberate_violation(tmp_path: Path) -> None:
     project = tmp_path / "boundary_fixture"
     (project / "foo").mkdir(parents=True)
     (project / "bar").mkdir(parents=True)
-    (project / "foo" / "__init__.py").write_text("from bar import something\n")
-    (project / "bar" / "__init__.py").write_text("something = 1\n")
+    (project / "foo" / "__init__.py").write_text("from bar import something\n", encoding="utf-8", newline="\n")
+    (project / "bar" / "__init__.py").write_text("something = 1\n", encoding="utf-8", newline="\n")
 
     config = project / "fixture_importlinter.toml"
     config.write_text(
@@ -79,7 +79,7 @@ def test_import_linter_detects_a_deliberate_violation(tmp_path: Path) -> None:
             source_modules = ["foo"]
             forbidden_modules = ["bar"]
             """
-        )
+        ), encoding="utf-8", newline="\n"
     )
 
     result = subprocess.run(

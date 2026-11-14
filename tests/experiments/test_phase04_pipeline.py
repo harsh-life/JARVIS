@@ -95,8 +95,8 @@ def _label(category: str) -> dict:
 
 
 def _key_categories(at) -> dict[str, str]:
-    key = yaml.safe_load(at.P04_KEY.read_text())
-    cats = {it["id"]: it["category"] for it in yaml.safe_load(at.P04_REQUESTS.read_text())["items"]}
+    key = yaml.safe_load(at.P04_KEY.read_text(encoding="utf-8"))
+    cats = {it["id"]: it["category"] for it in yaml.safe_load(at.P04_REQUESTS.read_text(encoding="utf-8"))["items"]}
     return {q: cats[sid] for q, sid in key.items()}
 
 
@@ -127,7 +127,7 @@ def _annotation_B(at, A: dict) -> tuple[dict, dict]:
 
 
 def _write(path: Path, data: dict) -> None:
-    path.write_text(yaml.safe_dump(data, sort_keys=False, width=110))
+    path.write_text(yaml.safe_dump(data, sort_keys=False, width=110), encoding="utf-8", newline="\n")
 
 
 def _ingest_and_freeze(at, tmp):
@@ -150,7 +150,7 @@ def _decide(at, expected) -> dict:
     """Decide every disagreement: A for one, B for another, a corrected entry for the third."""
 
     p = at.set_paths("phase04")
-    adj = yaml.safe_load(p["adjudication"].read_text())
+    adj = yaml.safe_load(p["adjudication"].read_text(encoding="utf-8"))
     corrected = {"classification": "action", "route": "action_status", "clear_informational": False, "subtasks": 0,
                  "quoted": False, "actions": [_act(verb="pay off", target="zebra ledger")], "notes": "adjudicated"}
     choice = {expected["classification"]: "A", expected["target"]: "B", expected["verb"]: corrected}
@@ -179,7 +179,7 @@ def test_phase03_agreement_is_unchanged(tmp_path):
     import experiments.annotation_tools as at
 
     A_path = at.ANNOTATION_DIR / "phase03_annotator_A.yaml"
-    B = yaml.safe_load(A_path.read_text())
+    B = yaml.safe_load(A_path.read_text(encoding="utf-8"))
     anns = B["annotations"]
     anns[0]["classification"], anns[0]["route"] = "ambiguous", "clarify"
     anns[5]["quoted"] = not anns[5]["quoted"]
@@ -218,7 +218,7 @@ def test_phase04_agreement_uses_the_phase04_key_and_request_categories(p04):
         assert d["suite_id"].startswith("p4-") and d["category"] == cats[rid]
     assert "actions" in found[expected["target"]]["differences"]     # a target-words difference is surfaced
     assert set(r["agreement_by_category"]) == set(at.CATEGORIES)
-    adj = yaml.safe_load(at.set_paths("phase04")["adjudication"].read_text())["adjudications"]
+    adj = yaml.safe_load(at.set_paths("phase04")["adjudication"].read_text(encoding="utf-8"))["adjudications"]
     assert {d["request_id"] for d in adj} == set(found) and all(d["decision"] is None for d in adj)
 
 
@@ -246,7 +246,7 @@ def test_unknown_and_duplicate_ids_are_rejected(p04):
         at.agreement_for_set("phase04")
     with pytest.raises(ValueError, match="not in the key"):
         at.agreement(p["A"], p["B"], p["key"], categories={s: "direct" for s in yaml.safe_load(
-            p["key"].read_text()).values()})
+            p["key"].read_text(encoding="utf-8")).values()})
 
     dup = copy.deepcopy(A)
     dup["annotations"].append(copy.deepcopy(dup["annotations"][3]))
@@ -254,7 +254,7 @@ def test_unknown_and_duplicate_ids_are_rejected(p04):
     assert any("duplicate request ids" in x for x in at.validate_annotation(p["A"], p["key"]))
     with pytest.raises(ValueError, match="duplicate request ids"):
         at.agreement(p["A"], p["B"], p["key"], categories={s: "direct" for s in yaml.safe_load(
-            p["key"].read_text()).values()})
+            p["key"].read_text(encoding="utf-8")).values()})
 
     missing = copy.deepcopy(A)
     missing["annotations"] = missing["annotations"][1:]
@@ -274,14 +274,14 @@ def test_missing_categories_are_rejected(p04):
 
     _write(f, _authored())
     at.ingest_authored(f)
-    raw = yaml.safe_load(at.P04_REQUESTS.read_text())
+    raw = yaml.safe_load(at.P04_REQUESTS.read_text(encoding="utf-8"))
     del raw["items"][4]["category"]
     _write(at.P04_REQUESTS, raw)
     with pytest.raises(ValueError, match="p4-005: category None is missing or unknown"):
         at._phase04_index()
     with pytest.raises(ValueError, match="missing or unknown"):
         at.freeze_manifest()
-    key = yaml.safe_load(at.P04_KEY.read_text())
+    key = yaml.safe_load(at.P04_KEY.read_text(encoding="utf-8"))
     _write(at.set_paths("phase04")["A"], _annotation_A_from(key))
     with pytest.raises(ValueError, match="no request or category"):
         at.agreement(at.set_paths("phase04")["A"], at.set_paths("phase04")["A"], at.P04_KEY,
@@ -316,7 +316,7 @@ def test_unresolved_disagreements_block_adjudication(p04):
         at.adjudicate("phase04")
     assert not p["gold"].exists() and not at.P04_GOLD.exists()
 
-    adj = yaml.safe_load(p["adjudication"].read_text())
+    adj = yaml.safe_load(p["adjudication"].read_text(encoding="utf-8"))
     for d in adj["adjudications"]:
         d["decision"] = "C"
     _write(p["adjudication"], adj)
@@ -350,18 +350,18 @@ def test_adjudication_generates_a_valid_suite_whose_labels_match_the_gold_exactl
 
     at, tmp = p04
     A, B, expected, choice = _full_chain(at, tmp)
-    gold = {e["request_id"]: e for e in yaml.safe_load(at.set_paths("phase04")["gold"].read_text())["annotations"]}
+    gold = {e["request_id"]: e for e in yaml.safe_load(at.set_paths("phase04")["gold"].read_text(encoding="utf-8"))["annotations"]}
     A_by, B_by = ({e["request_id"]: e for e in x["annotations"]} for x in (A, B))
     assert gold[expected["classification"]] == A_by[expected["classification"]]
     assert gold[expected["target"]] == B_by[expected["target"]]
     assert gold[expected["verb"]] == {"request_id": expected["verb"], **choice[expected["verb"]]}
     assert gold[expected["case_only"]] == A_by[expected["case_only"]]
 
-    text = at.P04_GOLD.read_text()
+    text = at.P04_GOLD.read_text(encoding="utf-8")
     assert text == at.derive_independent_suite()             # deterministic
     suite = yaml.safe_load(text)
-    requests = yaml.safe_load(at.P04_REQUESTS.read_text())["items"]
-    key = yaml.safe_load(at.P04_KEY.read_text())
+    requests = yaml.safe_load(at.P04_REQUESTS.read_text(encoding="utf-8"))["items"]
+    key = yaml.safe_load(at.P04_KEY.read_text(encoding="utf-8"))
     by_request = {sid: q for q, sid in key.items()}
     assert [it["id"] for it in suite["items"]] == [r["id"] for r in requests]      # stable ids, same order
     for it, req in zip(suite["items"], requests):
@@ -400,7 +400,7 @@ def test_model_or_recognizer_output_cannot_enter_the_gold(p04):
     assert any("unexpected field 'recognizer_target'" in x for x in problems)
     _write(p["A"], A)
     at.agreement_for_set("phase04")
-    adj = yaml.safe_load(p["adjudication"].read_text())
+    adj = yaml.safe_load(p["adjudication"].read_text(encoding="utf-8"))
     for d in adj["adjudications"]:
         d["decision"] = {**_label("direct"), "model_route": "answer"}
     _write(p["adjudication"], adj)
@@ -412,7 +412,7 @@ def test_model_or_recognizer_output_cannot_enter_the_gold(p04):
 
 
 def _append(path: Path, text: str = "\n# edited\n") -> None:
-    path.write_text(path.read_text() + text)
+    path.write_text(path.read_text(encoding="utf-8") + text, encoding="utf-8", newline="\n")
 
 
 @pytest.mark.parametrize("tamper, reason", [
@@ -436,15 +436,15 @@ def test_dataset_and_request_mismatches_are_rejected(p04, tamper, reason):
     elif tamper == "packet":
         _append(at.P04_PACKET / "requests.yaml")
     elif tamper == "annotator":
-        A = yaml.safe_load(p["A"].read_text())
+        A = yaml.safe_load(p["A"].read_text(encoding="utf-8"))
         A["annotations"][0]["notes"] = "edited after adjudication"
         _write(p["A"], A)
     elif tamper == "gold":
-        g = yaml.safe_load(p["gold"].read_text())
+        g = yaml.safe_load(p["gold"].read_text(encoding="utf-8"))
         g["annotations"][0]["route"] = "clarify" if g["annotations"][0]["route"] != "clarify" else "answer"
         _write(p["gold"], g)
     elif tamper == "suite":
-        s = yaml.safe_load(at.P04_GOLD.read_text())
+        s = yaml.safe_load(at.P04_GOLD.read_text(encoding="utf-8"))
         s["items"][0]["ref"]["route"] = "clarify" if s["items"][0]["ref"]["route"] != "clarify" else "answer"
         _write(at.P04_GOLD, s)
     else:
@@ -466,7 +466,7 @@ def test_the_author_and_annotators_must_be_three_different_people(p04):
     at, tmp = p04
     _full_chain(at, tmp)
     p = at.set_paths("phase04")
-    B = yaml.safe_load(p["B"].read_text())
+    B = yaml.safe_load(p["B"].read_text(encoding="utf-8"))
     B["annotator"] = "Synthetic Annotator A (test)"
     _write(p["B"], B)
     at.adjudicate("phase04")    # the files changed, so the gold is rebuilt; readiness then checks the people
@@ -554,13 +554,13 @@ def test_the_phase04_spec_is_versioned_and_its_hash_pinned(p04):
     assert hashlib.sha256(at.P04_SPEC.read_bytes()).hexdigest() == at.P04_SPEC_SHA256 == \
         "a08cc8ea59ac6292443aa4c86152d70bbb36901fd70628fe8e7ed252670341c4"
     # the Phase 0.3 spec (v1) is a different, unchanged file, and the rules freeze still records it
-    rules = __import__("json").loads(at.RULES_FREEZE.read_text())
+    rules = __import__("json").loads(at.RULES_FREEZE.read_text(encoding="utf-8"))
     assert rules["annotation_spec"]["sha256"] == "edf3c392f8298efedd727c0030ea539fb87357909e6082019f01d9cc0c75a37d"
     _ingest_and_freeze(at, tmp)
     assert (at.P04_PACKET / "INSTRUCTIONS.md").read_bytes() == at.P04_SPEC.read_bytes()
-    template = yaml.safe_load((at.P04_PACKET / "annotation_template.yaml").read_text())["annotations"][0]
+    template = yaml.safe_load((at.P04_PACKET / "annotation_template.yaml").read_text(encoding="utf-8"))["annotations"][0]
     assert {"clear_informational", "subtasks"} <= set(template) and template["subtasks"] is None
-    m = __import__("json").loads(at.MANIFEST.read_text())
+    m = __import__("json").loads(at.MANIFEST.read_text(encoding="utf-8"))
     assert m["annotation_spec_phase04"] == {"version": "v2", "path": at._rel(at.P04_SPEC),
                                             "sha256": at.P04_SPEC_SHA256}
 
@@ -685,7 +685,7 @@ def test_readiness_refuses_gold_that_cannot_measure_a_gate(p04):
     _write(p["B"], B)
     at.agreement_for_set("phase04")
     at.adjudicate("phase04")                  # no disagreements: nothing to decide
-    cov = at.gate_coverage(yaml.safe_load(at.P04_GOLD.read_text())["items"])
+    cov = at.gate_coverage(yaml.safe_load(at.P04_GOLD.read_text(encoding="utf-8"))["items"])
     assert cov["gate 6: clear informational requests"] == 0
     assert cov["compound subtask accuracy: compound requests with subtasks"] == 0
     ok, why = at.independent_ready()
@@ -696,7 +696,7 @@ def test_readiness_refuses_gold_that_cannot_measure_a_gate(p04):
 def test_the_complete_synthetic_gold_covers_every_gate(p04):
     at, tmp = p04
     _full_chain(at, tmp)
-    cov = at.gate_coverage(yaml.safe_load(at.P04_GOLD.read_text())["items"])
+    cov = at.gate_coverage(yaml.safe_load(at.P04_GOLD.read_text(encoding="utf-8"))["items"])
     assert set(cov) == set(at.GATE_COVERAGE) and all(n > 0 for n in cov.values()), cov
     assert at.independent_ready()[1].startswith("the request set is marked synthetic")   # coverage passed first
 

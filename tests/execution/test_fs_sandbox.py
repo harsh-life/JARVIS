@@ -89,7 +89,7 @@ def test_unicode_dot_trick_does_not_smuggle_traversal(user_root):
 def test_symlink_pointing_outside_sandbox_is_rejected(user_root):
     sandbox, root, _ = user_root
     outside = Path(root).parent / "outside_secret.txt"
-    outside.write_text("host secret")
+    outside.write_text("host secret", encoding="utf-8", newline="\n")
     os.symlink(outside, os.path.join(root, "escape_link"))
 
     with pytest.raises(ExecutionError) as excinfo:
@@ -111,7 +111,7 @@ def test_symlinked_intermediate_directory_is_rejected(user_root):
     sandbox, root, _ = user_root
     outside_dir = Path(root).parent / "outside_dir"
     outside_dir.mkdir()
-    (outside_dir / "secret.txt").write_text("nope")
+    (outside_dir / "secret.txt").write_text("nope", encoding="utf-8", newline="\n")
     os.symlink(outside_dir, os.path.join(root, "linked_dir"))
 
     with pytest.raises(ExecutionError) as excinfo:
@@ -128,11 +128,11 @@ def test_symlink_swapped_in_after_a_hypothetical_check_is_still_caught(user_root
 
     sandbox, root, _ = user_root
     target = os.path.join(root, "swapped.txt")
-    with open(target, "w") as handle:
+    with open(target, "w", encoding="utf-8", newline="\n") as handle:
         handle.write("originally fine")
 
     outside = Path(root).parent / "outside_secret2.txt"
-    outside.write_text("host secret 2")
+    outside.write_text("host secret 2", encoding="utf-8", newline="\n")
     os.unlink(target)
     os.symlink(outside, target)
 
@@ -384,7 +384,7 @@ def test_sandbox_root_itself_is_not_world_accessible(user_root):
 def test_task_temp_is_cleaned_up(sandbox: FilesystemSandbox):
     task_id = uuid.uuid4()
     temp_root = sandbox.task_temp(task_id=task_id)
-    (Path(temp_root) / "scratch.txt").write_text("temp data")
+    (Path(temp_root) / "scratch.txt").write_text("temp data", encoding="utf-8", newline="\n")
     assert Path(temp_root).exists()
 
     sandbox.cleanup_task(task_id=task_id)
@@ -506,9 +506,9 @@ def racing_swap(monkeypatch):
 def test_a_read_never_follows_a_symlink_swapped_in_after_the_check(user_root, racing_swap):
     sandbox, root, _ = user_root
     entry = os.path.join(root, "raced.txt")
-    Path(entry).write_text("originally fine")
+    Path(entry).write_text("originally fine", encoding="utf-8", newline="\n")
     outside = Path(root).parent / "outside_raced.txt"
-    outside.write_text("HOST SECRET via race")
+    outside.write_text("HOST SECRET via race", encoding="utf-8", newline="\n")
     racing_swap(entry, outside, "read_file")
     with pytest.raises(ExecutionError) as excinfo:
         sandbox.read_file(root, "raced.txt")
@@ -522,7 +522,7 @@ def test_a_listing_never_follows_a_directory_swapped_for_a_symlink(user_root, ra
     os.mkdir(entry)
     outside = Path(root).parent / "outside_raced_dir"
     outside.mkdir()
-    (outside / "host_file").write_text("HOST SECRET")
+    (outside / "host_file").write_text("HOST SECRET", encoding="utf-8", newline="\n")
     racing_swap(entry, outside, "list_directory")
     with pytest.raises(ExecutionError) as excinfo:
         sandbox.list_directory(root, "raced_dir")
@@ -532,11 +532,11 @@ def test_a_listing_never_follows_a_directory_swapped_for_a_symlink(user_root, ra
 def test_a_write_never_follows_a_symlink_swapped_in_after_the_check(user_root, racing_swap):
     sandbox, root, _ = user_root
     entry = os.path.join(root, "raced_write.txt")
-    Path(entry).write_text("originally fine")
+    Path(entry).write_text("originally fine", encoding="utf-8", newline="\n")
     outside = Path(root).parent / "outside_raced_write.txt"
-    outside.write_text("host file")
+    outside.write_text("host file", encoding="utf-8", newline="\n")
     racing_swap(entry, outside, "_write")
     with pytest.raises(ExecutionError) as excinfo:
         sandbox.write_file(root, "raced_write.txt", "overwritten?")
     assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
-    assert outside.read_text() == "host file"
+    assert outside.read_text(encoding="utf-8") == "host file"

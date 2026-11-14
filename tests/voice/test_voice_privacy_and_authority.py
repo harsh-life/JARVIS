@@ -87,14 +87,14 @@ def test_voi_t3_no_authority_code_reads_speaker_or_voice_signals():
     files = [p for root in authority for p in ([root] if root.is_file() else root.rglob("*.py"))]
     assert files
     for path in files:
-        source = path.read_text()
+        source = path.read_text(encoding="utf-8")
         for word in ("speaker", "SpeakerContext", "is_authorization_signal", "voice", "transcript"):
             assert word not in source, f"{path.relative_to(REPO)} mentions {word}"
 
 
 def test_voi_t3_nothing_constructs_a_signal_outside_the_schema():
     for path in (REPO / "server").rglob("*.py"):
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.keyword) and node.arg == "is_authorization_signal":
                 pytest.fail(f"{path.relative_to(REPO)} passes is_authorization_signal")
@@ -181,7 +181,7 @@ async def test_voi_t4_there_is_no_voice_task_path(h):
 
 def test_voi_t4_voice_code_cannot_reach_confirmation_or_step_up():
     for path in (REPO / "server" / "voice").rglob("*.py"):
-        for node in ast.walk(ast.parse(path.read_text())):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             names = []
             if isinstance(node, ast.Import):
                 names = [a.name for a in node.names]

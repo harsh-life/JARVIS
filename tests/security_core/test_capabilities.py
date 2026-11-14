@@ -647,7 +647,7 @@ async def test_the_grant_check_never_reads_agent_configuration():
 
     from pathlib import Path
 
-    source = Path("server/capabilities/grants.py").read_text()
+    source = Path("server/capabilities/grants.py").read_text(encoding="utf-8")
     assert "AgentConfiguration" not in source.split('"""', 2)[-1]
 
 

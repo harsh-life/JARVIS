@@ -25,7 +25,7 @@ def _modules() -> list[Path]:
 
 @pytest.mark.parametrize("path", _modules(), ids=lambda p: p.name)
 def test_no_dashboard_module_can_write(path):
-    tree = ast.parse(path.read_text())
+    tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("sqlalchemy"):
             assert not {a.name for a in node.names} & SQL_WRITES, (path.name, node.module)

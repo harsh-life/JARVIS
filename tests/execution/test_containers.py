@@ -149,7 +149,7 @@ def test_a_runs_workspace_is_private_and_removed(tmp_path) -> None:
     sockets, scratch = prepare_workspace(tmp_path, RUN)
     for directory in (sockets, scratch, sockets.parent):
         assert stat.S_IMODE(os.stat(directory).st_mode) == 0o700
-    (scratch / "result.json").write_text("{}")
+    (scratch / "result.json").write_text("{}", encoding="utf-8", newline="\n")
     remove_workspace(tmp_path, RUN)
     assert not sockets.parent.exists()
     remove_workspace(tmp_path, RUN)   # idempotent
@@ -197,10 +197,10 @@ sys.exit(state.get("rc", {}).get(cmd, 0))
 @pytest.fixture
 def fake(tmp_path, monkeypatch):
     script = tmp_path / "podman"
-    script.write_text(FAKE_PODMAN)
+    script.write_text(FAKE_PODMAN, encoding="utf-8", newline="\n")
     script.chmod(0o755)
     log, state = tmp_path / "log.jsonl", tmp_path / "state.json"
-    state.write_text("{}")
+    state.write_text("{}", encoding="utf-8", newline="\n")
     monkeypatch.setenv("FAKE_LOG", str(log))
     monkeypatch.setenv("FAKE_STATE", str(state))
 
@@ -208,10 +208,10 @@ def fake(tmp_path, monkeypatch):
         path = str(script)
 
         def calls(self):
-            return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+            return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
 
         def set(self, **values):
-            state.write_text(json.dumps(values))
+            state.write_text(json.dumps(values), encoding="utf-8", newline="\n")
 
     return Fake()
 
