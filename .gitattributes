@@ -1,0 +1,10 @@
+# Line endings are part of what this repository hashes and compares — the
+# pinned annotation specs (experiments/annotation_tools.py), the frozen
+# experiment code and prompts, the deploy scripts that `bash -n` checks — so a
+# checkout must not depend on the cloner's `core.autocrlf` (Git for Windows
+# defaults it to true). Text files are LF in the index and in every working
+# tree, on every OS.
+* text=auto eol=lf
+
+# Windows batch scripts are CRLF by design: stored and checked out unchanged.
+*.bat -text
