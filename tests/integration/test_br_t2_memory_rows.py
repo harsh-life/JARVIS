@@ -27,7 +27,6 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from server.gateway.app import API_V1_PREFIX
@@ -149,6 +148,12 @@ async def test_br_t2_memory_rows(stack, vault_index, capsys):
 
     doomed = unique("The user prefers the doomed fact")
     doomed_id = await _remember(h, alice, doomed)
+    # numpy arrives with the memory stack (`.[memory]`), not `.[dev]`; imported
+    # here, after the `stack` fixture has required that stack (skip, or fail
+    # under HYPERMIND_REQUIRE_MEMORY_STACK=1), not at module import, where a
+    # `.[dev]`-only environment failed collection of the whole suite.
+    import numpy as np
+
     doomed_vector = np.asarray(provider.mem0.embedding_model.embed(doomed), dtype=np.float32).tobytes()
     assert (await _confirmed(h, alice, "DELETE", f"{MEM}/{doomed_id}")).status_code == 204
     text_files = _files_containing(Path(provider.path), doomed.encode())
