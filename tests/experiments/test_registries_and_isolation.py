@@ -11,6 +11,7 @@ from experiments.contracts import BODY_MODELS
 from experiments.orchestration.backends import IMPLEMENTED
 from experiments.tasks import load_suite
 from shared.schemas.intelligence import HARNESS_ADAPTERS, OUTPUT_SCHEMAS
+from tests.support import utf8_child_env
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -24,7 +25,7 @@ def test_every_output_schema_the_catalogue_may_name_has_a_body_model():
 
 
 def _loaded(code: str) -> set[str]:
-    out = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True, text=True, check=True)
+    out = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True, text=True, check=True, encoding="utf-8", env=utf8_child_env())
     return set(out.stdout.split())
 
 

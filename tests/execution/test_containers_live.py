@@ -27,6 +27,7 @@ import pytest
 
 from server.execution.containers import ContainerEngine, ContainerSpec, EngineSettings, container_name
 from server.net.egress_proxy import EgressProxy, ProxyPolicy
+from tests.support import utf8_child_env
 
 IMAGE = os.environ.get(
     "HYPERMIND_TEST_CONTAINER_IMAGE",
@@ -214,7 +215,7 @@ async def test_no_provider_key_or_server_secret_reaches_the_container(tmp_path, 
     name = await engine.start(_spec(sockets, scratch, run_id, "python3", "/scratch/probe.py"))
     try:
         await engine.wait(name, timeout=120)
-        inspect = subprocess.run([shutil.which("podman"), "inspect", name], capture_output=True, text=True).stdout
+        inspect = subprocess.run([shutil.which("podman"), "inspect", name], capture_output=True, text=True, encoding="utf-8", env=utf8_child_env()).stdout
     finally:
         await engine.stop(name)
     leaked_anywhere = inspect + "".join(p.read_text(errors="replace", encoding="utf-8") for p in scratch.rglob("*") if p.is_file())

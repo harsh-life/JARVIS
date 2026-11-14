@@ -33,6 +33,7 @@ import pytest
 import pytest_asyncio
 
 from tests.runtime.conftest import h, make_harness  # noqa: F401 — shared fixtures
+from tests.support import utf8_child_env
 
 EMBEDDER_CACHE = Path(os.environ.get("HYPERMIND_TEST_EMBEDDER_CACHE", "./data/models")).resolve()
 REQUIRE_STACK = os.environ.get("HYPERMIND_REQUIRE_MEMORY_STACK") == "1"
@@ -184,7 +185,7 @@ def vault_section(root: Path, repo: Path, **overrides: Any):
 def git(repo: Path, *args: str) -> str:
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_NOSYSTEM": "1",
            "GIT_CONFIG_GLOBAL": os.devnull, "HOME": str(repo)}
-    done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, env=env, check=True)
+    done = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, env=utf8_child_env(env), check=True, encoding="utf-8")
     return done.stdout.strip()
 
 

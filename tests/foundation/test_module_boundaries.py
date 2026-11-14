@@ -14,11 +14,11 @@ Two angles, both required:
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from tests.support import lint_imports_script, utf8_child_env
 
 REPO_ROOT = Path(__file__).parents[2]
 
@@ -28,13 +28,7 @@ def _lint_imports_cmd() -> list[str]:
     interpreter (it is a click Command object, not a `python -m` submodule
     — `python -m importlinter.cli lint-imports` silently does nothing)."""
 
-    # Looked up next to *this* interpreter (not on PATH, which may hold another
-    # environment's), with the platform's executable suffix: `lint-imports` on
-    # POSIX, `lint-imports.exe` on Windows (shutil.which applies PATHEXT).
-    scripts = Path(sys.executable).parent
-    script = shutil.which("lint-imports", path=str(scripts))
-    assert script is not None, f"lint-imports console script not found in {scripts}"
-    return [script]
+    return [str(lint_imports_script())]
 
 
 def test_real_repo_satisfies_its_own_module_boundary_contracts() -> None:
@@ -42,7 +36,7 @@ def test_real_repo_satisfies_its_own_module_boundary_contracts() -> None:
         [*_lint_imports_cmd(), "--config", "pyproject.toml"],
         cwd=REPO_ROOT,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", env=utf8_child_env()
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -91,7 +85,7 @@ def test_import_linter_detects_a_deliberate_violation(tmp_path: Path) -> None:
         [*_lint_imports_cmd(), "--config", str(config)],
         cwd=project,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", env=utf8_child_env()
     )
     assert result.returncode != 0, "import-linter should have failed on a deliberate violation"
     assert "BROKEN" in result.stdout

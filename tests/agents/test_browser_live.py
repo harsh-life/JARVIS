@@ -36,6 +36,7 @@ from server.agents.registry import runtimes as runtime_registry
 from server.storage.models import AgentInboxItemRow, AgentRunRow, AgentRunTokenRow, AuditEvent, UsageEvent
 from tests.agents.harness import create_agent, run_agent
 from tests.agents.test_browser_runs import BROWSER_DRAFT, HOST, browser_config
+from tests.support import utf8_child_env
 
 IMAGE = os.environ.get("HYPERMIND_TEST_BROWSER_IMAGE", "")
 REQUIRE = os.environ.get("HYPERMIND_REQUIRE_CONTAINER_STACK") == "1"
@@ -105,6 +106,6 @@ async def test_a_real_browser_run_goes_only_through_jarvis(make_harness, tmp_pat
     assert summary and "host_not_allowed" in summary[0], summary
     assert all(t.revoked_at is not None for t in await h.rows(AgentRunTokenRow, AgentRunTokenRow.run_id == run_id))
     names = subprocess.run([shutil.which("podman"), "ps", "-a", "--format", "{{.Names}}"],
-                           capture_output=True, text=True).stdout
+                           capture_output=True, text=True, encoding="utf-8", env=utf8_child_env()).stdout
     assert f"jarvis-run-{run_id}" not in names
     await h.app.state.agent_factory.factory.browser_runs.stop()

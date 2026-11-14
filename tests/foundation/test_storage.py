@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from server.storage import SQLAlchemyStorageBackend
 from server.storage.base import Base
 from server.storage.models import Device, Graph, GraphMembership, SecretReference, SpeakerContext, User
+from tests.support import utf8_child_env
 
 REPO_ROOT = Path(__file__).parents[2]
 
@@ -44,9 +45,9 @@ def test_alembic_migration_applies_and_reverses_cleanly(tmp_path: Path) -> None:
     upgrade = subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=REPO_ROOT,
-        env=env,
+        env=utf8_child_env(env),
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8"
     )
     assert upgrade.returncode == 0, upgrade.stderr
     assert admin_url() is not None or db_path.exists()
@@ -54,9 +55,9 @@ def test_alembic_migration_applies_and_reverses_cleanly(tmp_path: Path) -> None:
     downgrade = subprocess.run(
         [sys.executable, "-m", "alembic", "downgrade", "base"],
         cwd=REPO_ROOT,
-        env=env,
+        env=utf8_child_env(env),
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8"
     )
     assert downgrade.returncode == 0, downgrade.stderr
 

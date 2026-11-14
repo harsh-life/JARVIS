@@ -17,6 +17,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from tests.support import lint_imports_script, utf8_child_env
 
 REPO = Path(__file__).resolve().parents[2]
 SCHEDULER = REPO / "server" / "scheduler"
@@ -37,8 +38,8 @@ ALLOWED_INTERNAL = re.compile(
 
 
 def _lint(config: Path, cwd: Path) -> subprocess.CompletedProcess:
-    script = Path(sys.executable).parent / "lint-imports"
-    return subprocess.run([str(script), "--config", str(config)], cwd=cwd, capture_output=True, text=True)
+    script = lint_imports_script()
+    return subprocess.run([str(script), "--config", str(config)], cwd=cwd, capture_output=True, text=True, encoding="utf-8", env=utf8_child_env())
 
 
 def _imports(path: Path) -> set[str]:

@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from server.security.secret_patterns import find_secret
+from tests.support import utf8_child_env
 
 REPO = Path(__file__).resolve().parents[2]
 ANDROID = REPO / "android"
@@ -30,7 +31,7 @@ def _tracked_android_files() -> list[Path]:
 
     out = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "android"],
-        cwd=REPO, check=True, capture_output=True, text=True,
+        cwd=REPO, check=True, capture_output=True, text=True, encoding="utf-8", env=utf8_child_env()
     ).stdout
     return [REPO / line for line in out.splitlines() if line]
 

@@ -21,6 +21,7 @@ from server.graph.authorization import AccessRequest
 from shared.schemas.authorization import DenialSurface, Operation, Principal, ResourceType
 from shared.schemas.enums import CapabilityScopeType, PermissionDecisionValue
 from tests.security_core.helpers import code_only
+from tests.support import lint_imports_script, utf8_child_env
 
 pytestmark = pytest.mark.asyncio
 
@@ -229,8 +230,7 @@ async def test_an_unexpected_error_rolls_back_the_business_transaction(api, monk
 
 
 def _lint_imports_cmd() -> list[str]:
-    script = Path(sys.executable).parent / "lint-imports"
-    assert script.exists(), f"lint-imports console script not found at {script}"
+    script = lint_imports_script()
     return [str(script)]
 
 
@@ -246,7 +246,7 @@ async def test_repo_t1_t4_t6_the_boundary_contracts_all_hold():
         [*_lint_imports_cmd(), "--config", "pyproject.toml"],
         cwd=REPO_ROOT,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8", env=utf8_child_env()
     )
     assert result.returncode == 0, result.stdout + result.stderr
 

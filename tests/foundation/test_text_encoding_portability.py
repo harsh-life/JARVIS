@@ -11,9 +11,9 @@ spec file hashed with CRLF endings).
 
 Two layers of protection:
 
-* a structural guard — every `read_text`/`write_text`/text-mode `open` in
-  `server/`, `shared/`, `experiments/` and `tests/` names its encoding, and
-  every text write names its newline;
+* a structural guard — every `read_text`/`write_text`/text-mode `open` and
+  text-mode `subprocess` call in `server/`, `shared/`, `experiments/` and
+  `tests/` names its encoding, and every text write names its newline;
 * behavioural checks with non-ASCII content (an em dash, an ellipsis, an
   arrow), including a child interpreter whose locale encoding is deliberately
   not UTF-8 where the host can provide one.
@@ -58,6 +58,10 @@ def _text_io_without_encoding(path: Path) -> list[str]:
         elif name == "write_text" and not {"encoding", "newline"} <= keywords:
             missing = " and ".join(f"{k}=" for k in ("encoding", "newline") if k not in keywords)
             problems.append(f"{where}: write_text() without {missing}")
+        elif (name in ("run", "check_output", "Popen") and isinstance(func, ast.Attribute)
+              and isinstance(func.value, ast.Name) and func.value.id == "subprocess"
+              and keywords & {"text", "universal_newlines"} and "encoding" not in keywords):
+            problems.append(f"{where}: text-mode subprocess.{name}() without encoding=")
         elif name == "open":
             if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id in BINARY_OPENERS:
                 continue
@@ -124,6 +128,9 @@ def test_the_guard_itself_catches_each_form(tmp_path: Path) -> None:
         Path("a").open("a")
         open("a", "rb")
         Path("a").read_text(encoding="utf-8")
+        import subprocess
+        subprocess.run(["x"], capture_output=True, text=True)
+        subprocess.run(["x"], capture_output=True, text=True, encoding="utf-8")
     """), encoding="utf-8", newline="\n")
     original = REPO_ROOT
     try:
@@ -137,6 +144,7 @@ def test_the_guard_itself_catches_each_form(tmp_path: Path) -> None:
         "text-mode open() without encoding=",
         "text-mode write open() without newline=",
         "text-mode open() without encoding=",
+        "text-mode subprocess.run() without encoding=",
     ]
 
 

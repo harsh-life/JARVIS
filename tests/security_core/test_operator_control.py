@@ -43,6 +43,7 @@ from server.security.superuser import SUPERUSER_TOKEN_ENV
 from server.storage.models import AgentTask, AuditEvent, ConfirmationToken, SupervisorLatch
 from shared.schemas.enums import AuditActor, AuditResult
 from tests.runtime.conftest import ask, call, failure_of, final, make_harness, pending_of  # noqa: F401
+from tests.support import lint_imports_script, utf8_child_env
 
 pytestmark = pytest.mark.asyncio
 
@@ -525,9 +526,9 @@ CONTRACT = "Only the gateway reaches superuser authority (12 §4, SUPER-001)"
     ("server/evaluation/__init__.py", "from server.gateway.superuser_auth import get_superuser\n"),
 ])
 async def test_the_control_modules_are_import_restricted(tmp_path, module, line):
-    script = Path(sys.executable).parent / "lint-imports"
+    script = lint_imports_script()
     clean = subprocess.run([str(script), "--config", "pyproject.toml"], cwd=REPO_ROOT,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8", env=utf8_child_env())
     assert f"{CONTRACT} KEPT" in clean.stdout, clean.stdout
 
     copy = tmp_path / "repo"
@@ -541,7 +542,7 @@ async def test_the_control_modules_are_import_restricted(tmp_path, module, line)
     target.write_text(line + target.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
 
     result = subprocess.run([str(script), "--config", "pyproject.toml", "--no-cache"],
-                            cwd=copy, capture_output=True, text=True)
+                            cwd=copy, capture_output=True, text=True, encoding="utf-8", env=utf8_child_env())
     assert result.returncode != 0
     assert f"{CONTRACT} BROKEN" in result.stdout
 
@@ -557,9 +558,9 @@ JUDGE_CONTRACT = "The Judge is never an authority (19, JDG-T2)"
     "import server.tools.registry\n",
 ])
 async def test_the_judge_cannot_reach_authority_or_execution(tmp_path, line):
-    script = Path(sys.executable).parent / "lint-imports"
+    script = lint_imports_script()
     clean = subprocess.run([str(script), "--config", "pyproject.toml"], cwd=REPO_ROOT,
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8", env=utf8_child_env())
     assert f"{JUDGE_CONTRACT} KEPT" in clean.stdout, clean.stdout
 
     copy = tmp_path / "repo"
@@ -573,13 +574,13 @@ async def test_the_judge_cannot_reach_authority_or_execution(tmp_path, line):
     target.write_text(line + target.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
 
     result = subprocess.run([str(script), "--config", "pyproject.toml", "--no-cache"],
-                            cwd=copy, capture_output=True, text=True)
+                            cwd=copy, capture_output=True, text=True, encoding="utf-8", env=utf8_child_env())
     assert result.returncode != 0
     assert f"{JUDGE_CONTRACT} BROKEN" in result.stdout
 
 
 async def test_the_runtime_cannot_depend_on_the_judge(tmp_path):
-    script = Path(sys.executable).parent / "lint-imports"
+    script = lint_imports_script()
     copy = tmp_path / "repo"
     shutil.copytree(REPO_ROOT / "server", copy / "server", ignore=shutil.ignore_patterns("__pycache__"))
     shutil.copytree(REPO_ROOT / "shared", copy / "shared", ignore=shutil.ignore_patterns("__pycache__"))
@@ -591,6 +592,6 @@ async def test_the_runtime_cannot_depend_on_the_judge(tmp_path):
     target.write_text("import server.evaluation\n" + target.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
 
     result = subprocess.run([str(script), "--config", "pyproject.toml", "--no-cache"],
-                            cwd=copy, capture_output=True, text=True)
+                            cwd=copy, capture_output=True, text=True, encoding="utf-8", env=utf8_child_env())
     assert result.returncode != 0
     assert "Track B server layering (16 §2) BROKEN" in result.stdout

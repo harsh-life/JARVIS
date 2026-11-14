@@ -25,6 +25,7 @@ from shared.schemas.enums import Visibility
 from shared.schemas.memory import Mem0Fact
 from tests.memory.conftest import EMBEDDER_CACHE, require_memory_stack
 from tests.support import make_test_config
+from tests.support import lint_imports_script, utf8_child_env
 
 REPO = Path(__file__).parents[2]
 MEM = f"{API_V1_PREFIX}/memory"
@@ -232,7 +233,7 @@ def test_nothing_imports_mem0_unless_memory_is_enabled():
         assert "mem0" not in sys.modules, "mem0 imported without memory enabled"
         assert "chromadb" not in sys.modules
     """)
-    result = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True, text=True)
+    result = subprocess.run([sys.executable, "-c", code], cwd=REPO, capture_output=True, text=True, encoding="utf-8", env=utf8_child_env())
     assert result.returncode == 0, result.stderr
 
 
@@ -249,8 +250,8 @@ MEMORY_CONTRACTS = (
 
 
 def _lint(config: Path, cwd: Path) -> subprocess.CompletedProcess:
-    script = Path(sys.executable).parent / "lint-imports"
-    return subprocess.run([str(script), "--config", str(config)], cwd=cwd, capture_output=True, text=True)
+    script = lint_imports_script()
+    return subprocess.run([str(script), "--config", str(config)], cwd=cwd, capture_output=True, text=True, encoding="utf-8", env=utf8_child_env())
 
 
 def test_every_memory_contract_is_declared_and_kept():

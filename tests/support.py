@@ -8,10 +8,14 @@ could be mistaken for a production value.
 
 from __future__ import annotations
 
+import os
+import shutil
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Mapping
 
 import jwt
 import pytest
@@ -71,6 +75,36 @@ requires_unix_listener = pytest.mark.skipif(
     reason=f"needs Unix-domain sockets ({UNIX_LISTENER_MISSING}); the egress proxy and unix: listeners "
            "refuse to start on this host (asserted in test_platform_support.py)",
 )
+
+
+# ── subprocesses: the same bytes on every host ──────────────────────────────
+
+
+def utf8_child_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """`base` (default: this process's environment) with the child's Python
+    stdio set to UTF-8, for a parent that decodes its output with
+    `encoding="utf-8"`. Without it, a Windows child writes cp1252 and the
+    parent's default decoder (also cp1252) fails on a byte cp1252 leaves
+    undefined: `subprocess.run(text=True)` then returns `stdout=None`.
+    Only stdio is set (PYTHONIOENCODING), never PYTHONUTF8, so the file-I/O
+    defaults the encoding guard checks are not masked."""
+
+    env = dict(os.environ if base is None else base)
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
+def lint_imports_script() -> Path:
+    """The `lint-imports` console script installed next to this interpreter —
+    not whichever one PATH finds — with the platform's executable suffix
+    (`lint-imports.exe` on Windows; shutil.which applies PATHEXT)."""
+
+    scripts = Path(sys.executable).parent
+    found = shutil.which("lint-imports", path=str(scripts))
+    assert found is not None, f"lint-imports console script not found in {scripts}"
+    return Path(found)
+
+
 DESCRIPTOR_CONTAINMENT_MISSING = descriptor_containment_missing()
 requires_descriptor_containment = pytest.mark.skipif(
     DESCRIPTOR_CONTAINMENT_MISSING is not None,

@@ -14,6 +14,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from tests.support import lint_imports_script, utf8_child_env
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -28,9 +29,9 @@ CONTRACTS = (JUDGE, RUNTIME, JUDGE_IO, DASHBOARD, DASHBOARD_SECRETS, SUPERUSER, 
 
 
 def _lint(config: Path, cwd: Path) -> subprocess.CompletedProcess:
-    script = Path(sys.executable).parent / "lint-imports"
+    script = lint_imports_script()
     return subprocess.run([str(script), "--config", str(config), "--no-cache"], cwd=cwd,
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, encoding="utf-8", env=utf8_child_env())
 
 
 def test_every_stage5_contract_is_declared_and_kept():

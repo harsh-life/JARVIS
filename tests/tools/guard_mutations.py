@@ -1581,7 +1581,7 @@ def run(mutant: Mutant) -> tuple[str, float]:
         path.write_text(text.replace(mutant.old, mutant.new, 1), encoding="utf-8", newline="\n")
         env = {**os.environ, "HYPERMIND_REQUIRE_MEMORY_STACK": os.environ.get("HYPERMIND_REQUIRE_MEMORY_STACK", "1")}
         done = subprocess.run(list(mutant.command), cwd=ROOT / mutant.cwd, capture_output=True, text=True,
-                              env=env, timeout=1800)
+                              env={**env, "PYTHONIOENCODING": "utf-8"}, timeout=1800, encoding="utf-8")
         verdict = _verdict(mutant, done)
     except subprocess.TimeoutExpired:
         verdict = "killed (timeout)"

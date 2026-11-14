@@ -42,6 +42,7 @@ from server.storage.models import AuditEvent, CapabilityGrant
 from shared.schemas.authorization import Principal
 from shared.schemas.enums import AuditActor, AuditResult
 from tests.runtime.conftest import make_harness  # noqa: F401 — the real-app harness
+from tests.support import lint_imports_script, utf8_child_env
 
 pytestmark = pytest.mark.asyncio
 
@@ -299,14 +300,13 @@ CONTRACT = "Only the gateway reaches superuser authority (12 §4, SUPER-001)"
 
 
 def _lint_imports() -> str:
-    script = Path(sys.executable).parent / "lint-imports"
-    assert script.exists(), f"lint-imports console script not found at {script}"
+    script = lint_imports_script()
     return str(script)
 
 
 async def test_the_superuser_import_contract_holds():
     result = subprocess.run([_lint_imports(), "--config", "pyproject.toml"],
-                            cwd=REPO_ROOT, capture_output=True, text=True)
+                            cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", env=utf8_child_env())
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"{CONTRACT} KEPT" in result.stdout
 
@@ -331,6 +331,6 @@ async def test_the_superuser_import_contract_catches_a_violation(tmp_path, modul
     target.write_text(line + target.read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
 
     result = subprocess.run([_lint_imports(), "--config", "pyproject.toml", "--no-cache"],
-                            cwd=copy, capture_output=True, text=True)
+                            cwd=copy, capture_output=True, text=True, encoding="utf-8", env=utf8_child_env())
     assert result.returncode != 0, result.stdout
     assert f"{CONTRACT} BROKEN" in result.stdout
