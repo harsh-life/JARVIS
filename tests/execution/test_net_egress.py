@@ -318,7 +318,13 @@ async def test_slow_server_triggers_read_timeout(client, allow_loopback):
 
 
 async def test_connection_refused_is_egress_denied_not_a_crash(client, allow_loopback):
-    egress_policy = make_policy(destinations=frozenset({"127.0.0.1"}), allowed_ports=frozenset({1}))
+    # Windows reports a refused loopback connection only after retransmitting
+    # the SYN (measured: ~2.04 s, vs. immediately on Linux and macOS), which the
+    # suite's 2.0 s default connect timeout beat, so the refusal surfaced as
+    # `timeout`. The outcome under test is the refusal, so give it time to
+    # arrive; the assertion is unchanged.
+    egress_policy = make_policy(destinations=frozenset({"127.0.0.1"}), allowed_ports=frozenset({1}),
+                                connect_timeout_seconds=10.0)
     with pytest.raises(ExecutionError) as excinfo:
         await client.arequest("http://127.0.0.1:1/", egress_policy=egress_policy)
     assert excinfo.value.code == ExecutionErrorCode.EGRESS_DENIED
