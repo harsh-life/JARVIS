@@ -158,12 +158,22 @@ class FilesystemSandbox:
         # operator configures must not itself coincide with a sensitive host
         # path. Every sandbox root is derived under this one directory
         # (paths.allocate_root), so this single check protects every tenant.
+        #
+        # `root` is fully resolved, so each sensitive path is compared in its
+        # resolved form too: on macOS /etc is a symlink to /private/etc, and a
+        # base_root of /etc/x resolved to /private/etc/x slipped past the
+        # literal comparison. On Linux these paths resolve to themselves. The
+        # list names POSIX host paths: on a host without descriptor-relative
+        # containment (Windows) nothing is checked against it because the
+        # sandbox performs no filesystem operation at all (see __init__).
         for sensitive in _SENSITIVE_HOST_PATHS:
-            if root == sensitive or root.startswith(sensitive.rstrip("/") + "/"):
-                raise ExecutionError(
-                    ExecutionErrorCode.INTERNAL,
-                    f"filesystem.base_root must not be under {sensitive} (FS-003)",
-                )
+            forms = {sensitive, os.path.realpath(sensitive)} if os.name == "posix" else {sensitive}
+            for form in forms:
+                if root == form or root.startswith(form.rstrip("/") + "/"):
+                    raise ExecutionError(
+                        ExecutionErrorCode.INTERNAL,
+                        f"filesystem.base_root must not be under {sensitive} (FS-003)",
+                    )
 
     # ── root allocation ─────────────────────────────────────────────────
 

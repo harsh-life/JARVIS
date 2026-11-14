@@ -60,6 +60,7 @@ from __future__ import annotations
 import errno
 import os
 import stat
+import sys
 import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
@@ -67,6 +68,11 @@ from typing import Iterator
 from uuid import UUID
 
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode
+
+try:
+    import fcntl
+except ImportError:  # Windows (where nothing here runs: see require_descriptor_containment)
+    fcntl = None  # type: ignore[assignment]
 
 _MAX_SEGMENTS = 64  # a path this deep inside a sandbox is already pathological
 _MAX_LABEL_LENGTH = 128
@@ -255,10 +261,23 @@ def _assert_realpath_contained(root_real: str, dir_fd: int, name: str) -> None:
     be tricked by a symlink, independently confirm the fd we are about to
     operate through corresponds to a real path under the root."""
 
-    try:
-        resolved = os.path.realpath(f"/proc/self/fd/{dir_fd}")
-    except OSError:
-        return  # /proc unavailable (non-Linux); the dir_fd walk already holds.
+    if sys.platform.startswith("linux"):
+        try:
+            resolved = os.path.realpath(f"/proc/self/fd/{dir_fd}")
+        except OSError:
+            return  # /proc unavailable; the dir_fd walk already holds.
+    else:
+        # Not Linux: there is no /proc, and realpath() of the missing
+        # "/proc/self/fd/N" does not raise — it returns that literal string,
+        # which is never under the root, so on macOS every operation was
+        # refused as an escape. Ask the kernel for the fd's path instead
+        # (F_GETPATH: macOS/BSD); where it cannot be asked, the dir_fd walk —
+        # the primary control — already holds.
+        f_getpath = getattr(fcntl, "F_GETPATH", None) if fcntl is not None else None
+        if f_getpath is None:
+            return
+        raw = fcntl.fcntl(dir_fd, f_getpath, bytes(1024))  # MAXPATHLEN
+        resolved = os.fsdecode(raw.split(b"\0", 1)[0])
     root_with_sep = root_real.rstrip(os.sep) + os.sep
     if not (resolved == root_real or resolved.startswith(root_with_sep)):
         raise _forbidden("resolved path escaped the sandbox root")

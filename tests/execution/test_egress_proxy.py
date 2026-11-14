@@ -25,8 +25,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import stat
+import tempfile
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 
@@ -94,8 +97,16 @@ async def upstream():
 
 
 @pytest.fixture
-def sock_path(tmp_path) -> Path:
-    return tmp_path / "egress.sock"
+def sock_path() -> Iterator[Path]:
+    # A Unix socket path is capped at 104 bytes on macOS (108 on Linux), and
+    # pytest's tmp_path on macOS (/private/var/folders/…/pytest-N/<test name>)
+    # alone exceeds it: bind() failed with "AF_UNIX path too long". A short,
+    # private (0700) directory keeps every test's socket path legal.
+    directory = tempfile.mkdtemp(prefix="eg-", dir="/tmp" if os.path.isdir("/tmp") else None)
+    try:
+        yield Path(directory) / "egress.sock"
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
 
 
 async def _proxy(sock_path, upstream, *, resolver=None, decisions=None, **policy) -> EgressProxy:
