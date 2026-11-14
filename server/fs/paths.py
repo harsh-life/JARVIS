@@ -41,6 +41,18 @@ production deployment, not shipped by this branch. `server/config/schema.py`'s
 `containment_mode` field names this honestly; `sandbox.py` refuses to start in
 `mount_isolated` mode rather than silently running the weaker mode under a
 stronger-sounding name.
+
+Platform support: the walk above needs descriptor-relative, no-follow
+syscalls — `O_DIRECTORY`, `O_NOFOLLOW`, and `dir_fd=` on open/stat/mkdir/
+rmdir/unlink, `listdir` on an fd — which Linux (the server host) and macOS
+provide and Windows' Python does not (`os.supports_dir_fd` is empty there).
+There is no safe substitute built from path strings (that is the TOCTOU
+defect this module exists to avoid), and file permission bits are not an
+isolation boundary on Windows (`chmod 0o700` changes only the read-only
+flag). So on such a host every operation that would touch the filesystem is
+refused with `PLATFORM_UNSUPPORTED` (`require_descriptor_containment`) after
+the pure path validation and before the first syscall. Nothing is created,
+read, written or deleted.
 """
 
 from __future__ import annotations
@@ -63,6 +75,31 @@ _MAX_SEGMENT_LENGTH = 255
 
 def _forbidden(message: str) -> ExecutionError:
     return ExecutionError(ExecutionErrorCode.FORBIDDEN_PATH, message)
+
+
+def descriptor_containment_missing() -> str | None:
+    """What this host lacks of the descriptor-relative primitives the walk is
+    built on, or None where all are present (Linux, macOS)."""
+
+    missing = [f"os.{flag}" for flag in ("O_DIRECTORY", "O_NOFOLLOW") if not hasattr(os, flag)]
+    missing += [f"os.{fn.__name__}(dir_fd=)" for fn in (os.open, os.stat, os.mkdir, os.rmdir, os.unlink)
+                if fn not in os.supports_dir_fd]
+    if os.listdir not in os.supports_fd:
+        missing.append("os.listdir(fd)")
+    return ", ".join(missing) or None
+
+
+def require_descriptor_containment() -> None:
+    """Refuse — before any filesystem syscall — on a host that cannot provide
+    this module's containment. Never falls back to path-string checks."""
+
+    missing = descriptor_containment_missing()
+    if missing is not None:
+        raise ExecutionError(
+            ExecutionErrorCode.PLATFORM_UNSUPPORTED,
+            "the filesystem sandbox needs descriptor-relative, no-follow syscalls this host does not "
+            f"provide ({missing}); nothing was read, written, created or deleted",
+        )
 
 
 def sanitize_label(label: str) -> str:
@@ -130,6 +167,7 @@ def open_root_fd(root_real: str) -> int:
     sandbox root) that needs the root's own fd rather than a fd reached by
     walking through it. Caller must `os.close` the result."""
 
+    require_descriptor_containment()
     return _root_fd(root_real)
 
 
@@ -263,6 +301,7 @@ def resolve(root_real: str, relative_path: str, *, create_parents: bool = False)
     """
 
     parts = _segments(relative_path)
+    require_descriptor_containment()
     root_fd = _root_fd(root_real)
     try:
         with _parent_dir_fd(root_fd, parts, create_parents=create_parents) as parent_fd:
@@ -289,6 +328,7 @@ def allocate_root(
     """
 
     safe_label = sanitize_label(label)
+    require_descriptor_containment()
     base = Path(base_root)
     if graph_id is not None:
         target = base / "graphs" / str(graph_id) / "shared" / safe_label
@@ -306,6 +346,7 @@ def task_temp_root(base_root: str, *, task_id: UUID) -> str:
     """09 §7: task-scoped temp, cleaned up at task end / by a periodic sweep
     (`sweep_stale_task_temp`), never shared across tasks."""
 
+    require_descriptor_containment()
     target = Path(base_root) / "tasks" / str(task_id) / "tmp"
     target.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(target, 0o700)
@@ -325,6 +366,8 @@ def cleanup_task_temp(base_root: str, *, task_id: UUID) -> None:
 
 __all__ = [
     "SandboxPath",
+    "descriptor_containment_missing",
+    "require_descriptor_containment",
     "allocate_root",
     "cleanup_task_temp",
     "open_root_fd",

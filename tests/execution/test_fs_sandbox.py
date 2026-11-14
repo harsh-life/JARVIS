@@ -21,6 +21,7 @@ import pytest
 
 from server.fs import FilesystemSandbox
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode
+from tests.support import requires_descriptor_containment
 
 
 @pytest.fixture
@@ -42,6 +43,7 @@ def _error(excinfo) -> ExecutionErrorCode:
 # ── FS-T1: traversal ────────────────────────────────────────────────────
 
 
+@requires_descriptor_containment
 @pytest.mark.parametrize(
     "payload",
     [
@@ -59,6 +61,7 @@ def test_traversal_is_rejected(user_root, payload):
     assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
 
 
+@requires_descriptor_containment
 def test_absolute_path_is_rejected(user_root):
     sandbox, root, _ = user_root
     with pytest.raises(ExecutionError) as excinfo:
@@ -66,6 +69,7 @@ def test_absolute_path_is_rejected(user_root):
     assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
 
 
+@requires_descriptor_containment
 def test_bare_root_reference_is_rejected(user_root):
     sandbox, root, _ = user_root
     for payload in (".", "", "./"):
@@ -73,6 +77,7 @@ def test_bare_root_reference_is_rejected(user_root):
             sandbox.read_file(root, payload)
 
 
+@requires_descriptor_containment
 def test_unicode_dot_trick_does_not_smuggle_traversal(user_root):
     """A fullwidth dot (U+FF0E) NFKC-normalizes to ASCII '.', so
     '．．/escape' must be caught exactly like '../escape'."""
@@ -86,6 +91,7 @@ def test_unicode_dot_trick_does_not_smuggle_traversal(user_root):
 # ── FS-T2 / FS-T9: symlink escape, including a real TOCTOU attempt ─────
 
 
+@requires_descriptor_containment
 def test_symlink_pointing_outside_sandbox_is_rejected(user_root):
     sandbox, root, _ = user_root
     outside = Path(root).parent / "outside_secret.txt"
@@ -97,6 +103,7 @@ def test_symlink_pointing_outside_sandbox_is_rejected(user_root):
     assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
 
 
+@requires_descriptor_containment
 def test_symlink_to_sensitive_host_path_is_rejected(user_root):
     sandbox, root, _ = user_root
     os.symlink("/etc/passwd", os.path.join(root, "passwd_link"))
@@ -104,6 +111,7 @@ def test_symlink_to_sensitive_host_path_is_rejected(user_root):
         sandbox.read_file(root, "passwd_link")
 
 
+@requires_descriptor_containment
 def test_symlinked_intermediate_directory_is_rejected(user_root):
     """A symlink is not only dangerous as the final component — a directory
     *in the middle* of the path must also never be followed."""
@@ -119,6 +127,7 @@ def test_symlinked_intermediate_directory_is_rejected(user_root):
     assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
 
 
+@requires_descriptor_containment
 def test_symlink_swapped_in_after_a_hypothetical_check_is_still_caught(user_root):
     """The real TOCTOU test (FS-T9): create a legitimate regular file, then
     *replace* it with a symlink to a host secret before the read — proving
@@ -157,6 +166,7 @@ def test_creating_a_symlink_via_write_is_impossible():
 # ── FS-T5 / FS-T6: cross-user / cross-graph isolation ───────────────────
 
 
+@requires_descriptor_containment
 def test_user_a_cannot_derive_user_bs_root(sandbox: FilesystemSandbox):
     a, b = uuid.uuid4(), uuid.uuid4()
     root_a = sandbox.root_for(user_id=a, graph_id=None, label="notes")
@@ -174,6 +184,7 @@ def test_user_a_cannot_derive_user_bs_root(sandbox: FilesystemSandbox):
         sandbox.read_file(root_a, f"../../{b}/private/notes/private.txt")
 
 
+@requires_descriptor_containment
 def test_same_label_different_users_are_different_physical_roots(sandbox: FilesystemSandbox):
     a, b = uuid.uuid4(), uuid.uuid4()
     root_a = sandbox.root_for(user_id=a, graph_id=None, label="shared-label")
@@ -183,6 +194,7 @@ def test_same_label_different_users_are_different_physical_roots(sandbox: Filesy
     assert str(b) in root_b
 
 
+@requires_descriptor_containment
 def test_graph_scoped_root_is_distinct_from_any_users_private_root(sandbox: FilesystemSandbox):
     user_id = uuid.uuid4()
     graph_id = uuid.uuid4()
@@ -192,6 +204,7 @@ def test_graph_scoped_root_is_distinct_from_any_users_private_root(sandbox: File
     assert str(graph_id) in graph_root
 
 
+@requires_descriptor_containment
 def test_sandbox_root_scope_label_cannot_be_a_path(sandbox: FilesystemSandbox):
     """The scope value is a label, never a path — see server/fs/__init__.py's
     module docstring for why this is deliberately stricter than treating
@@ -206,12 +219,14 @@ def test_sandbox_root_scope_label_cannot_be_a_path(sandbox: FilesystemSandbox):
 # ── FS-T7: sensitive host paths structurally unreachable ────────────────
 
 
+@requires_descriptor_containment
 def test_configuring_base_root_under_a_sensitive_path_fails_at_construction():
     for sensitive in ("/etc/hypermind", "/root/sandboxes"):
         with pytest.raises(ExecutionError):
             FilesystemSandbox(base_root=sensitive)
 
 
+@requires_descriptor_containment
 def test_no_operation_accepts_a_host_path_outside_any_root(user_root):
     sandbox, root, _ = user_root
     for sensitive in ("/root/.ssh/id_rsa", "/etc/shadow", "/proc/self/environ"):
@@ -222,6 +237,7 @@ def test_no_operation_accepts_a_host_path_outside_any_root(user_root):
 # ── FS-T3 / FS-T4: archive extraction (zip-slip / zip-bomb) ─────────────
 
 
+@requires_descriptor_containment
 def test_zip_slip_entry_is_rejected_not_written(user_root, tmp_path):
     sandbox, root, _ = user_root
     archive_path = tmp_path / "evil.zip"
@@ -237,6 +253,7 @@ def test_zip_slip_entry_is_rejected_not_written(user_root, tmp_path):
     assert not (Path(root).parent.parent / "evil_escape.txt").exists()
 
 
+@requires_descriptor_containment
 def test_zip_with_absolute_entry_path_is_rejected(user_root, tmp_path):
     sandbox, root, _ = user_root
     archive_path = tmp_path / "abs.zip"
@@ -248,6 +265,7 @@ def test_zip_with_absolute_entry_path_is_rejected(user_root, tmp_path):
         sandbox.extract_zip(root, "abs.zip", "extracted")
 
 
+@requires_descriptor_containment
 def test_zip_entry_that_is_a_symlink_is_refused(user_root, tmp_path):
     sandbox, root, _ = user_root
     archive_path = tmp_path / "symlink.zip"
@@ -262,6 +280,7 @@ def test_zip_entry_that_is_a_symlink_is_refused(user_root, tmp_path):
     assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
 
 
+@requires_descriptor_containment
 def test_zip_bomb_declared_size_is_capped(tmp_path):
     sandbox = FilesystemSandbox(
         base_root=str(tmp_path / "sandboxes"), max_archive_uncompressed_bytes=1000
@@ -278,6 +297,7 @@ def test_zip_bomb_declared_size_is_capped(tmp_path):
     assert _error(excinfo) == ExecutionErrorCode.RESOURCE_EXHAUSTED
 
 
+@requires_descriptor_containment
 def test_zip_entry_count_is_capped(tmp_path):
     sandbox = FilesystemSandbox(base_root=str(tmp_path / "sandboxes"), max_archive_entries=3)
     user_id = uuid.uuid4()
@@ -293,6 +313,7 @@ def test_zip_entry_count_is_capped(tmp_path):
     assert _error(excinfo) == ExecutionErrorCode.RESOURCE_EXHAUSTED
 
 
+@requires_descriptor_containment
 def test_valid_zip_extracts_cleanly(user_root, tmp_path):
     sandbox, root, _ = user_root
     archive_path = tmp_path / "ok.zip"
@@ -307,6 +328,7 @@ def test_valid_zip_extracts_cleanly(user_root, tmp_path):
     assert sandbox.read_file(root, "extracted/dir/b.txt").content == "world"
 
 
+@requires_descriptor_containment
 def test_tar_slip_entry_is_rejected(user_root, tmp_path):
     sandbox, root, _ = user_root
     archive_path = tmp_path / "evil.tar"
@@ -324,6 +346,7 @@ def test_tar_slip_entry_is_rejected(user_root, tmp_path):
     assert not (Path(root).parent.parent / "evil_tar_escape.txt").exists()
 
 
+@requires_descriptor_containment
 def test_tar_symlink_entry_is_refused(user_root, tmp_path):
     sandbox, root, _ = user_root
     archive_path = tmp_path / "linked.tar"
@@ -341,6 +364,7 @@ def test_tar_symlink_entry_is_refused(user_root, tmp_path):
 # ── FS-T10: size limits, quota, no world-writable files ─────────────────
 
 
+@requires_descriptor_containment
 def test_oversized_write_fails_explicitly_not_partially(tmp_path):
     sandbox = FilesystemSandbox(base_root=str(tmp_path / "sandboxes"), max_file_bytes=10)
     user_id = uuid.uuid4()
@@ -352,6 +376,7 @@ def test_oversized_write_fails_explicitly_not_partially(tmp_path):
     assert not (Path(root) / "big.txt").exists()
 
 
+@requires_descriptor_containment
 def test_sandbox_quota_is_enforced(tmp_path):
     sandbox = FilesystemSandbox(
         base_root=str(tmp_path / "sandboxes"), max_file_bytes=1000, max_sandbox_bytes=15
@@ -365,6 +390,7 @@ def test_sandbox_quota_is_enforced(tmp_path):
     assert _error(excinfo) == ExecutionErrorCode.RESOURCE_EXHAUSTED
 
 
+@requires_descriptor_containment
 def test_created_files_are_not_world_or_group_writable(user_root):
     sandbox, root, _ = user_root
     sandbox.create_file(root, "perm.txt", "x")
@@ -372,6 +398,7 @@ def test_created_files_are_not_world_or_group_writable(user_root):
     assert mode & 0o077 == 0, oct(mode)
 
 
+@requires_descriptor_containment
 def test_sandbox_root_itself_is_not_world_accessible(user_root):
     _, root, _ = user_root
     mode = stat_module.S_IMODE(os.stat(root).st_mode)
@@ -381,6 +408,7 @@ def test_sandbox_root_itself_is_not_world_accessible(user_root):
 # ── task temp cleanup ─────────────────────────────────────────────────
 
 
+@requires_descriptor_containment
 def test_task_temp_is_cleaned_up(sandbox: FilesystemSandbox):
     task_id = uuid.uuid4()
     temp_root = sandbox.task_temp(task_id=task_id)
@@ -398,6 +426,7 @@ def test_cleanup_of_a_task_that_never_touched_fs_is_a_no_op(sandbox: FilesystemS
 # ── operation-shape correctness ─────────────────────────────────────────
 
 
+@requires_descriptor_containment
 def test_write_file_requires_existing_file_create_file_requires_absence(user_root):
     sandbox, root, _ = user_root
     with pytest.raises(ExecutionError):
@@ -411,6 +440,7 @@ def test_write_file_requires_existing_file_create_file_requires_absence(user_roo
     assert sandbox.read_file(root, "new.txt").content == "v2"
 
 
+@requires_descriptor_containment
 def test_delete_file_refuses_a_directory(user_root):
     sandbox, root, _ = user_root
     sandbox.create_file(root, "dir/inner.txt", "x")
@@ -418,6 +448,7 @@ def test_delete_file_refuses_a_directory(user_root):
         sandbox.delete_file(root, "dir")
 
 
+@requires_descriptor_containment
 def test_bulk_delete_removes_a_subtree_within_the_sandbox_only(user_root):
     sandbox, root, _ = user_root
     sandbox.create_file(root, "tree/a.txt", "1")
@@ -428,6 +459,7 @@ def test_bulk_delete_removes_a_subtree_within_the_sandbox_only(user_root):
     assert not (Path(root) / "tree").exists()
 
 
+@requires_descriptor_containment
 def test_list_directory_never_surfaces_a_symlink_as_traversable(user_root):
     sandbox, root, _ = user_root
     sandbox.create_file(root, "real.txt", "x")
@@ -442,6 +474,7 @@ def test_list_directory_never_surfaces_a_symlink_as_traversable(user_root):
 # ── integration hardening: the quota is per principal, not per label ────
 
 
+@requires_descriptor_containment
 def test_the_storage_quota_covers_every_label_a_principal_names(tmp_path):
     """A `sandbox_root` label is caller-chosen. Charging the quota per label let a
     principal fill `max_sandbox_bytes` again under every new name; it is charged
@@ -503,6 +536,7 @@ def racing_swap(monkeypatch):
     return arm
 
 
+@requires_descriptor_containment
 def test_a_read_never_follows_a_symlink_swapped_in_after_the_check(user_root, racing_swap):
     sandbox, root, _ = user_root
     entry = os.path.join(root, "raced.txt")
@@ -516,6 +550,7 @@ def test_a_read_never_follows_a_symlink_swapped_in_after_the_check(user_root, ra
     assert os.path.islink(entry)  # the swap really happened inside the window
 
 
+@requires_descriptor_containment
 def test_a_listing_never_follows_a_directory_swapped_for_a_symlink(user_root, racing_swap):
     sandbox, root, _ = user_root
     entry = os.path.join(root, "raced_dir")
@@ -529,6 +564,7 @@ def test_a_listing_never_follows_a_directory_swapped_for_a_symlink(user_root, ra
     assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
 
 
+@requires_descriptor_containment
 def test_a_write_never_follows_a_symlink_swapped_in_after_the_check(user_root, racing_swap):
     sandbox, root, _ = user_root
     entry = os.path.join(root, "raced_write.txt")

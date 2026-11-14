@@ -33,6 +33,7 @@ import pytest
 from server.net.egress_proxy import EgressProxy, ProxyPolicy, open_pinned
 from server.net.resolve import checked_address
 from server.net.policy import DestinationBlocked
+from tests.support import requires_unix_listener
 
 PUBLIC = "93.184.216.34"
 PUBLIC_2 = "93.184.216.35"
@@ -166,6 +167,7 @@ def test_a_policy_names_exact_hosts_only() -> None:
 # ── the allowed path ────────────────────────────────────────────────────────
 
 
+@requires_unix_listener
 async def test_an_allowed_host_is_tunnelled_to_exactly_the_checked_address(sock_path, upstream) -> None:
     decisions: list = []
     proxy = await _proxy(sock_path, upstream, decisions=decisions)
@@ -181,6 +183,7 @@ async def test_an_allowed_host_is_tunnelled_to_exactly_the_checked_address(sock_
     assert proxy.stats.bytes_up >= len(b"\x16\x03\x01 client hello")
 
 
+@requires_unix_listener
 async def test_the_socket_is_its_owners_alone_and_removed_on_stop(sock_path, upstream) -> None:
     proxy = await _proxy(sock_path, upstream)
     assert stat.S_IMODE(os.lstat(sock_path).st_mode) == 0o600
@@ -188,6 +191,7 @@ async def test_the_socket_is_its_owners_alone_and_removed_on_stop(sock_path, ups
     assert not sock_path.exists()
 
 
+@requires_unix_listener
 async def test_host_matching_is_case_and_trailing_dot_insensitive(sock_path, upstream) -> None:
     proxy = await _proxy(sock_path, upstream)
     try:
@@ -201,6 +205,7 @@ async def test_host_matching_is_case_and_trailing_dot_insensitive(sock_path, ups
 # ── default deny ────────────────────────────────────────────────────────────
 
 
+@requires_unix_listener
 @pytest.mark.parametrize("host", [
     "evil.example.com", "example.org", "status.example.org", "advisories.example.org.evil.com",
     "xadvisories.example.org", "metadata.google.internal",
@@ -218,6 +223,7 @@ async def test_a_host_not_in_the_runs_list_is_refused(sock_path, upstream, host)
     assert decisions[-1].allowed is False and decisions[-1].reason == "host_not_allowed"
 
 
+@requires_unix_listener
 @pytest.mark.parametrize("target", [
     "93.184.216.34:443", "127.0.0.1:443", "[::1]:443", "169.254.169.254:443", "[::ffff:169.254.169.254]:443",
     "0x7f.0.0.1:443", "2130706433:443", "10.0.0.1:443", "127.1:443", "0177.0.0.1:443", "a.b.0x7f000001:443",
@@ -235,6 +241,7 @@ async def test_an_ip_literal_is_refused_even_a_public_one(sock_path, upstream, t
     assert decisions[-1].reason in ("not_a_host_name", "malformed_connect")
 
 
+@requires_unix_listener
 @pytest.mark.parametrize("port", [80, 22, 8443, 65535, 4433])
 async def test_only_port_443(sock_path, upstream, port) -> None:
     proxy = await _proxy(sock_path, upstream)
@@ -246,6 +253,7 @@ async def test_only_port_443(sock_path, upstream, port) -> None:
     assert upstream.asked == []
 
 
+@requires_unix_listener
 @pytest.mark.parametrize("answers,reason", [
     (["10.0.0.5"], "destination_blocked"),
     (["169.254.169.254"], "destination_blocked"),
@@ -267,6 +275,7 @@ async def test_an_allowed_host_resolving_anywhere_unsafe_is_refused(sock_path, u
     assert decisions[-1].reason == reason
 
 
+@requires_unix_listener
 async def test_resolution_failure_is_refused(sock_path, upstream) -> None:
     def broken(host, port):
         raise OSError("no such host")
@@ -282,6 +291,7 @@ async def test_resolution_failure_is_refused(sock_path, upstream) -> None:
 # ── DNS rebinding and checked IP = connected IP ─────────────────────────────
 
 
+@requires_unix_listener
 async def test_dns_rebinding_cannot_move_the_connection(sock_path, upstream) -> None:
     """The name resolves to a public address when checked and to the metadata
     endpoint on every later lookup: the proxy resolves once and connects to
@@ -298,6 +308,7 @@ async def test_dns_rebinding_cannot_move_the_connection(sock_path, upstream) -> 
     assert upstream.asked == [(PUBLIC, 443)]
 
 
+@requires_unix_listener
 async def test_each_connect_is_resolved_and_checked_afresh(sock_path, upstream) -> None:
     resolver = Resolver([PUBLIC], ["10.0.0.9"])
     proxy = await _proxy(sock_path, upstream, resolver=resolver)
@@ -310,6 +321,7 @@ async def test_each_connect_is_resolved_and_checked_afresh(sock_path, upstream) 
     assert upstream.asked == [(PUBLIC, 443)]
 
 
+@requires_unix_listener
 async def test_a_connection_that_lands_on_another_address_is_refused(sock_path, upstream) -> None:
     upstream.peer_override = PUBLIC_2
     decisions: list = []
@@ -331,6 +343,7 @@ async def test_the_real_connector_reports_the_actual_peer(upstream) -> None:
 # ── a compromised runtime trying to escape the proxy path (AGENT-T12-style) ─
 
 
+@requires_unix_listener
 @pytest.mark.parametrize("head", [
     b"GET http://evil.example.com/ HTTP/1.1\r\nHost: evil.example.com\r\n\r\n",          # absolute-form proxying
     b"GET / HTTP/1.1\r\nHost: " + HOST.encode() + b"\r\n\r\n",                             # origin-form
@@ -362,6 +375,7 @@ async def test_anything_but_a_well_formed_connect_to_an_allowed_host_is_refused(
     assert upstream.asked == []
 
 
+@requires_unix_listener
 async def test_an_oversized_request_head_is_refused(sock_path, upstream) -> None:
     decisions: list = []
     proxy = await _proxy(sock_path, upstream, decisions=decisions)
@@ -373,6 +387,7 @@ async def test_an_oversized_request_head_is_refused(sock_path, upstream) -> None
     assert decisions[-1].reason == "request_too_large"
 
 
+@requires_unix_listener
 async def test_a_slow_request_head_is_cut_off(sock_path, upstream) -> None:
     proxy = await _proxy(sock_path, upstream, header_timeout=0.3)
     try:
@@ -387,6 +402,7 @@ async def test_a_slow_request_head_is_cut_off(sock_path, upstream) -> None:
     assert upstream.asked == []
 
 
+@requires_unix_listener
 async def test_the_runs_connection_limit_holds(sock_path, upstream) -> None:
     proxy = await _proxy(sock_path, upstream, max_connections=2)
     try:
@@ -397,6 +413,7 @@ async def test_the_runs_connection_limit_holds(sock_path, upstream) -> None:
     assert len(upstream.asked) == 2
 
 
+@requires_unix_listener
 async def test_the_runs_byte_budget_ends_the_tunnel(sock_path, upstream) -> None:
     proxy = await _proxy(sock_path, upstream, max_bytes=1024)
     try:
@@ -420,6 +437,7 @@ async def test_the_runs_byte_budget_ends_the_tunnel(sock_path, upstream) -> None
     assert proxy.stats.bytes_up + proxy.stats.bytes_down <= 2048
 
 
+@requires_unix_listener
 async def test_an_idle_tunnel_is_closed(sock_path, upstream) -> None:
     proxy = await _proxy(sock_path, upstream, idle_timeout=0.3)
     try:
@@ -433,6 +451,7 @@ async def test_an_idle_tunnel_is_closed(sock_path, upstream) -> None:
         await proxy.stop()
 
 
+@requires_unix_listener
 async def test_stop_closes_live_tunnels(sock_path, upstream) -> None:
     proxy = await _proxy(sock_path, upstream)
     reader, writer = await asyncio.open_unix_connection(str(sock_path))
@@ -444,6 +463,7 @@ async def test_stop_closes_live_tunnels(sock_path, upstream) -> None:
     writer.close()
 
 
+@requires_unix_listener
 async def test_refusals_do_not_echo_what_the_runtime_sent(sock_path, upstream) -> None:
     proxy = await _proxy(sock_path, upstream)
     try:

@@ -20,7 +20,9 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from server.config.schema import AppConfig
 from server.execution import confinement
 from server.execution.break_glass import BreakGlassClaim
-from server.execution.process import ConstrainedProcessExecutor
+from server.execution.process import ConstrainedProcessExecutor, posix_process_controls_missing
+from server.fs.paths import descriptor_containment_missing
+from server.net.listen import unix_listener_missing
 from server.secrets.kek import generate_kek_value
 
 if TYPE_CHECKING:
@@ -47,6 +49,34 @@ NO_LANDLOCK_REASON = (
     "its refusal is asserted by the fail-closed tests (OD-BG-2: no global unconfined mode)"
 )
 requires_landlock = pytest.mark.skipif(not HAS_LANDLOCK, reason=NO_LANDLOCK_REASON)
+
+# ── hosts without the POSIX facilities the execution layer is built on ──────
+#
+# Linux is the server host; Windows is a development/test/client environment
+# only. On a host missing one of these facilities, the production code refuses
+# the operation (PLATFORM_UNSUPPORTED / UnixSocketsUnavailable / ContainerError)
+# instead of running it with weaker guarantees, and that refusal is asserted by
+# tests/execution/test_platform_support.py, which runs everywhere. The tests
+# below exercise the facility itself, so on such a host they are skipped with
+# exactly what is missing.
+POSIX_PROCESS_MISSING = posix_process_controls_missing()
+requires_posix_process_controls = pytest.mark.skipif(
+    POSIX_PROCESS_MISSING is not None,
+    reason=f"needs POSIX process controls ({POSIX_PROCESS_MISSING}); process execution refuses with "
+           "platform_unsupported on this host (asserted in test_platform_support.py)",
+)
+UNIX_LISTENER_MISSING = unix_listener_missing()
+requires_unix_listener = pytest.mark.skipif(
+    UNIX_LISTENER_MISSING is not None,
+    reason=f"needs Unix-domain sockets ({UNIX_LISTENER_MISSING}); the egress proxy and unix: listeners "
+           "refuse to start on this host (asserted in test_platform_support.py)",
+)
+DESCRIPTOR_CONTAINMENT_MISSING = descriptor_containment_missing()
+requires_descriptor_containment = pytest.mark.skipif(
+    DESCRIPTOR_CONTAINMENT_MISSING is not None,
+    reason=f"needs descriptor-relative containment ({DESCRIPTOR_CONTAINMENT_MISSING}); the filesystem "
+           "sandbox refuses every operation on this host (asserted in test_platform_support.py)",
+)
 
 DISPOSABLE_TASK_ID = uuid.UUID("00000000-0000-4000-8000-00000000d15b")
 DISPOSABLE_USER_ID = uuid.UUID("00000000-0000-4000-8000-00000000d15c")

@@ -40,7 +40,6 @@ import hashlib
 import json
 import logging
 import os
-import resource
 import shutil
 import signal
 import subprocess
@@ -49,11 +48,38 @@ import uuid
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
+try:
+    import resource
+except ImportError:  # not a POSIX host (Windows): no rlimits — see posix_process_controls_missing
+    resource = None  # type: ignore[assignment]
+
 from server.execution import confinement
 from server.execution.break_glass import BreakGlassClaim, BreakGlassLookup, InvocationOutcome
 from shared.schemas.execution import ExecutionError, ExecutionErrorCode, ExecutionResult
 
 logger = logging.getLogger("hypermind.execution.process")
+
+
+def posix_process_controls_missing() -> str | None:
+    """What this host lacks of the POSIX process controls every child relies
+    on, or None on a POSIX host.
+
+    A child is started by fork/exec with a `preexec_fn` that sets its rlimits
+    (and, when confined, applies Landlock/seccomp), in its own session, and is
+    reaped by killing its whole process group. Windows has none of these: no
+    `resource`, no `preexec_fn`, no process groups. `run` refuses on such a
+    host before anything is claimed or spawned. A child never runs without
+    the limits this module promises, and the break-glass path is no exception.
+    """
+
+    missing = []
+    if os.name != "posix":
+        missing.append("fork/exec with preexec_fn")
+    if resource is None:
+        missing.append("rlimits (the resource module)")
+    if not (hasattr(os, "killpg") and hasattr(os, "getpgid")):
+        missing.append("process groups (os.killpg)")
+    return ", ".join(missing) or None
 
 # A from-scratch environment — never the host's. PATH is the minimum needed
 # for a plain executable lookup-free `argv[0]` (we always pass an absolute
@@ -347,6 +373,15 @@ class ConstrainedProcessExecutor:
             # request to fall back silently.
             raise ExecutionError(ExecutionErrorCode.INVALID_ARGUMENTS, "timeout must be positive")
         effective_timeout = min(requested, self._max_timeout)
+
+        # Before any claim: a host that cannot apply this module's limits runs
+        # nothing — confined or break-glass — and spends no break-glass invocation.
+        missing = posix_process_controls_missing()
+        if missing is not None:
+            raise ExecutionError(
+                ExecutionErrorCode.PLATFORM_UNSUPPORTED,
+                f"process execution needs POSIX process controls this host lacks ({missing}); nothing was run",
+            )
 
         plan: confinement.ConfinementPlan | None = None
         broken = self._claim_break_glass(cleaned_argv[0], task_id, user_id)

@@ -141,7 +141,12 @@ class FilesystemSandbox:
         # directory would already have been created at the forbidden
         # location before the rejection ever fired.
         self._assert_not_sensitive(self._base_root)
-        Path(self._base_root).mkdir(parents=True, exist_ok=True, mode=0o700)
+        # Where the host cannot provide descriptor-relative containment
+        # (paths.require_descriptor_containment — Windows), the sandbox is
+        # inert: it creates nothing here, and every operation below refuses
+        # with PLATFORM_UNSUPPORTED before touching the filesystem.
+        if paths.descriptor_containment_missing() is None:
+            Path(self._base_root).mkdir(parents=True, exist_ok=True, mode=0o700)
         self.max_file_bytes = max_file_bytes
         self.max_sandbox_bytes = max_sandbox_bytes
         self.max_archive_entries = max_archive_entries
@@ -316,6 +321,9 @@ class FilesystemSandbox:
                 ExecutionErrorCode.RESOURCE_EXHAUSTED,
                 f"write exceeds the {self.max_file_bytes}-byte file cap",
             )
+        # Before the quota scan (an os.walk of the principal's area): on a host
+        # without descriptor-relative containment nothing is touched at all.
+        paths.require_descriptor_containment()
         self._check_quota(root_real, len(payload))
         # Write-family operations create a missing intermediate directory as
         # they walk to it (e.g. archive extraction into a fresh subtree);

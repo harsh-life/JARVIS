@@ -49,7 +49,7 @@ from typing import Awaitable, Callable
 
 from server.net import policy
 from server.net.destinations import hostname_allowed
-from server.net.listen import internal_listen_socket, remove_internal_socket
+from server.net.listen import internal_listen_socket, remove_internal_socket, require_unix_listener
 from server.net.resolve import Resolver, checked_address, system_resolver
 
 MAX_HEAD_BYTES = 8192
@@ -193,6 +193,11 @@ class EgressProxy:
     # ── lifecycle ────────────────────────────────────────────────────────
 
     async def start(self) -> None:
+        # The proxy is the container's only way out (OD-AF-12/13). Where this
+        # host cannot serve its Unix socket it refuses to start
+        # (UnixSocketsUnavailable) — the run never starts — and is never moved
+        # to TCP, a route this proxy's policy was not designed around.
+        require_unix_listener(self.binding)
         sock = internal_listen_socket(self.binding)
         self._server = await asyncio.start_unix_server(self._handle, sock=sock)
 

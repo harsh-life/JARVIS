@@ -219,10 +219,21 @@ class ManagedContainer:
 
 
 class ContainerEngine:
-    def __init__(self, settings: EngineSettings, *, euid: Callable[[], int] = os.geteuid, uid: int | None = None,
+    def __init__(self, settings: EngineSettings, *, euid: Callable[[], int] | None = None, uid: int | None = None,
                  gid: int | None = None, passthrough: Sequence[str] = ()) -> None:
+        # Rootless Podman runs a container as this process's own uid/gid, which
+        # only a POSIX host has. Looked up here, not as a default argument (that
+        # was evaluated at import and made this module unimportable on Windows);
+        # a host without them is refused, never given a made-up identity.
+        if euid is None or uid is None or gid is None:
+            missing = [name for name in ("geteuid", "getuid", "getgid") if not hasattr(os, name)]
+            if missing:
+                raise ContainerError(
+                    "the container engine needs a POSIX host (rootless Podman runs as this process's "
+                    f"uid/gid; os.{', os.'.join(missing)} unavailable here)"
+                )
         self.settings = settings
-        self._euid = euid
+        self._euid = euid if euid is not None else os.geteuid
         self._uid = os.getuid() if uid is None else uid
         self._gid = os.getgid() if gid is None else gid
         self._passthrough = tuple(passthrough)
