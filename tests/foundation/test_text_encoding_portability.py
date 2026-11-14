@@ -112,7 +112,7 @@ def test_frozen_evaluation_code_still_matches_its_rules_freeze() -> None:
     from experiments.annotation_tools import RULES_FREEZE
 
     pinned = json.loads(RULES_FREEZE.read_text(encoding="utf-8"))["code"]
-    assert set(pinned) == {str(p.relative_to(REPO_ROOT)) for p in _frozen_code()}
+    assert set(pinned) == {p.relative_to(REPO_ROOT).as_posix() for p in _frozen_code()}
     for path, digest in pinned.items():
         assert hashlib.sha256((REPO_ROOT / path).read_bytes()).hexdigest() == digest, path
 

@@ -36,7 +36,10 @@ def test_every_voice_contract_is_declared_and_kept():
     assert result.returncode == 0, result.stdout
     flat = re.sub(r"\s+", " ", result.stdout)
     for name in CONTRACTS:
-        assert re.search(re.escape(name) + r" KEPT", flat), name
+        # \s*: lint-imports lays its report out for the console width, and a
+        # long contract name can wrap right before its verdict (on Windows the
+        # space is lost: "...(docs/21)KEPT"). The verdict must still follow the name.
+        assert re.search(re.escape(name) + r"\s*KEPT", flat), name
     contracts = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["importlinter"]["contracts"]
     superuser = next(c for c in contracts if c["name"].startswith("Only the gateway reaches superuser authority"))
     assert "server.voice" in superuser["source_modules"]
