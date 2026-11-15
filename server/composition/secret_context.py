@@ -21,6 +21,7 @@ from typing import Awaitable, Callable
 
 from server.models.provider import KeyProvider
 from server.secrets.requester import SecretRequester
+from server.secrets.store import store_handle
 
 SecretResolver = Callable[[str, SecretRequester], Awaitable[str]]
 
@@ -37,9 +38,12 @@ def key_provider_for(secret_ref: str | None, requester: SecretRequester) -> KeyP
     if not secret_ref:
         return None
 
-    # A config-file reference carries a prefix (15 §2); a `ModelConfiguration`
-    # stored in an AgentConfiguration row carries a bare SecretStore handle
-    # (01 §9.1). Only `env:` reads the environment — anything else is a handle.
+    # Only `env:` reads the environment — anything else names a SecretStore
+    # handle. A config-file reference (`SecretRef`, 15 §2) is `secretstore:<id>`,
+    # which *is* the store's handle (handles carry their own prefix); a stored
+    # AgentConfiguration row carries one extra prefix by design
+    # (model_config._row_ref). `store_handle` maps both to the handle and
+    # rewrites nothing else; an unknown result simply fails at the store.
     if secret_ref.startswith("env:"):
         env_name = secret_ref[len("env:") :]
 
@@ -51,7 +55,7 @@ def key_provider_for(secret_ref: str | None, requester: SecretRequester) -> KeyP
 
         return _from_env
 
-    handle = secret_ref[len("secretstore:") :] if secret_ref.startswith("secretstore:") else secret_ref
+    handle = store_handle(secret_ref)
 
     async def _from_store() -> str:
         resolver = CURRENT_SECRET_RESOLVER.get()

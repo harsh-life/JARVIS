@@ -36,6 +36,7 @@ from server.execution.device_hub import DeviceHub
 from server.gateway.security import SecurityCore
 from server.memory.provider import MemoryProvider
 from server.secrets.requester import SecretRequester
+from server.secrets.store import store_handle
 from server.storage import StorageBackend
 from server.storage.models import SecretReference
 
@@ -207,7 +208,9 @@ class MetadataResolvability:
     async def resolves(self, handle: str) -> bool | None:
         if handle.startswith("env:"):
             return bool(os.environ.get(handle[len("env:"):]))
-        name = handle[len("secretstore:"):] if handle.startswith("secretstore:") else handle
+        # A configured `secretstore:<id>` is the store's handle itself; stripping
+        # its prefix reported every valid reference as unresolvable.
+        name = store_handle(handle)
         try:
             async with self._storage.session() as session:
                 row = await session.get(SecretReference, name)

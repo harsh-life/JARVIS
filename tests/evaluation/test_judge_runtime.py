@@ -462,3 +462,64 @@ async def test_the_judge_resolves_only_a_model_key_in_its_own_context(judged):
     assert {g.result.value for g in judged_gets} == {"success", "blocked"}
     blob = " ".join(g.resource for g in gets)
     assert "judge-model-key-value-0001" not in blob and "an-oauth-token-value-0002" not in blob
+
+
+async def test_the_judge_resolves_the_handle_its_config_names(judged):
+    """Regression: `evaluation.provider.secret_ref` is `secretstore:<id>` in a
+    config file — the store's handle itself. `key_provider_for` used to strip
+    the prefix and ask for a bare id that never exists. The handle here is the
+    one `SecretStore.set` returned, used exactly as config holds it (the
+    previous test's `secretstore:` + handle is the stored-row form)."""
+
+    import uuid as _uuid
+
+    from server.composition.secret_context import key_provider_for
+    from server.secrets.requester import SecretRequester
+    from server.security.audit import AuditLogger
+    from shared.schemas.enums import SecretClass, SecretOwnerScopeType
+    from shared.schemas.evaluation import Evaluation
+
+    h, _ = await judged()
+
+    async def store(value: str, cls: SecretClass) -> str:
+        async with h.storage.session() as s:
+            ref = await h.core.secret_store.set(
+                s, owner_scope_type=SecretOwnerScopeType.SERVER, owner_scope_id=None, secret_class=cls,
+                value=value, requester=SecretRequester.server(), audit=AuditLogger(s, request_id=_uuid.uuid4()))
+            await s.commit()
+            return ref
+
+    model_key = await store("judge-config-key-value-0003", SecretClass.MODEL_API_KEY)
+    oauth = await store("an-oauth-token-value-0004", SecretClass.OAUTH_TOKEN)
+    assert model_key.startswith("secretstore:") and not model_key.startswith("secretstore:secretstore:")
+    seen: dict[str, object] = {}
+
+    async def attempt(ref: str) -> object:
+        try:
+            return await key_provider_for(ref, SecretRequester.server())()
+        except Exception as exc:  # noqa: BLE001
+            return type(exc).__name__
+
+    class KeyedJudge:
+        id, version = "keyed_judge", "1"
+
+        async def health(self):
+            return True
+
+        async def evaluate(self, trace, kind):
+            seen["config_handle"] = await attempt(model_key)
+            seen["oauth_handle"] = await attempt(oauth)
+            seen["unknown_handle"] = await attempt("secretstore:" + _uuid.uuid4().hex)
+            seen["malformed"] = await attempt(f"secretstore:secretstore:{model_key}")
+            return Evaluation(task_id=trace.task_id, evaluator_id=self.id, evaluator_version="1", kind=kind)
+
+    h.app.state.evaluation.service._provider = KeyedJudge()
+    await completed_task(h, await h.user("alice"), final("ok"))
+    await drain(h)
+
+    assert seen["config_handle"] == "judge-config-key-value-0003"
+    assert seen["oauth_handle"] == "SecretUnavailable"
+    # Unknown, and malformed (never "repaired" into the valid handle): the
+    # store refuses both — no value is returned.
+    assert seen["unknown_handle"] == "SecretNotFound"
+    assert seen["malformed"] == "SecretNotFound"

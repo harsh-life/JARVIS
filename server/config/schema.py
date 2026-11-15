@@ -30,8 +30,13 @@ from shared.schemas.push import FcmClientOptions, PushProvider
 # A secret reference names *where* to obtain a secret; it is never the
 # secret itself. Two forms are accepted:
 #   env:VAR_NAME          -> resolve from that environment variable at use
-#   secretstore:<handle>  -> an opaque SecretStore handle (12_SECRETSTORE.md);
-#                            resolution is not implemented in this branch.
+#   secretstore:<id>      -> a SecretStore handle (12_SECRETSTORE.md). The
+#                            store's handles carry this prefix themselves, so
+#                            the whole value *is* the handle: consumers map it
+#                            with `server.secrets.store.store_handle`, never by
+#                            stripping the prefix. (`secrets.kek_source` accepts
+#                            only `env:` — the KEK cannot come from the store it
+#                            unlocks.)
 _SECRET_REF_RE = re.compile(r"^(env|secretstore):[A-Za-z0-9_\-./]+$")
 
 
