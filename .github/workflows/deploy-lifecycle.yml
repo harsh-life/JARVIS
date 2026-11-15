@@ -1,0 +1,76 @@
+# Deploy lifecycle — a fresh Linux host installs and operates the server the
+# way docs/DEPLOYMENT.md says (prerequisites, clone, deploy/postgres.md §1,
+# deploy/bootstrap.sh, systemd), then goes through start, graceful stop,
+# restart with persistence, kill -9 recovery, a wrong-KEK fail-closed start,
+# a local-model start without a model key, and the backup/restore drill.
+#
+# GitHub's Ubuntu runner is a throwaway VM with systemd as PID 1 and root via
+# sudo, which is exactly what tests/deploy/host_lifecycle.sh needs. No secret
+# is used: the KEK is generated on the runner by the bootstrap, and the model
+# key and stored "client secret" are placeholders / random test data.
+
+name: Deploy lifecycle
+
+on:
+  push:
+    paths:
+      - "deploy/**"
+      - "config.pilot.example.yaml"
+      - "pyproject.toml"
+      - "server/storage/migrations/**"
+      - "server/composition/main.py"
+      - "server/gateway/app.py"
+      - "server/gateway/routers/health.py"
+      - "server/secrets/**"
+      - "server/config/**"
+      - "tests/deploy/**"
+      - ".github/workflows/deploy-lifecycle.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-lifecycle-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fresh-host:
+    name: fresh host (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Make the runner a fresh host
+        # The runner image ships a PostgreSQL install and other tooling; remove
+        # the server packages so the documented install path is what runs.
+        run: |
+          sudo systemctl stop postgresql || true
+          sudo apt-get purge -y -q 'postgresql*' >/dev/null || true
+          sudo rm -rf /var/lib/postgresql /etc/postgresql
+          id jarvis 2>/dev/null && exit 1 || true
+          test ! -e /opt/jarvis && test ! -e /etc/jarvis && test ! -e /var/lib/jarvis
+
+      - name: Install and lifecycle drill
+        env:
+          LIFECYCLE_LOG_DIR: ${{ runner.temp }}/lifecycle
+        run: sudo --preserve-env=LIFECYCLE_LOG_DIR bash tests/deploy/host_lifecycle.sh "$GITHUB_WORKSPACE"
+
+      - name: Collect logs
+        if: always()
+        run: |
+          sudo journalctl -u jarvis --no-pager > "$RUNNER_TEMP/lifecycle/journal-jarvis-final.log" 2>&1 || true
+          sudo chmod -R a+r "$RUNNER_TEMP/lifecycle" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lifecycle-logs-${{ matrix.os }}
+          path: ${{ runner.temp }}/lifecycle
+          retention-days: 14
