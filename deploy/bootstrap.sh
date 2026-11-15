@@ -43,6 +43,44 @@ as_jarvis() {
 
 [ "$(id -u)" -eq 0 ] || { echo "run as root (it creates a system user and /etc/jarvis)" >&2; exit 1; }
 [ -f "$JARVIS_HOME/pyproject.toml" ] || { echo "no JARVIS checkout at $JARVIS_HOME" >&2; exit 1; }
+
+# 0. Preflight, before anything on the host changes: a half-run bootstrap
+#    leaves a user and directories behind, so every prerequisite is checked
+#    first and named with the package that provides it.
+#    The interpreter is $JARVIS_PYTHON if set, else the first of python3,
+#    python3.13, python3.12, python3.11 that is >= 3.11 and can build a venv
+#    (Ubuntu 22.04's python3 is 3.10; its python3.11 package works).
+python_ok() {
+    "$1" -c 'import sys, venv, ensurepip; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1
+}
+if [ -x "$JARVIS_HOME/.venv/bin/python" ]; then
+    PYTHON="$JARVIS_HOME/.venv/bin/python"
+elif [ -n "${JARVIS_PYTHON:-}" ]; then
+    PYTHON="$JARVIS_PYTHON"
+    python_ok "$PYTHON" || { echo "JARVIS_PYTHON=$PYTHON is not Python >= 3.11 with venv support" >&2; exit 1; }
+else
+    PYTHON=""
+    for candidate in python3 python3.13 python3.12 python3.11; do
+        if command -v "$candidate" >/dev/null 2>&1 && python_ok "$candidate"; then
+            PYTHON="$(command -v "$candidate")"; break
+        fi
+    done
+fi
+missing=""
+[ -n "$PYTHON" ] || missing="$missing python3 (>= 3.11) python3-venv"
+command -v git >/dev/null 2>&1 || missing="$missing git"
+command -v runuser >/dev/null 2>&1 || missing="$missing util-linux"
+if [ -n "$missing" ]; then
+    cat >&2 <<EOF
+missing prerequisites:$missing
+Nothing was changed. On Debian 12+/Ubuntu 24.04+:
+    apt-get install -y git python3 python3-venv
+On Ubuntu 22.04 (python3 is 3.10 there):
+    apt-get install -y git python3.11 python3.11-venv
+(docs/DEPLOYMENT.md §3, "Prerequisites")
+EOF
+    exit 1
+fi
 # The code and its venv are public (root-owned, world-readable, read-only to
 # the service); everything secret is created under an explicit 077 below.
 umask 022
@@ -65,8 +103,8 @@ install -d -m 0700 -o root -g root "$CRED_DIR"
 
 # 3. The virtual environment, owned by root (the service only reads it).
 if [ ! -x "$JARVIS_HOME/.venv/bin/python" ]; then
-    say "creating $JARVIS_HOME/.venv"
-    python3 -m venv "$JARVIS_HOME/.venv"
+    say "creating $JARVIS_HOME/.venv with $("$PYTHON" -V 2>&1)"
+    "$PYTHON" -m venv "$JARVIS_HOME/.venv"
 fi
 if ! "$JARVIS_HOME/.venv/bin/python" -c "import server, mem0" >/dev/null 2>&1; then
     say "installing JARVIS with the memory stack"
@@ -94,11 +132,25 @@ if [ ! -s "$CRED_DIR/kek" ]; then
     Copy it NOW to a place that is not this host and not any backup of it
     (a password manager, or printed and locked away). Without it, nothing the
     SecretStore holds can ever be decrypted; with it, anyone holding a backup
-    can. It will not be shown again:
-
-    $(cat "$CRED_DIR/kek")
-
+    can.
 EOF
+    # Shown only on an interactive terminal: piped or captured output (CI,
+    # cloud-init, `| tee bootstrap.log`) would otherwise keep a copy of the
+    # key in a file nobody thinks of as a secret.
+    if [ -t 1 ]; then
+        printf '    It will not be shown again:\n\n    %s\n\n' "$(cat "$CRED_DIR/kek")"
+    else
+        printf '    Output is not a terminal, so it is not printed. Read it once with\n        sudo cat %s\n\n' "$CRED_DIR/kek"
+    fi
+fi
+
+# 5b. The model key credential. jarvis.service always loads it (LoadCredential=
+#     fails the unit when the file is missing, and ImportCredential= needs
+#     systemd 254), so an empty placeholder exists until the operator writes
+#     the provider key; jarvis-start.sh exports it only when non-empty. A local
+#     (Ollama) primary simply leaves it empty.
+if [ ! -e "$CRED_DIR/model_api_key" ]; then
+    (umask 077; : > "$CRED_DIR/model_api_key")
 fi
 
 # 6. Optional superuser authority (12 §4): a second, distinct secret.
@@ -162,7 +214,8 @@ fi
 
 remaining=""
 [ -s "$CRED_DIR/model_api_key" ] || remaining="$remaining
-  * put the model provider's key in $CRED_DIR/model_api_key (root, 0600)"
+  * a remote model: put the provider's key in $CRED_DIR/model_api_key (root, 0600);
+    a local (Ollama) model: leave that file empty"
 grep -q "REPLACE" "$CONFIG" && remaining="$remaining
   * replace every REPLACE value in $CONFIG (base_url, model, client_id, allowed_emails, ...)"
 remaining="$remaining

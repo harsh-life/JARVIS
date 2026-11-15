@@ -7,8 +7,8 @@
 # the unit file, an EnvironmentFile or config.yaml. They are exported here
 # under the names config.yaml's `env:` references resolve:
 #   kek              -> HYPERMIND_KEK              (secrets.kek_source, required)
-#   model_api_key    -> JARVIS_MODEL_API_KEY       (agent.secret_ref, if present)
-#   superuser_token  -> HYPERMIND_SUPERUSER_TOKEN  (optional; absent = no superuser)
+#   model_api_key    -> JARVIS_MODEL_API_KEY       (agent.secret_ref; empty = none, e.g. a local model)
+#   superuser_token  -> HYPERMIND_SUPERUSER_TOKEN  (optional; absent or empty = no superuser)
 #
 # The server binds loopback only: Caddy or cloudflared on this host is its
 # only client, so forwarded headers are trusted from 127.0.0.1 alone. The
@@ -22,12 +22,12 @@ set -eu
 HYPERMIND_KEK="$(cat "$CREDENTIALS_DIRECTORY/kek")"
 export HYPERMIND_KEK
 
-if [ -r "$CREDENTIALS_DIRECTORY/model_api_key" ]; then
+if [ -s "$CREDENTIALS_DIRECTORY/model_api_key" ]; then
     JARVIS_MODEL_API_KEY="$(cat "$CREDENTIALS_DIRECTORY/model_api_key")"
     export JARVIS_MODEL_API_KEY
 fi
 
-if [ -r "$CREDENTIALS_DIRECTORY/superuser_token" ]; then
+if [ -s "$CREDENTIALS_DIRECTORY/superuser_token" ]; then
     HYPERMIND_SUPERUSER_TOKEN="$(cat "$CREDENTIALS_DIRECTORY/superuser_token")"
     export HYPERMIND_SUPERUSER_TOKEN
 fi

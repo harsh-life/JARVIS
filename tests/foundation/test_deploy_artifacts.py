@@ -130,7 +130,10 @@ def test_the_start_script_binds_loopback_and_logs_no_request_lines():
     assert "0.0.0.0" not in text
 
 
-@pytest.mark.parametrize(("shell", "script"), [("sh", "jarvis-start.sh"), ("bash", "bootstrap.sh")])
+@pytest.mark.parametrize(("shell", "script"), [
+    ("sh", "jarvis-start.sh"),
+    ("bash", "bootstrap.sh"),
+])
 def test_the_scripts_parse(shell, script):
     if shutil.which(shell) is None:
         pytest.skip(f"{shell} not installed")
@@ -152,6 +155,39 @@ def test_the_bootstrap_never_puts_the_kek_on_a_command_line():
     for line in (DEPLOY / "bootstrap.sh").read_text().splitlines():
         if "as_jarvis" in line and "KEK" in line:
             assert "export HYPERMIND_KEK" in line, line
+
+
+def test_the_bootstrap_checks_every_prerequisite_before_changing_the_host():
+    # A fresh Debian/Ubuntu host lacks git and python3-venv, and Ubuntu 22.04's
+    # python3 is 3.10: the baseline bootstrap created the user and directories
+    # and then died. The preflight must come before the first change.
+    text = (DEPLOY / "bootstrap.sh").read_text()
+    preflight = text.index("# 0. Preflight")
+    assert preflight < text.index("useradd") and preflight < text.index("install -d")
+    assert "sys.version_info < (3, 11)" in text and "import sys, venv, ensurepip" in text
+    assert "python3.11-venv" in text                       # the Ubuntu 22.04 route is named
+    assert '"$PYTHON" -m venv' in text and "python3 -m venv" not in text
+
+
+def test_the_bootstrap_shows_the_kek_only_on_a_terminal():
+    text = (DEPLOY / "bootstrap.sh").read_text()
+    block = text[text.index("# 5. The KEK"):text.index("# 5b.")]
+    shown = block.index('"$(cat "$CRED_DIR/kek")"')
+    assert block.rfind("if [ -t 1 ]; then", 0, shown) != -1
+    assert block.count('$(cat "$CRED_DIR/kek")') == 1
+
+
+def test_a_local_model_needs_no_model_key_but_the_unit_always_loads_one():
+    # LoadCredential= fails the unit when its file is missing (baseline:
+    # 243/CREDENTIALS on a local-model host), so the bootstrap leaves an empty
+    # placeholder and the start script exports the key only when non-empty.
+    assert "model_api_key:/etc/jarvis/credentials/model_api_key" in (DEPLOY / "jarvis.service").read_text()
+    bootstrap = (DEPLOY / "bootstrap.sh").read_text()
+    assert 'if [ ! -e "$CRED_DIR/model_api_key" ]; then' in bootstrap
+    assert '(umask 077; : > "$CRED_DIR/model_api_key")' in bootstrap
+    start = (DEPLOY / "jarvis-start.sh").read_text()
+    assert 'if [ -s "$CREDENTIALS_DIRECTORY/model_api_key" ]; then' in start
+    assert 'if [ -s "$CREDENTIALS_DIRECTORY/superuser_token" ]; then' in start
 
 
 # ── F5: the proxies expose exactly the server's public surface ─────────────
