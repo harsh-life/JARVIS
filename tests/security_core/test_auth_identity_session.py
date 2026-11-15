@@ -106,6 +106,78 @@ async def test_auth_t1_unsigned_token_is_rejected(api):
         )
 
 
+
+# ── Google's two documented `iss` forms ─────────────────────────────────────
+
+
+@pytest.mark.parametrize("presented", ["https://accounts.google.com", "accounts.google.com"])
+async def test_google_issuer_accepts_both_documented_forms_as_one_identity(presented):
+    """Google documents `iss` as either form; both validate against the Google
+    issuer, and both yield the canonical issuer so the user key never splits."""
+
+    from server.auth.oidc import GOOGLE_ISSUER
+    from tests.support import LocalOIDCProvider
+
+    provider = LocalOIDCProvider(issuer_value=GOOGLE_ISSUER)
+    token = provider.mint_id_token(nonce="n", iss=presented)
+
+    identity = validate_id_token(
+        token, issuer=GOOGLE_ISSUER, audience=provider.client_id,
+        expected_nonce="n", jwks=await provider.jwks(),
+    )
+    assert identity.issuer == GOOGLE_ISSUER
+
+
+@pytest.mark.parametrize(
+    "presented",
+    [
+        "https://accounts.google.com/",
+        "http://accounts.google.com",
+        "HTTPS://ACCOUNTS.GOOGLE.COM",
+        "Accounts.Google.Com",
+        "accounts.google.com.evil.test",
+        "https://accounts.google.com.evil.test",
+        "https://evil.test/accounts.google.com",
+        " accounts.google.com",
+        "",
+    ],
+)
+async def test_google_issuer_rejects_every_near_miss(presented):
+    from server.auth.oidc import GOOGLE_ISSUER
+    from tests.support import LocalOIDCProvider
+
+    provider = LocalOIDCProvider(issuer_value=GOOGLE_ISSUER)
+    token = provider.mint_id_token(nonce="n", iss=presented)
+
+    with pytest.raises(InvalidIdToken):
+        validate_id_token(
+            token, issuer=GOOGLE_ISSUER, audience=provider.client_id,
+            expected_nonce="n", jwks=await provider.jwks(),
+        )
+
+
+@pytest.mark.parametrize(
+    "presented",
+    ["accounts.google.test", "https://accounts.google.com", "accounts.google.com"],
+)
+async def test_other_issuers_gain_no_alias(presented):
+    """The Google allowance is keyed on Google's issuer only: another provider's
+    issuer still matches itself exactly, and Google's forms do not satisfy it."""
+
+    from server.auth.oidc import accepted_issuers
+    from tests.support import TEST_ISSUER, LocalOIDCProvider
+
+    assert accepted_issuers(TEST_ISSUER) == (TEST_ISSUER,)
+    provider = LocalOIDCProvider()
+    token = provider.mint_id_token(nonce="n", iss=presented)
+
+    with pytest.raises(InvalidIdToken):
+        validate_id_token(
+            token, issuer=TEST_ISSUER, audience=provider.client_id,
+            expected_nonce="n", jwks=await provider.jwks(),
+        )
+
+
 async def test_oidc_requests_only_identity_scopes():
     """AUTH-002/003 (03 §2.2 `[LOCKED]`) — only `openid`, `email`, `profile`.
 

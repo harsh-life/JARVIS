@@ -42,6 +42,10 @@ from server.secrets.crypto import generate_token
 SCOPES = ("openid", "email", "profile")
 
 GOOGLE_ISSUER = "https://accounts.google.com"
+# Google documents exactly two values for `iss` in its ID tokens: the URL form
+# and the bare host form. Both are Google; the URL form is the canonical one
+# stored as the identity's issuer, so the same account never splits in two.
+GOOGLE_ISSUER_FORMS = (GOOGLE_ISSUER, "accounts.google.com")
 GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 GOOGLE_JWKS_URI = "https://www.googleapis.com/oauth2/v3/certs"
@@ -161,7 +165,8 @@ def validate_id_token(
     five token-intrinsic ones are here:
 
     1. **Signature** against the provider's published JWKS.
-    2. **Issuer** equals the expected issuer exactly.
+    2. **Issuer** equals the expected issuer exactly (for Google, either of
+       its two documented forms — `accepted_issuers`).
     3. **Audience** equals this deployment's client_id exactly — this is what
        rejects a token minted for a different app.
     4. **Expiry / iat / nbf** sane.
@@ -187,7 +192,7 @@ def validate_id_token(
             key=key.key,
             algorithms=list(ALLOWED_ALGORITHMS),
             audience=audience,
-            issuer=issuer,
+            issuer=accepted_issuers(issuer),
             leeway=CLOCK_SKEW_LEEWAY,
             options={
                 "require": ["exp", "iat", "iss", "aud", "sub"],
@@ -225,12 +230,28 @@ def validate_id_token(
         raise InvalidIdToken("id_token carries no subject")
 
     return OIDCIdentity(
-        issuer=str(claims["iss"]),
+        # The configured issuer, not the presented spelling: the check above
+        # admitted only an exact accepted form of it, and the identity key
+        # (issuer, subject) must not depend on which form Google used.
+        issuer=issuer,
         subject=str(subject),
         email=claims.get("email"),
         display_name=claims.get("name"),
         email_verified=claims.get("email_verified") in (True, "true"),
     )
+
+
+def accepted_issuers(issuer: str) -> tuple[str, ...]:
+    """The exact `iss` values accepted for a configured issuer.
+
+    Google's own issuer admits its two documented forms; every other issuer
+    admits itself only. Exact string matches throughout: no prefix, suffix,
+    case or trailing-slash tolerance, and no other provider gains an alias.
+    """
+
+    if issuer == GOOGLE_ISSUER:
+        return GOOGLE_ISSUER_FORMS
+    return (issuer,)
 
 
 def _select_key(jwks: dict[str, Any], kid: str | None) -> PyJWK:
