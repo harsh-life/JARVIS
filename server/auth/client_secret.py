@@ -15,6 +15,15 @@ only a reference, in one of the two forms every other credential uses:
   pointed at a device credential or a user's model key and ship it to Google
   (the rule `server/composition/push.py` applies to its own credential).
 
+`oauth_token` is shared with the push wake's Google service-account key (the
+only other consumer of the class), and the setting names a handle directly, so
+class and scope alone cannot tell the two apart. A resolved value shaped like
+another credential — a JSON object (a service-account key), a PEM key, or
+anything with whitespace — is refused before any request is made: an OAuth
+client secret is one opaque token. That keeps a mis-pasted handle from sending
+a private key to Google as a "client secret". (The reverse is already safe: the
+push sender parses its credential as service-account JSON and fails locally.)
+
 The resolved value goes to exactly one place — the body of the token request
 in `GoogleOIDCProvider.exchange_code` — and is held only for that call. It is
 never logged, audited, cached, returned, or put in a URL, and nothing here
@@ -94,7 +103,7 @@ class ClientSecretSource:
                     "environment variable %s, which is unset or empty", self._env_name,
                 )
                 raise OIDCClientSecretUnavailable("client_secret_env_unset")
-            return value
+            return self._only_a_client_secret(value)
 
         handle = self._handle
         requester = SecretRequester.server()
@@ -121,7 +130,17 @@ class ClientSecretSource:
             raise OIDCClientSecretUnavailable("client_secret_store_unavailable") from None
         if not value.strip():
             raise OIDCClientSecretUnavailable("client_secret_empty")
-        return value
+        return self._only_a_client_secret(value)
+
+    def _only_a_client_secret(self, value: str) -> str:
+        if looks_like_another_credential(value):
+            logger.error(
+                "OIDC client secret refused: %s holds something shaped like another credential "
+                "(a JSON object, a PEM key, or a value with whitespace), not an OAuth client secret",
+                self.secret_ref,
+            )
+            raise OIDCClientSecretUnavailable("client_secret_wrong_shape")
+        return value.strip()
 
     async def verify(self, session: AsyncSession) -> None:
         """Startup check, without decrypting anything: the variable is set, or
@@ -155,4 +174,17 @@ def _is_client_secret(reference: SecretReference) -> bool:
     return (
         reference.class_ is CLIENT_SECRET_CLASS
         and reference.owner_scope_type is SecretOwnerScopeType.SERVER
+    )
+
+
+def looks_like_another_credential(value: str) -> bool:
+    """True for a value an OAuth client secret never is: a JSON object or
+    array (e.g. a Google service-account key), a PEM block, or anything
+    containing whitespace once trimmed."""
+
+    trimmed = value.strip()
+    return (
+        trimmed.startswith(("{", "["))
+        or "-----BEGIN" in trimmed
+        or any(c.isspace() for c in trimmed)
     )

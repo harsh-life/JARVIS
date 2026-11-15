@@ -23,6 +23,7 @@ real endpoint checks) and driven through the **production**
 
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 import uuid
@@ -593,3 +594,60 @@ class _Stdin:
 
     def readline(self) -> str:
         return self._value + "\n"
+
+
+# ── oauth_token is shared with the push credential ──────────────────────────
+
+
+# Assembled at runtime so no key-shaped literal sits in the repository (the
+# repo secret scan, tests/foundation/test_repo_secret_scan.py). Not a key.
+_PEM_BEGIN, _PEM_END = "-----BEGIN " + "PRIVATE KEY-----", "-----END " + "PRIVATE KEY-----"
+SERVICE_ACCOUNT_SHAPED = json.dumps({"type": "service_account", "client_email": "x@y.test",
+                                     "private_key": f"{_PEM_BEGIN}\nTEST\n{_PEM_END}\n"})
+
+
+@pytest.mark.parametrize("value", [
+    SERVICE_ACCOUNT_SHAPED,
+    f"{_PEM_BEGIN}TEST{_PEM_END}",
+    "two words",
+    '["a"]',
+])
+async def test_a_value_shaped_like_another_credential_is_never_sent(world_factory, storage, value, caplog):
+    """The push wake's service-account key is also a server-owned oauth_token.
+    If its handle were pasted into client_secret_ref, nothing may go to Google."""
+
+    caplog.set_level(logging.DEBUG)
+    handle = await store_secret(storage, value)
+    world = await world_factory(config=oidc_config(handle), google=FakeGoogle(expected_secret=new_secret()))
+    resp = await world.login()
+    assert resp.status_code == 503 and resp.json()["error"]["code"] == "dependency_unavailable"
+    assert world.google.token_requests == []
+    assert await world.users() == 0
+    assert "shaped like another credential" in caplog.text
+    assert "PRIVATE KEY" not in caplog.text and "service_account" not in caplog.text
+
+
+async def test_the_same_guard_applies_to_an_env_reference(db, audit, store, monkeypatch):
+    monkeypatch.setenv(SECRET_ENV, SERVICE_ACCOUNT_SHAPED)
+    source = ClientSecretSource(secret_ref=f"env:{SECRET_ENV}", secret_store=store)
+    with pytest.raises(OIDCClientSecretUnavailable) as excinfo:
+        await source.resolve(db, audit)
+    assert excinfo.value.reason == "client_secret_wrong_shape"
+
+
+async def test_the_push_sender_cannot_use_an_oidc_client_secret_either():
+    """The reverse direction: the FCM sender parses its credential as
+    service-account JSON, so an OAuth client secret fails locally."""
+
+    from server.execution.device_wake import PushCredentialError, _service_account
+
+    with pytest.raises(PushCredentialError):
+        _service_account(new_secret())
+
+
+def test_a_genuine_client_secret_shape_passes():
+    from server.auth.client_secret import looks_like_another_credential
+
+    for _ in range(20):
+        assert not looks_like_another_credential(new_secret())
+    assert not looks_like_another_credential("GOCSPX-" + secrets.token_urlsafe(21))

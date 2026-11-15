@@ -113,6 +113,11 @@ in docs/DEPLOYMENT.md. The variable name is your choice.
   `503 dependency_unavailable` ("sign-in is not available on this server right
   now"). Nothing is sent to Google, and the audit trail records
   `auth.oidc.callback.rejected` on `auth:oidc:client_secret_unavailable`.
+- **Only a client secret is sent.** `oauth_token` is also the class of the push
+  wake's Google service-account key, and the setting names a handle directly.
+  So a resolved value shaped like another credential (a JSON object, a PEM key,
+  or anything with whitespace) is refused with the same `503`, and nothing is
+  sent to Google.
 - **Never** in a log line, an audit row (SecretStore audit rows carry the handle
   and requester `server`), an API response, a redirect, the database in clear,
   or anything the desktop companion or a browser receives.
@@ -191,6 +196,7 @@ lint-imports --config pyproject.toml
 | Server will not start: `security.oidc.client_secret_ref is env:X, but that environment variable is unset or empty` | the variable is missing in the service environment | set it, or remove the reference |
 | Server will not start: `… no such SecretStore reference exists` / `… is revoked` / `… is not a server-owned oauth_token secret` | wrong handle, a revoked one, or a different kind of secret | `store` a new one and update the handle |
 | Callback `503 dependency_unavailable`; log `OIDC client secret unavailable: …` | resolution failed at login (variable removed, store locked, handle revoked) | as above; `… check` |
+| Callback `503`; log `OIDC client secret refused: … shaped like another credential` | the reference names something that is not a client secret, such as the push wake's service-account key (also a server-owned `oauth_token`) | point `client_secret_ref` at the handle `store` printed for the client secret |
 | Callback `401`; log `error=invalid_request client_authenticated=False` plus a hint naming `security.oidc.client_secret_ref` | a Web client with no secret configured | configure §3 |
 | Callback `401`; log `error=invalid_client client_authenticated=True` | wrong or deleted secret, or the secret of a different client | rotate (§5); check that `client_id` and secret are a pair |
 | Callback `401`; log `error=invalid_grant` | code reused or expired, `redirect_uri` mismatch, or PKCE mismatch | start a new login; check §2 |
