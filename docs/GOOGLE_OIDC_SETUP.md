@@ -19,17 +19,38 @@ What does not change:
 
 ## 1. Create the OAuth client (Google Cloud console)
 
-1. **APIs & Services → OAuth consent screen**: user type *External*, publishing
-   status **Testing**, and add the people who may sign in as *test users*. This is
-   a second gate in front of `security.oidc.allowed_emails`.
-2. **APIs & Services → Credentials → Create credentials → OAuth client ID**,
-   application type **Web application**.
-3. **Authorized redirect URIs**: add exactly one URI per deployment (§2).
+Select the intended project in the console's project picker first, and change
+nothing else in it. Newer consoles group these pages under **Google Auth
+Platform**; older ones put them under *APIs & Services → OAuth consent screen*.
+
+1. **Consent screen** (*Branding*): app name and support email. User type
+   **External**, publishing status **Testing**.
+2. **Test users** (*Audience → Test users*): add each disposable account that
+   may sign in. While the app is in Testing, any other Google account gets
+   `Error 403: access_denied` from Google before JARVIS sees anything. This is
+   a second gate in front of `security.oidc.allowed_emails`. Adding a test user
+   grants that account nothing in your project: it only lets it complete the
+   consent screen.
+3. **Clients → Create client** (or *Credentials → Create credentials → OAuth
+   client ID*), application type **Web application**.
+4. **Authorized redirect URIs**: add exactly the URI from §2, character for
+   character. `localhost` and `127.0.0.1` are **different** URIs to Google.
    *Authorized JavaScript origins* are not used.
-4. Copy the **client ID** into `security.oidc.client_id` (a public value).
-5. Copy the **client secret** straight into the SecretStore or an environment
-   variable (§3). Never put it in `config.yaml`, a commit, a ticket or a chat.
-   If the console does not show an existing secret again, add a new one (§5).
+5. Copy the **client ID** into `security.oidc.client_id` (a public value).
+6. Put the **client secret** straight into the SecretStore through the hidden
+   prompt (§3a), or into an environment variable (§3b). Never put it in
+   `config.yaml`, a commit, a downloaded JSON file you keep, a ticket or a chat.
+   Newer consoles show a secret only when it is created: if you cannot see
+   it, add a new secret (§5) rather than reusing an old file.
+
+Any `client_secret_*.json` you downloaded earlier holds a secret in plain text.
+Treat it as exposed: delete the file, and disable that secret in the console
+once a new one works.
+
+**Check that a client exists** without signing in: open the server's
+`GET /api/v1/auth/oidc/start` `redirect_url` in a private window. Google's
+sign-in page means the client and redirect URI are accepted. `Error 401:
+deleted_client` means the client is gone; create a new one.
 
 Scopes are fixed in code to `openid email profile` (`server/auth/oidc.py`).
 Request nothing else on the consent screen.
@@ -126,6 +147,25 @@ in docs/DEPLOYMENT.md. The variable name is your choice.
 
 ## 4. Local development bootstrap
 
+**Scripted, isolated (recommended for a first real sign-in):** keep a
+disposable dev environment outside the repository, in a directory only you can
+read. It holds its own SQLite database, a generated KEK file (mode 0600), and a
+`config.yaml` copied from `config.example.yaml`, with `server.base_url` at the
+default, `desktop.enabled: true`, and `secrets.kek_source: env:HYPERMIND_KEK`.
+Migrate it, bootstrap its SecretStore (docs/RUNNING_SECURITY_CORE.md §4), then
+run the provisioning steps **yourself, in your own terminal**:
+
+```bash
+# reads the client ID (shown) and the secret (hidden prompt), stores the secret,
+# writes only the handle into config.yaml, then runs the startup check
+python -m server.composition.oidc_client_secret store     # → secretstore:<id>
+python -m server.composition.oidc_client_secret check
+```
+
+Nothing on a command line, in shell history or in a file ever holds the secret.
+
+**By hand:**
+
 From the repository root, with the venv active (CLAUDE.md "Setup"):
 
 ```bash
@@ -200,7 +240,10 @@ lint-imports --config pyproject.toml
 | Callback `401`; log `error=invalid_request client_authenticated=False` plus a hint naming `security.oidc.client_secret_ref` | a Web client with no secret configured | configure §3 |
 | Callback `401`; log `error=invalid_client client_authenticated=True` | wrong or deleted secret, or the secret of a different client | rotate (§5); check that `client_id` and secret are a pair |
 | Callback `401`; log `error=invalid_grant` | code reused or expired, `redirect_uri` mismatch, or PKCE mismatch | start a new login; check §2 |
-| Google shows `redirect_uri_mismatch` before the callback | the URI on the client differs from `base_url` + callback path | register the exact URI from §2 |
+| Google shows `redirect_uri_mismatch` before the callback | the URI on the client differs from `base_url` + callback path. Often `http://localhost:8000/…` registered while JARVIS sends `http://127.0.0.1:8000/…` | register the exact URI from §2; don't change `server.base_url` to match an old client |
+| Google shows `Error 401: deleted_client` | the OAuth client was deleted (or belongs to a deleted project). Its old secret is useless | create a new Web client (§1) and provision its secret (§3) |
+| Google shows `Error 401: invalid_client` before sign-in | `security.oidc.client_id` is mistyped, or names a client that never existed | copy the client ID again |
+| Google shows `Error 403: access_denied` ("has not completed the Google verification process") | the account is not a test user while the app is in Testing | add it under *Audience → Test users* (§1) |
 | Callback `403` | the account is not on `allowed_emails` / `allowed_domains`, or its email is unverified | admit it in config |
 
 The server logs only the RFC 6749 `error` code of a refused exchange, never the

@@ -27,6 +27,7 @@ import json
 import logging
 import secrets
 import uuid
+from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -651,3 +652,60 @@ def test_a_genuine_client_secret_shape_passes():
     for _ in range(20):
         assert not looks_like_another_credential(new_secret())
     assert not looks_like_another_credential("GOCSPX-" + secrets.token_urlsafe(21))
+
+
+# ── flow-level: locked store, replay, session lifecycle ─────────────────────
+
+
+async def test_a_locked_secret_store_stops_the_login_before_google_is_called(world_factory, storage):
+    secret = new_secret()
+    handle = await store_secret(storage, secret)
+    world = await world_factory(config=oidc_config(handle), google=FakeGoogle(expected_secret=secret))
+    world.core.secret_store.lock()
+    resp = await world.login()
+    assert resp.status_code == 503 and resp.json()["error"]["code"] == "dependency_unavailable"
+    assert world.google.token_requests == []
+    assert await world.users() == 0
+
+
+async def test_a_replayed_callback_is_refused_and_google_is_asked_once(world_factory, monkeypatch):
+    secret = new_secret()
+    monkeypatch.setenv(SECRET_ENV, secret)
+    world = await world_factory(config=oidc_config(f"env:{SECRET_ENV}"), google=FakeGoogle(expected_secret=secret))
+    start = await world.start()
+    code, state = world.google.authorize(start.json()["redirect_url"])
+    first = await world.client.get(f"{V1}/auth/oidc/callback", params={"code": code, "state": state})
+    assert first.status_code == 200, first.text
+    replay = await world.client.get(f"{V1}/auth/oidc/callback", params={"code": code, "state": state})
+    assert replay.status_code == 401
+    assert len(world.google.token_requests) == 1        # the spent state stops the replay before any exchange
+    expired = await world.start()
+    code2, state2 = world.google.authorize(expired.json()["redirect_url"])
+    async with world.storage.session() as session:
+        await session.execute(update(OIDCLoginState).where(OIDCLoginState.state == state2)
+                              .values(expires_at=datetime.now(timezone.utc) - timedelta(seconds=1)))
+        await session.commit()
+    assert (await world.client.get(f"{V1}/auth/oidc/callback", params={"code": code2, "state": state2})).status_code == 401
+    assert len(world.google.token_requests) == 1
+
+
+async def test_a_confidential_login_yields_a_session_that_logout_ends(world_factory, monkeypatch):
+    from server.auth.device import build_device_proof
+
+    secret = new_secret()
+    monkeypatch.setenv(SECRET_ENV, secret)
+    world = await world_factory(config=oidc_config(f"env:{SECRET_ENV}"), google=FakeGoogle(expected_secret=secret))
+    bootstrap = (await world.login()).json()["bootstrap_token"]
+    reg = await world.client.post(f"{V1}/devices", json={"platform": "android"},
+                                  headers={"Authorization": f"Bearer {bootstrap}"})
+    assert reg.status_code == 201, reg.text
+    device_id, credential = uuid.UUID(reg.json()["device_id"]), reg.json()["device_credential"]
+    tok = await world.client.post(f"{V1}/sessions/token", json={
+        "device_credential": build_device_proof(device_id=device_id, device_credential=credential)})
+    assert tok.status_code == 200, tok.text
+    auth = {"Authorization": f"Bearer {tok.json()['access_token']}"}
+    assert (await world.client.get(f"{V1}/me", headers=auth)).status_code == 200
+    assert (await world.client.post(f"{V1}/sessions/logout", headers=auth)).status_code == 204
+    assert (await world.client.get(f"{V1}/me", headers=auth)).status_code == 401
+    for r in (reg, tok):
+        assert secret not in r.text
