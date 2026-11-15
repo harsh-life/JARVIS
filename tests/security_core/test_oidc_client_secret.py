@@ -39,7 +39,7 @@ from sqlalchemy import select, update
 
 from server.auth.client_secret import ClientSecretConfigError, ClientSecretSource
 from server.auth.desktop_handoff import s256_challenge
-from server.auth.errors import InvalidIdToken, OIDCClientSecretUnavailable
+from server.auth.errors import InvalidIdToken, OIDCClientRejected, OIDCClientSecretUnavailable
 from server.auth.oidc import GOOGLE_JWKS_URI, GOOGLE_TOKEN_ENDPOINT, GoogleOIDCProvider, code_challenge_for
 from server.config.schema import AppConfig, DesktopConfig
 from server.gateway.app import API_V1_PREFIX, create_app
@@ -413,8 +413,52 @@ async def test_a_wrong_secret_is_an_ordinary_authentication_failure(world_factor
     assert resp.status_code == 401 and resp.json()["error"]["code"] == "unauthenticated"
     assert wrong not in resp.text and right not in resp.text
     assert await world.users() == 0
-    assert [r.resource for r in await world.audit_rows() if r.action == AuditAction.OIDC_LOGIN_REJECTED] == ["auth:oidc"]
+    assert [r.resource for r in await world.audit_rows() if r.action == AuditAction.OIDC_LOGIN_REJECTED] == [
+        "auth:oidc:client_rejected"]
     assert "error=invalid_client" in caplog.text and wrong not in caplog.text
+
+
+# ── regression: the live sign-in of 2026-11-15 (request 061b4753…) ──────────
+# The new client ID was provisioned with the *deleted* client's secret. The
+# reference resolved, `check` said "usable", startup passed — and Google's token
+# endpoint answered 401 invalid_client at the first real callback, which JARVIS
+# audited only as a generic `auth:oidc` rejection.
+
+
+async def test_regression_a_deleted_clients_secret_is_named_as_a_client_rejection(world_factory, storage, caplog):
+    caplog.set_level(logging.DEBUG)
+    new_clients, deleted_clients = new_secret(), new_secret()
+    handle = await store_secret(storage, deleted_clients)
+    world = await world_factory(config=oidc_config(handle), google=FakeGoogle(expected_secret=new_clients))
+
+    resp = await world.login()
+
+    error = resp.json()["error"]
+    assert resp.status_code == 401 and (error["code"], error["message"], error["retryable"]) == (
+        "unauthenticated", "authentication failed", False)   # exactly what the browser showed
+    rejected = [r for r in await world.audit_rows() if r.action == AuditAction.OIDC_LOGIN_REJECTED]
+    assert [r.resource for r in rejected] == ["auth:oidc:client_rejected"]
+    # The operator is told the cause and the fix; the person signing in is not.
+    assert "does not belong to this client" in caplog.text and TEST_CLIENT_ID in caplog.text
+    assert "rotate --handle" in caplog.text and "check --live" in caplog.text
+    for text in (caplog.text, resp.text):
+        assert deleted_clients not in text and new_clients not in text and "bad secret" not in text
+    assert await world.users() == 0
+    async with storage.session() as session:
+        (state,) = (await session.execute(select(OIDCLoginState))).scalars().all()
+        assert state.used_at is not None          # the callback cannot be replayed
+        assert not await database_contains(session, deleted_clients)
+    assert len(world.google.token_requests) == 1  # Google was asked exactly once
+
+
+async def test_an_unknown_client_id_is_also_a_client_rejection_without_blaming_the_secret(caplog):
+    google = FakeGoogle(expected_secret=None)
+    provider = GoogleOIDCProvider(client_id="someone-else.apps.googleusercontent.example", issuer=TEST_ISSUER,
+                                  http_client=httpx.AsyncClient(transport=httpx.MockTransport(google.handler)))
+    caplog.set_level(logging.WARNING)
+    with pytest.raises(OIDCClientRejected):
+        await provider.exchange_code(code="c", code_verifier="v" * 64, redirect_uri="https://host.invalid/cb")
+    assert "does not belong" not in caplog.text
 
 
 @pytest.mark.parametrize(("stored", "expected"), [("right", "authenticated"), ("wrong", "rejected"),

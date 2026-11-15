@@ -33,6 +33,7 @@ from server.auth.errors import (
     AuthError,
     InvalidLoginState,
     LoginNotAdmitted,
+    OIDCClientRejected,
     OIDCClientSecretUnavailable,
 )
 from server.auth.oidc import (
@@ -399,4 +400,6 @@ def _rejection_resource(exc: AuthError) -> str:
         return "auth:oidc:not_admitted"
     if isinstance(exc, OIDCClientSecretUnavailable):
         return "auth:oidc:client_secret_unavailable"
+    if isinstance(exc, OIDCClientRejected):
+        return "auth:oidc:client_rejected"
     return "auth:oidc"

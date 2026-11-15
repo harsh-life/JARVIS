@@ -32,6 +32,14 @@ class InvalidIdToken(AuthError):
     """An id_token failed one of 03 §2.3's seven checks."""
 
 
+class OIDCClientRejected(InvalidIdToken):
+    """Google's token endpoint refused this deployment's own client credentials
+    (`invalid_client`): the client ID is unknown or deleted, or the configured
+    client secret does not belong to it. The person signing in did nothing
+    wrong; still a `401` to the client (02 §1.6), but audited as its own stage
+    so an operator can tell it from a bad token."""
+
+
 class InvalidLoginState(AuthError):
     """The `state` was absent, already used, or expired (03 §2.3 check 6).
 

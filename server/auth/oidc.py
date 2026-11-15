@@ -35,7 +35,7 @@ from urllib.parse import urlencode
 import jwt
 from jwt import PyJWK
 
-from server.auth.errors import InvalidIdToken
+from server.auth.errors import InvalidIdToken, OIDCClientRejected
 from server.secrets.crypto import generate_token
 
 # 03 §2.2 [LOCKED] — the minimal identity set, and nothing else.
@@ -363,6 +363,17 @@ class GoogleOIDCProvider:
                     "a Google Web application client must authenticate: set "
                     "security.oidc.client_secret_ref (docs/GOOGLE_OIDC_SETUP.md)"
                 )
+            if error == "invalid_client":
+                if authenticated:
+                    logger.warning(
+                        "Google rejected the configured client secret for client_id %s: the secret behind "
+                        "security.oidc.client_secret_ref does not belong to this client (for example, a "
+                        "deleted client's secret). Replace it under the same handle with "
+                        "`python -m server.composition.oidc_client_secret rotate --handle <handle>`, then "
+                        "verify with `... check --live` (docs/GOOGLE_OIDC_SETUP.md)",
+                        self._client_id,
+                    )
+                raise OIDCClientRejected(f"token endpoint refused the client ({error})")
             raise InvalidIdToken(f"token exchange failed with status {response.status_code} ({error})")
 
         payload = response.json()
