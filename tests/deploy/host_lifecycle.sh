@@ -110,6 +110,7 @@ info "PostgreSQL role and database (deploy/postgres.md §1)"
     runuser -u postgres -- createuser --no-superuser --no-createdb --no-createrole jarvis
     runuser -u postgres -- createdb --owner=jarvis jarvis
     runuser -u postgres -- psql -q -d jarvis -c 'REVOKE ALL ON DATABASE jarvis FROM PUBLIC'
+    runuser -u postgres -- psql -q -d jarvis -c 'ALTER SCHEMA public OWNER TO jarvis'
     runuser -u postgres -- psql -q -d jarvis -c 'REVOKE CREATE ON SCHEMA public FROM PUBLIC'
 } >"$LOG_DIR/postgres.log" 2>&1 && pass "database role created with no extra privilege" || fail "database role"
 
@@ -270,6 +271,7 @@ if [ -x $JARVIS_HOME/deploy/backup.sh ] && [ -x $JARVIS_HOME/deploy/restore.sh ]
     runuser -u postgres -- dropdb jarvis
     runuser -u postgres -- createdb --owner=jarvis jarvis
     runuser -u postgres -- psql -q -d jarvis -c 'REVOKE ALL ON DATABASE jarvis FROM PUBLIC'
+    runuser -u postgres -- psql -q -d jarvis -c 'ALTER SCHEMA public OWNER TO jarvis'
     runuser -u postgres -- psql -q -d jarvis -c 'REVOKE CREATE ON SCHEMA public FROM PUBLIC'
     rm -rf ${STATE:?}/vault ${STATE:?}/vault_index ${STATE:?}/mem0_storage
     systemctl start jarvis

@@ -14,8 +14,15 @@ sudo systemctl enable --now postgresql
 sudo -u postgres createuser --no-superuser --no-createdb --no-createrole jarvis
 sudo -u postgres createdb --owner=jarvis jarvis
 sudo -u postgres psql -d jarvis -c 'REVOKE ALL ON DATABASE jarvis FROM PUBLIC'
+sudo -u postgres psql -d jarvis -c 'ALTER SCHEMA public OWNER TO jarvis'
 sudo -u postgres psql -d jarvis -c 'REVOKE CREATE ON SCHEMA public FROM PUBLIC'
 ```
+
+`ALTER SCHEMA public OWNER TO jarvis` matters on PostgreSQL 14 and older
+(Ubuntu 22.04, Debian 11), where `public` belongs to `postgres`: without it the
+`REVOKE` leaves `jarvis` unable to create its tables and the migration fails
+with "permission denied for schema public". On 15+ `public` already belongs to
+the database owner and the line changes nothing.
 
 The `jarvis` role owns exactly one database and has no other privilege: it
 cannot create roles or databases, and no other role can connect to its
