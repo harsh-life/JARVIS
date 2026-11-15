@@ -276,6 +276,13 @@ security:
   oidc:
     client_id: "REPLACE_WITH_YOUR_OWN_GOOGLE_OIDC_CLIENT_ID"
     issuer: "https://accounts.google.com"
+    # A Google *Web application* client also needs its client secret — by
+    # reference only (a literal value fails to load): "env:NAME" or the
+    # "secretstore:<handle>" printed by
+    # `python -m server.composition.oidc_client_secret store`.
+    # Register <server.base_url>/api/v1/auth/oidc/callback with Google.
+    # See docs/GOOGLE_OIDC_SETUP.md.
+    # client_secret_ref: "env:JARVIS_GOOGLE_CLIENT_SECRET"
   rate_limits:
     per_user_requests_per_minute: 60     # metered model + tool calls (13 §2)
     per_device_requests_per_minute: 60

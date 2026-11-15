@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -53,6 +54,16 @@ ALLOWED_ALGORITHMS = ("RS256",)
 
 # Tolerance for clock skew between Google and this server (seconds).
 CLOCK_SKEW_LEEWAY = 60
+
+logger = logging.getLogger("hypermind.auth.oidc")
+
+# The RFC 6749 §5.2 error codes a token endpoint may return. A refused exchange
+# logs only one of these fixed strings (and whether the client authenticated),
+# never the response body or `error_description`, which may echo the request.
+_TOKEN_ERROR_CODES = frozenset({
+    "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+    "unsupported_grant_type", "invalid_scope",
+})
 
 
 @dataclass(frozen=True)
@@ -92,10 +103,25 @@ class OIDCProvider(Protocol):
     ) -> str: ...
 
     async def exchange_code(
-        self, *, code: str, code_verifier: str, redirect_uri: str
+        self,
+        *,
+        code: str,
+        code_verifier: str,
+        redirect_uri: str,
+        client_secret: str | None = None,
     ) -> str: ...
 
     async def jwks(self) -> dict[str, Any]: ...
+
+
+def _token_error_code(response: Any) -> str:
+    """The RFC 6749 `error` code of a refused token request, or `unknown`."""
+
+    try:
+        error = response.json().get("error")
+    except Exception:  # noqa: BLE001 — any unreadable body is just "unknown"
+        return "unknown"
+    return error if isinstance(error, str) and error in _TOKEN_ERROR_CODES else "unknown"
 
 
 # ── PKCE (03 §2.3 check 7) ──────────────────────────────────────────────────
@@ -232,10 +258,15 @@ def _select_key(jwks: dict[str, Any], kid: str | None) -> PyJWK:
 class GoogleOIDCProvider:
     """03 §2's concrete provider. Satisfies `OIDCProvider` structurally.
 
-    `[LOCKED]` (03 §2) Track B's OIDC client is a **public client using PKCE**:
-    there is no `client_secret` parameter here and no way to configure one, which
-    is why `config.example.yaml` documents that a secret-shaped value in config
-    is a load-time failure rather than a supported option.
+    PKCE (S256) is always used. Google's token endpoint additionally
+    authenticates a **Web application** client by its client secret, so a
+    deployment may configure one by reference (`security.oidc.client_secret_ref`,
+    resolved per login by `server/auth/client_secret.py`). It is passed to
+    `exchange_code` for that one request and sent only in the POST body to the
+    fixed token endpoint: never in the authorization URL (which the browser
+    sees), never stored on this object, never logged. Without one, no secret is
+    sent — a public client, as before. A literal secret in config is still a
+    load-time failure (SECRET-004).
     """
 
     def __init__(
@@ -275,22 +306,43 @@ class GoogleOIDCProvider:
         }
         return f"{GOOGLE_AUTHORIZATION_ENDPOINT}?{urlencode(params)}"
 
-    async def exchange_code(self, *, code: str, code_verifier: str, redirect_uri: str) -> str:
+    async def exchange_code(
+        self,
+        *,
+        code: str,
+        code_verifier: str,
+        redirect_uri: str,
+        client_secret: str | None = None,
+    ) -> str:
+        form = {
+            "client_id": self._client_id,
+            "code": code,
+            "code_verifier": code_verifier,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        }
+        if client_secret is not None:
+            # client_secret_post (RFC 6749 §2.3.1): in the body of this one
+            # server-to-Google request only.
+            form["client_secret"] = client_secret
         client = self._client()
-        response = await client.post(
-            GOOGLE_TOKEN_ENDPOINT,
-            data={
-                "client_id": self._client_id,
-                "code": code,
-                "code_verifier": code_verifier,
-                "grant_type": "authorization_code",
-                "redirect_uri": redirect_uri,
-            },
-        )
+        response = await client.post(GOOGLE_TOKEN_ENDPOINT, data=form)
         if response.status_code >= 400:
             # The provider's body may echo request parameters; it is never
-            # surfaced to the client (02 §1.6) and never logged verbatim.
-            raise InvalidIdToken(f"token exchange failed with status {response.status_code}")
+            # surfaced to the client (02 §1.6) and never logged verbatim. Only
+            # the fixed RFC 6749 error code is logged, for the operator.
+            error = _token_error_code(response)
+            authenticated = client_secret is not None
+            logger.warning(
+                "Google token exchange refused: status=%s error=%s client_authenticated=%s",
+                response.status_code, error, authenticated,
+            )
+            if error in ("invalid_request", "invalid_client") and not authenticated:
+                logger.warning(
+                    "a Google Web application client must authenticate: set "
+                    "security.oidc.client_secret_ref (docs/GOOGLE_OIDC_SETUP.md)"
+                )
+            raise InvalidIdToken(f"token exchange failed with status {response.status_code} ({error})")
 
         payload = response.json()
         raw = payload.get("id_token")

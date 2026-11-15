@@ -27,8 +27,9 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from server.auth.bootstrap import issue_bootstrap_token
+from server.auth.client_secret import ClientSecretSource
 from server.auth.desktop_handoff import DESKTOP_HANDOFF_TTL, issue_desktop_handoff
-from server.auth.errors import AuthError, InvalidLoginState, LoginNotAdmitted
+from server.auth.errors import AuthError, InvalidLoginState, LoginNotAdmitted, OIDCClientSecretUnavailable
 from server.auth.oidc import (
     OIDCProvider,
     code_challenge_for,
@@ -124,12 +125,23 @@ class OIDCLoginFlow:
         repository: AuthRepository | None = None,
         state_ttl: timedelta = LOGIN_STATE_TTL,
         admission: Admission | None = None,
+        client_secret: ClientSecretSource | None = None,
     ) -> None:
         self._provider = provider
         self._redirect_uri = redirect_uri
         self._repo = repository or AuthRepository()
         self._state_ttl = state_ttl
         self._admission = admission or Admission()
+        # `security.oidc.client_secret_ref`, when configured: resolved for each
+        # exchange (`_exchange_and_validate`), never held as a value.
+        self._client_secret = client_secret
+
+    async def verify_client_secret(self, session: AsyncSession) -> None:
+        """Startup check of the configured client-secret reference, if any
+        (`ClientSecretSource.verify`); nothing is decrypted."""
+
+        if self._client_secret is not None:
+            await self._client_secret.verify(session)
 
     async def start(
         self,
@@ -204,7 +216,7 @@ class OIDCLoginFlow:
         try:
             state_row = await self._spend_state(session, state)
             identity = await self._exchange_and_validate(
-                code=code, state_row=state_row
+                session, code=code, state_row=state_row, audit=audit
             )
             # OD-PILOT-5: an account outside the allow-list is refused here,
             # after every token check and before any user row exists (AUTH-T1).
@@ -214,7 +226,7 @@ class OIDCLoginFlow:
             await audit.record(
                 actor=AuditActor.SYSTEM,
                 action=AuditAction.OIDC_LOGIN_REJECTED,
-                resource="auth:oidc:not_admitted" if isinstance(exc, LoginNotAdmitted) else "auth:oidc",
+                resource=_rejection_resource(exc),
                 result=AuditResult.BLOCKED,
             )
             raise exc
@@ -322,19 +334,31 @@ class OIDCLoginFlow:
 
         return row
 
-    async def _exchange_and_validate(self, *, code: str, state_row: OIDCLoginState):
+    async def _exchange_and_validate(
+        self, session: AsyncSession, *, code: str, state_row: OIDCLoginState, audit: AuditLogger
+    ):
         """Checks 7 then 1–5.
 
         The Google tokens obtained here are used for exactly one thing —
         deriving the identity — and are never returned, stored, or logged
         (03 §1: "never persisted by Hypermind").
+
+        A configured client secret is resolved here, just before the exchange,
+        and passed only to it; a failure to resolve it stops the login before
+        any request leaves the server. The `redirect_uri` is the one stored
+        with the login state, and the PKCE verifier is always sent.
         """
 
+        extra: dict[str, str] = {}
+        if self._client_secret is not None:
+            extra["client_secret"] = await self._client_secret.resolve(session, audit)
         raw_id_token = await self._provider.exchange_code(
             code=code,
             code_verifier=state_row.code_verifier,
             redirect_uri=state_row.redirect_uri,
+            **extra,
         )
+        del extra
 
         return validate_id_token(
             raw_id_token,
@@ -343,3 +367,14 @@ class OIDCLoginFlow:
             expected_nonce=state_row.nonce,
             jwks=await self._provider.jwks(),
         )
+
+
+def _rejection_resource(exc: AuthError) -> str:
+    """The audit resource of a refused login: which stage refused it, never
+    any detail of the token or the secret."""
+
+    if isinstance(exc, LoginNotAdmitted):
+        return "auth:oidc:not_admitted"
+    if isinstance(exc, OIDCClientSecretUnavailable):
+        return "auth:oidc:client_secret_unavailable"
+    return "auth:oidc"

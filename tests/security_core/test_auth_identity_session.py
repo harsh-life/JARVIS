@@ -136,7 +136,9 @@ async def test_oidc_requests_only_identity_scopes():
     # PKCE, with the S256 method — never `plain` (03 §2.3 check 7).
     assert query["code_challenge_method"] == ["S256"]
     assert query["code_challenge"] == ["c"]
-    # A public client (03 §2): no client_secret is sent, and none can be configured.
+    # The authorization URL is browser-visible: a client secret is never in it
+    # (a configured one goes only into the token request body —
+    # tests/security_core/test_oidc_client_secret.py).
     assert "client_secret" not in query
 
 

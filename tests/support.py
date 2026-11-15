@@ -149,6 +149,10 @@ class LocalOIDCProvider:
     sign_with_foreign_key: bool = False
     last_nonce: str | None = None
     last_code_verifier: str | None = None
+    last_redirect_uri: str | None = None
+    # What the login flow passed as the client secret on the last exchange
+    # (None when no `client_secret_ref` is configured).
+    last_client_secret: str | None = None
 
     def __post_init__(self) -> None:
         self._key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -167,8 +171,12 @@ class LocalOIDCProvider:
             f"&nonce={nonce}&code_challenge={code_challenge}&redirect_uri={redirect_uri}"
         )
 
-    async def exchange_code(self, *, code: str, code_verifier: str, redirect_uri: str) -> str:
+    async def exchange_code(
+        self, *, code: str, code_verifier: str, redirect_uri: str, client_secret: str | None = None
+    ) -> str:
         self.last_code_verifier = code_verifier
+        self.last_redirect_uri = redirect_uri
+        self.last_client_secret = client_secret
         return self.mint_id_token(nonce=self.last_nonce or "")
 
     async def jwks(self) -> dict[str, Any]:

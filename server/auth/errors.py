@@ -47,6 +47,18 @@ class LoginNotAdmitted(AuthError):
     client_message = "this account is not admitted to this server"
 
 
+class OIDCClientSecretUnavailable(AuthError):
+    """The configured Google OAuth client secret (`security.oidc.client_secret_ref`)
+    could not be resolved, so the code exchange was not attempted.
+
+    A server-side misconfiguration, not a failure of the person signing in: it
+    renders as `503 dependency_unavailable`. Neither the message nor `reason`
+    ever carries the secret; `reason` names only which kind of reference failed.
+    """
+
+    client_message = "sign-in is not available on this server right now"
+
+
 class InvalidBootstrapToken(AuthError):
     """The bootstrap token was absent, already used, expired, or bound to a
     different user (03 §3.2)."""

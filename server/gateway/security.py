@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from server.auth.client_secret import ClientSecretSource
 from server.auth.device import DeviceService
 from server.auth.login import Admission, OIDCLoginFlow
 from server.auth.oidc import GoogleOIDCProvider, OIDCProvider
@@ -95,6 +96,14 @@ def build_security_core(
         client_id=config.security.oidc.client_id,
         issuer=config.security.oidc.issuer,
     )
+    # A Web application client's secret, by reference only; resolved per login
+    # inside server/auth (`server/auth/client_secret.py`).
+    client_secret_ref = config.security.oidc.client_secret_ref
+    client_secret = (
+        ClientSecretSource(secret_ref=client_secret_ref, secret_store=secret_store)
+        if client_secret_ref
+        else None
+    )
 
     resource_loader = SecurityCoreResourceLoader()
     engine = AuthorizationEngine(
@@ -125,6 +134,7 @@ def build_security_core(
                 emails=frozenset(config.security.oidc.allowed_emails),
                 domains=frozenset(config.security.oidc.allowed_domains),
             ),
+            client_secret=client_secret,
         ),
         devices=DeviceService(secret_store=secret_store, repository=auth_repository),
         step_up=StepUpService(),
@@ -162,3 +172,14 @@ async def unlock_secret_store(
         else:
             await core.secret_store.unlock(session, kek)
         await session.commit()
+
+
+async def verify_oidc_client_secret(core: SecurityCore, storage: StorageBackend) -> None:
+    """After `unlock_secret_store`: check that a configured
+    `security.oidc.client_secret_ref` can work (the variable is set, or the
+    handle is an unrevoked server-owned `oauth_token`), so a misconfigured
+    server refuses to start rather than failing every sign-in. Nothing is
+    decrypted. A no-op when no reference is configured."""
+
+    async with storage.session() as session:
+        await core.login_flow.verify_client_secret(session)

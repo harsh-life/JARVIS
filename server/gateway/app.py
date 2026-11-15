@@ -109,9 +109,12 @@ def create_app(
             # to serve: a running Hypermind whose SecretStore is locked cannot
             # register a device or verify a credential, so starting anyway would
             # be the "degraded, silently-secretless mode" 12 §8 forbids.
-            from server.gateway.security import unlock_secret_store
+            from server.gateway.security import unlock_secret_store, verify_oidc_client_secret
 
             await unlock_secret_store(app.state.security, app.state.storage)
+            # A configured Google client-secret reference that cannot resolve
+            # stops startup here, naming the setting (never a value).
+            await verify_oidc_client_secret(app.state.security, app.state.storage)
         if reconcile_tasks_on_startup and agent_tasks is not None:
             # 18 / DECISION_REGISTER: a restart fails the tasks it interrupted
             # closed. Done before the first request is served, so nothing can

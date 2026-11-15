@@ -1,0 +1,204 @@
+# Google sign-in: Web application OAuth client
+
+JARVIS signs people in with Google (OIDC, `server/auth/`). The server is the
+OAuth client: it sends the browser to Google, receives the callback, exchanges
+the code at Google's token endpoint and validates the id_token. PKCE (S256) is
+always used.
+
+Google's token endpoint also authenticates a **Web application** client by its
+**client secret**. Without one the exchange fails, and the server log shows
+`Google token exchange refused: status=400 error=invalid_request client_authenticated=False`.
+So a deployment using a Web application client configures the secret **by
+reference**: `security.oidc.client_secret_ref`.
+
+What does not change:
+- PKCE, the stored `redirect_uri`, the five id_token checks (signature, issuer,
+  audience, expiry, nonce), state single-use, and the email/domain allow-list.
+- The desktop companion and the Android app never receive the secret, and no
+  browser-visible URL carries it.
+
+## 1. Create the OAuth client (Google Cloud console)
+
+1. **APIs & Services → OAuth consent screen**: user type *External*, publishing
+   status **Testing**, and add the people who may sign in as *test users*. This is
+   a second gate in front of `security.oidc.allowed_emails`.
+2. **APIs & Services → Credentials → Create credentials → OAuth client ID**,
+   application type **Web application**.
+3. **Authorized redirect URIs**: add exactly one URI per deployment (§2).
+   *Authorized JavaScript origins* are not used.
+4. Copy the **client ID** into `security.oidc.client_id` (a public value).
+5. Copy the **client secret** straight into the SecretStore or an environment
+   variable (§3). Never put it in `config.yaml`, a commit, a ticket or a chat.
+   If the console does not show an existing secret again, add a new one (§5).
+
+Scopes are fixed in code to `openid email profile` (`server/auth/oidc.py`).
+Request nothing else on the consent screen.
+
+## 2. The redirect URI
+
+The server sends Google exactly:
+
+```
+<server.base_url without a trailing slash> + /api/v1/auth/oidc/callback
+```
+
+This is built in `server/gateway/security.py`, with `OIDC_CALLBACK_PATH`. Each
+login stores the URI with its state, and the code exchange re-sends that stored
+value. Google requires an exact match: scheme, host, port and path, with no
+trailing slash.
+
+| `server.base_url` | URI to register |
+|---|---|
+| default `http://127.0.0.1:8000` | `http://127.0.0.1:8000/api/v1/auth/oidc/callback` |
+| `https://jarvis.example.com` (pilot, docs/DEPLOYMENT.md §2) | `https://jarvis.example.com/api/v1/auth/oidc/callback` |
+
+`tests/security_core/test_oidc_client_secret.py::test_the_default_redirect_uri_is_base_url_plus_the_callback_path`
+pins the default row.
+
+Google's own rules (outside this repository): a redirect URI must be HTTPS
+unless its host is `localhost` or a loopback IP, and a raw non-loopback IP such
+as `http://192.168.1.20:8000` is refused. That is why local development keeps
+`base_url` on `127.0.0.1` (§4) and the pilot uses a stable HTTPS hostname.
+
+## 3. Provide the secret
+
+Choose one of two forms. Both are references; a literal value in config is a
+load-time failure (SECRET-004).
+
+### a. SecretStore (recommended for a deployment)
+
+The secret is stored encrypted under the KEK as a **server-owned** secret of
+class `oauth_token`, and is resolved only for the server's own login exchange.
+This needs a migrated database and a bootstrapped store
+(docs/RUNNING_SECURITY_CORE.md §3–§4), with the KEK in its environment variable.
+
+```bash
+python -m server.composition.oidc_client_secret store      # hidden prompt; prints only the handle
+# → secretstore:3f2c…   (also printed as the config line to add)
+```
+
+```yaml
+security:
+  oidc:
+    client_id: "<your-client-id>.apps.googleusercontent.com"
+    issuer: "https://accounts.google.com"
+    client_secret_ref: "secretstore:3f2c…"     # the handle, never the secret
+```
+
+On a non-interactive host, the command reads one line from stdin. Pipe it from
+your secret manager rather than typing it into a shell:
+`… | python -m server.composition.oidc_client_secret store`.
+
+### b. Environment variable (simplest for local development)
+
+```yaml
+    client_secret_ref: "env:JARVIS_GOOGLE_CLIENT_SECRET"
+```
+
+Set `JARVIS_GOOGLE_CLIENT_SECRET` in the server's environment. Under systemd, use
+an `EnvironmentFile=` readable only by the service user, as for `HYPERMIND_KEK`
+in docs/DEPLOYMENT.md. The variable name is your choice.
+
+### What happens at runtime
+
+- **Startup:** after the SecretStore unlocks, the server checks the reference
+  without decrypting it. For `env:`, the variable must be set and non-empty. For
+  `secretstore:`, the handle must exist, be unrevoked, and be a server-owned
+  `oauth_token`. If the check fails the server **refuses to start**, naming the
+  setting and the reference (never a value). Run the same check on demand with
+  `python -m server.composition.oidc_client_secret check`.
+- **Each login:** the secret is resolved just before the code exchange and
+  sent only in the POST body to `https://oauth2.googleapis.com/token`
+  (`client_secret_post`). If it cannot be resolved, the callback answers
+  `503 dependency_unavailable` ("sign-in is not available on this server right
+  now"). Nothing is sent to Google, and the audit trail records
+  `auth.oidc.callback.rejected` on `auth:oidc:client_secret_unavailable`.
+- **Never** in a log line, an audit row (SecretStore audit rows carry the handle
+  and requester `server`), an API response, a redirect, the database in clear,
+  or anything the desktop companion or a browser receives.
+- **No reference** (the default): no secret is sent, as before. That suits a
+  client that does not need one, but a Web application client does.
+
+## 4. Local development bootstrap
+
+From the repository root, with the venv active (CLAUDE.md "Setup"):
+
+```bash
+cp config.example.yaml config.yaml          # git-ignored; never commit it
+# edit config.yaml:
+#   security.oidc.client_id: your Web client's ID
+#   security.oidc.client_secret_ref: "env:JARVIS_GOOGLE_CLIENT_SECRET"
+#   server.base_url: leave the default http://127.0.0.1:8000
+export HYPERMIND_DATABASE_URL="sqlite+aiosqlite:///./data/hypermind.db"
+export HYPERMIND_KEK="$(python3 -m server.secrets.kek)"          # keep it; the store is sealed under it
+mkdir -p data && alembic upgrade head
+# SecretStore bootstrap: docs/RUNNING_SECURITY_CORE.md §4
+read -rs JARVIS_GOOGLE_CLIENT_SECRET && export JARVIS_GOOGLE_CLIENT_SECRET   # paste; not echoed, not in history
+uvicorn server.composition.main:app --host 127.0.0.1 --port 8000
+```
+
+Register `http://127.0.0.1:8000/api/v1/auth/oidc/callback` on the client, then
+follow README "Get an access token" (`GET /api/v1/auth/oidc/start`, open the
+`redirect_url`, sign in).
+
+**Server in a VM, browser on the host** (for example an Ubuntu VM): keep
+`server.host` and `server.base_url` on `127.0.0.1:8000` inside the VM, and
+forward the port to the host, for example
+`ssh -L 8000:127.0.0.1:8000 <user>@<vm>` or the hypervisor's port forwarding.
+The browser on the host then reaches `http://127.0.0.1:8000`, and the
+registered URI stays the default. Do not set `base_url` to the VM's LAN IP:
+Google refuses that redirect URI (§2), and the desktop companion allows plain
+HTTP only for a loopback server (`desktop/src-tauri/src/net.rs`).
+
+The desktop companion's own loopback listener (`127.0.0.1:<port>/jarvis/callback`)
+is unrelated to Google. It belongs to the server → companion handoff
+(`server/auth/desktop_handoff.py`) and is not registered with Google.
+
+## 5. Rotating the secret
+
+The SecretStore handle is stable, so rotation never touches `config.yaml`:
+
+1. In the console, add a new client secret to the same OAuth client, if your
+   console offers it. Otherwise reset the secret: the old one then stops working
+   as soon as the reset completes.
+2. Replace the value under the existing handle:
+   ```bash
+   python -m server.composition.oidc_client_secret rotate --handle secretstore:3f2c…
+   ```
+   It is resolved per login, so the next sign-in uses the new value with no
+   restart. Only an active server-owned `oauth_token` handle can be rotated.
+3. Check that a sign-in works, then disable and delete the old secret in the
+   console.
+
+For `env:`, change the variable and restart the server.
+
+If the secret may have leaked, rotate first, then delete the old secret in
+the console at once. The audit trail (`secret.get` / `secret.rotate` rows on the
+handle) shows when the server resolved it.
+
+## 6. Testing and troubleshooting
+
+Automated tests mock Google and never use real credentials:
+
+```bash
+python -m pytest tests/security_core/test_oidc_client_secret.py -q   # this feature
+python -m pytest tests/security_core -q                              # auth, desktop handoff, SecretStore
+lint-imports --config pyproject.toml
+```
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Server will not start: `security.oidc.client_secret_ref is env:X, but that environment variable is unset or empty` | the variable is missing in the service environment | set it, or remove the reference |
+| Server will not start: `… no such SecretStore reference exists` / `… is revoked` / `… is not a server-owned oauth_token secret` | wrong handle, a revoked one, or a different kind of secret | `store` a new one and update the handle |
+| Callback `503 dependency_unavailable`; log `OIDC client secret unavailable: …` | resolution failed at login (variable removed, store locked, handle revoked) | as above; `… check` |
+| Callback `401`; log `error=invalid_request client_authenticated=False` plus a hint naming `security.oidc.client_secret_ref` | a Web client with no secret configured | configure §3 |
+| Callback `401`; log `error=invalid_client client_authenticated=True` | wrong or deleted secret, or the secret of a different client | rotate (§5); check that `client_id` and secret are a pair |
+| Callback `401`; log `error=invalid_grant` | code reused or expired, `redirect_uri` mismatch, or PKCE mismatch | start a new login; check §2 |
+| Google shows `redirect_uri_mismatch` before the callback | the URI on the client differs from `base_url` + callback path | register the exact URI from §2 |
+| Callback `403` | the account is not on `allowed_emails` / `allowed_domains`, or its email is unverified | admit it in config |
+
+The server logs only the RFC 6749 `error` code of a refused exchange, never the
+response body or its description, which can echo request values.
+
+Do not attempt a real Google sign-in until the OAuth client and its secret are
+configured as above. Use disposable test accounts only (docs/PROJECT_STATUS.md).
