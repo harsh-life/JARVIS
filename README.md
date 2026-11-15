@@ -108,7 +108,7 @@ curl http://127.0.0.1:8000/api/v1/ready      # {"ready":true,"database":true,"mi
 
 Browser sign-in is not built, so the Workbench asks for an access token from a device you have registered. This is the supported route today. It is a developer-style flow, not a consumer login.
 
-Add `http://127.0.0.1:8000/api/v1/auth/oidc/callback` as an authorized redirect URI on your Google OIDC client, then:
+Add `http://127.0.0.1:8000/api/v1/auth/oidc/callback` as an authorized redirect URI on your Google OIDC client. A Web application client also needs its secret, set by reference in `security.oidc.client_secret_ref` (docs/GOOGLE_OIDC_SETUP.md). Then:
 
 ```bash
 BASE=http://127.0.0.1:8000/api/v1

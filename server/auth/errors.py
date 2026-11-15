@@ -32,6 +32,14 @@ class InvalidIdToken(AuthError):
     """An id_token failed one of 03 §2.3's seven checks."""
 
 
+class OIDCClientRejected(InvalidIdToken):
+    """Google's token endpoint refused this deployment's own client credentials
+    (`invalid_client`): the client ID is unknown or deleted, or the configured
+    client secret does not belong to it. The person signing in did nothing
+    wrong; still a `401` to the client (02 §1.6), but audited as its own stage
+    so an operator can tell it from a bad token."""
+
+
 class InvalidLoginState(AuthError):
     """The `state` was absent, already used, or expired (03 §2.3 check 6).
 
@@ -45,6 +53,18 @@ class LoginNotAdmitted(AuthError):
     created; rendered as `403`, never naming the list."""
 
     client_message = "this account is not admitted to this server"
+
+
+class OIDCClientSecretUnavailable(AuthError):
+    """The configured Google OAuth client secret (`security.oidc.client_secret_ref`)
+    could not be resolved, so the code exchange was not attempted.
+
+    A server-side misconfiguration, not a failure of the person signing in: it
+    renders as `503 dependency_unavailable`. Neither the message nor `reason`
+    ever carries the secret; `reason` names only which kind of reference failed.
+    """
+
+    client_message = "sign-in is not available on this server right now"
 
 
 class InvalidBootstrapToken(AuthError):

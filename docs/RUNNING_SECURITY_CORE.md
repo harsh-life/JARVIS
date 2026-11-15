@@ -13,15 +13,18 @@ branches. Don't expect to submit an agent task.
 
 As `docs/RUNNING_FOUNDATION.md` §2–§3, plus one config change: point
 `security.oidc.client_id` at a **real** Google OIDC client id if you intend to log
-in. It is a public client using PKCE, so there is no client secret — and a
+in. PKCE is always used. A Google **Web application** client must also
+authenticate with its client secret, configured only as a reference
+(`security.oidc.client_secret_ref: "env:NAME"` or a `secretstore:` handle). A
 secret-shaped value anywhere in config is a load-time failure by design
-(SECRET-004).
+(SECRET-004). Setup, provisioning and rotation: `docs/GOOGLE_OIDC_SETUP.md`.
 
 ```yaml
 security:
   oidc:
     client_id: "<your-own-google-oidc-client-id>.apps.googleusercontent.com"
     issuer: "https://accounts.google.com"
+    client_secret_ref: "env:JARVIS_GOOGLE_CLIENT_SECRET"   # a reference, never the secret
 
 secrets:
   store: "encrypted_local"

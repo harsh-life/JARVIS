@@ -21,8 +21,10 @@ credential returns an explicit failure rather than running in a degraded mode
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 
+from server.auth.client_secret import ClientSecretSource
 from server.auth.device import DeviceService
 from server.auth.login import Admission, OIDCLoginFlow
 from server.auth.oidc import GoogleOIDCProvider, OIDCProvider
@@ -41,6 +43,7 @@ from server.graph.resources import SecurityCoreResourceLoader
 from server.graph.service import GraphService
 from server.secrets.kek import resolve_kek
 from server.secrets.store import EncryptedLocalSecretStore
+from server.security.audit import AuditLogger
 from server.storage import StorageBackend
 
 OIDC_CALLBACK_PATH = "/api/v1/auth/oidc/callback"
@@ -95,6 +98,14 @@ def build_security_core(
         client_id=config.security.oidc.client_id,
         issuer=config.security.oidc.issuer,
     )
+    # A Web application client's secret, by reference only; resolved per login
+    # inside server/auth (`server/auth/client_secret.py`).
+    client_secret_ref = config.security.oidc.client_secret_ref
+    client_secret = (
+        ClientSecretSource(secret_ref=client_secret_ref, secret_store=secret_store)
+        if client_secret_ref
+        else None
+    )
 
     resource_loader = SecurityCoreResourceLoader()
     engine = AuthorizationEngine(
@@ -125,6 +136,7 @@ def build_security_core(
                 emails=frozenset(config.security.oidc.allowed_emails),
                 domains=frozenset(config.security.oidc.allowed_domains),
             ),
+            client_secret=client_secret,
         ),
         devices=DeviceService(secret_store=secret_store, repository=auth_repository),
         step_up=StepUpService(),
@@ -162,3 +174,27 @@ async def unlock_secret_store(
         else:
             await core.secret_store.unlock(session, kek)
         await session.commit()
+
+
+async def probe_oidc_client_authentication(core: SecurityCore, storage: StorageBackend) -> str:
+    """After `unlock_secret_store`: does Google accept this deployment's client
+    ID and secret? One token request with a deliberately invalid code (no real
+    code, no token can be issued). Operator-run only (`check --live`), never at
+    startup. Audited like any resolution of the secret: by handle."""
+
+    async with storage.session() as session:
+        audit = AuditLogger(session, request_id=uuid.uuid4())
+        verdict = await core.login_flow.probe_client_authentication(session, audit)
+        await session.commit()
+    return verdict
+
+
+async def verify_oidc_client_secret(core: SecurityCore, storage: StorageBackend) -> None:
+    """After `unlock_secret_store`: check that a configured
+    `security.oidc.client_secret_ref` can work (the variable is set, or the
+    handle is an unrevoked server-owned `oauth_token`), so a misconfigured
+    server refuses to start rather than failing every sign-in. Nothing is
+    decrypted. A no-op when no reference is configured."""
+
+    async with storage.session() as session:
+        await core.login_flow.verify_client_secret(session)

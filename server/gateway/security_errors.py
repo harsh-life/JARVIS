@@ -35,7 +35,13 @@ import logging
 from fastapi import FastAPI, Request
 from starlette.responses import JSONResponse
 
-from server.auth.errors import AccessTokenExpired, AuthError, LoginNotAdmitted, StepUpRequired
+from server.auth.errors import (
+    AccessTokenExpired,
+    AuthError,
+    LoginNotAdmitted,
+    OIDCClientSecretUnavailable,
+    StepUpRequired,
+)
 from server.capabilities.floor import AbsoluteFloorViolation
 from server.gateway.errors import AppError, app_error_handler
 from server.graph.service import GraphOperationRefused
@@ -54,6 +60,11 @@ async def auth_error_handler(request: Request, exc: AuthError) -> JSONResponse:
         details = {"step_up_required": True}
     elif isinstance(exc, LoginNotAdmitted):
         code = ErrorCode.UNAUTHORIZED
+        details = {}
+    elif isinstance(exc, OIDCClientSecretUnavailable):
+        # The server's own configuration, not the caller's credentials: 503,
+        # with the same generic message whatever the cause.
+        code = ErrorCode.DEPENDENCY_UNAVAILABLE
         details = {}
     else:
         code = ErrorCode.UNAUTHENTICATED

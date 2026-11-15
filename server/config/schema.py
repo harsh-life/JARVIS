@@ -30,8 +30,13 @@ from shared.schemas.push import FcmClientOptions, PushProvider
 # A secret reference names *where* to obtain a secret; it is never the
 # secret itself. Two forms are accepted:
 #   env:VAR_NAME          -> resolve from that environment variable at use
-#   secretstore:<handle>  -> an opaque SecretStore handle (12_SECRETSTORE.md);
-#                            resolution is not implemented in this branch.
+#   secretstore:<id>      -> a SecretStore handle (12_SECRETSTORE.md). The
+#                            store's handles carry this prefix themselves, so
+#                            the whole value *is* the handle: consumers map it
+#                            with `server.secrets.store.store_handle`, never by
+#                            stripping the prefix. (`secrets.kek_source` accepts
+#                            only `env:` — the KEK cannot come from the store it
+#                            unlocks.)
 _SECRET_REF_RE = re.compile(r"^(env|secretstore):[A-Za-z0-9_\-./]+$")
 
 
@@ -773,6 +778,13 @@ _DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)
 class OIDCConfig(StrictModel):
     client_id: str
     issuer: str
+    # Google's token endpoint authenticates a Web application client by its
+    # secret, PKCE notwithstanding. A *reference* only — `env:NAME` or a
+    # `secretstore:<handle>` holding a server-owned `oauth_token` — never the
+    # value: a literal is a load-time failure (SECRET-004). Resolved per login
+    # inside server/auth and sent only in the token request body. Absent → no
+    # secret is sent (a public client), exactly as before.
+    client_secret_ref: SecretRef | None = None
     # OD-PILOT-5 (invite-only): who may sign in. Both empty → anyone who
     # completes OIDC may (the development default); otherwise a login whose
     # *verified* email is neither listed nor in a listed domain is refused

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -34,13 +35,17 @@ from urllib.parse import urlencode
 import jwt
 from jwt import PyJWK
 
-from server.auth.errors import InvalidIdToken
+from server.auth.errors import InvalidIdToken, OIDCClientRejected
 from server.secrets.crypto import generate_token
 
 # 03 §2.2 [LOCKED] — the minimal identity set, and nothing else.
 SCOPES = ("openid", "email", "profile")
 
 GOOGLE_ISSUER = "https://accounts.google.com"
+# Google documents exactly two values for `iss` in its ID tokens: the URL form
+# and the bare host form. Both are Google; the URL form is the canonical one
+# stored as the identity's issuer, so the same account never splits in two.
+GOOGLE_ISSUER_FORMS = (GOOGLE_ISSUER, "accounts.google.com")
 GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 GOOGLE_JWKS_URI = "https://www.googleapis.com/oauth2/v3/certs"
@@ -53,6 +58,16 @@ ALLOWED_ALGORITHMS = ("RS256",)
 
 # Tolerance for clock skew between Google and this server (seconds).
 CLOCK_SKEW_LEEWAY = 60
+
+logger = logging.getLogger("hypermind.auth.oidc")
+
+# The RFC 6749 §5.2 error codes a token endpoint may return. A refused exchange
+# logs only one of these fixed strings (and whether the client authenticated),
+# never the response body or `error_description`, which may echo the request.
+_TOKEN_ERROR_CODES = frozenset({
+    "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+    "unsupported_grant_type", "invalid_scope",
+})
 
 
 @dataclass(frozen=True)
@@ -92,10 +107,25 @@ class OIDCProvider(Protocol):
     ) -> str: ...
 
     async def exchange_code(
-        self, *, code: str, code_verifier: str, redirect_uri: str
+        self,
+        *,
+        code: str,
+        code_verifier: str,
+        redirect_uri: str,
+        client_secret: str | None = None,
     ) -> str: ...
 
     async def jwks(self) -> dict[str, Any]: ...
+
+
+def _token_error_code(response: Any) -> str:
+    """The RFC 6749 `error` code of a refused token request, or `unknown`."""
+
+    try:
+        error = response.json().get("error")
+    except Exception:  # noqa: BLE001 — any unreadable body is just "unknown"
+        return "unknown"
+    return error if isinstance(error, str) and error in _TOKEN_ERROR_CODES else "unknown"
 
 
 # ── PKCE (03 §2.3 check 7) ──────────────────────────────────────────────────
@@ -135,7 +165,8 @@ def validate_id_token(
     five token-intrinsic ones are here:
 
     1. **Signature** against the provider's published JWKS.
-    2. **Issuer** equals the expected issuer exactly.
+    2. **Issuer** equals the expected issuer exactly (for Google, either of
+       its two documented forms — `accepted_issuers`).
     3. **Audience** equals this deployment's client_id exactly — this is what
        rejects a token minted for a different app.
     4. **Expiry / iat / nbf** sane.
@@ -161,7 +192,7 @@ def validate_id_token(
             key=key.key,
             algorithms=list(ALLOWED_ALGORITHMS),
             audience=audience,
-            issuer=issuer,
+            issuer=accepted_issuers(issuer),
             leeway=CLOCK_SKEW_LEEWAY,
             options={
                 "require": ["exp", "iat", "iss", "aud", "sub"],
@@ -199,12 +230,28 @@ def validate_id_token(
         raise InvalidIdToken("id_token carries no subject")
 
     return OIDCIdentity(
-        issuer=str(claims["iss"]),
+        # The configured issuer, not the presented spelling: the check above
+        # admitted only an exact accepted form of it, and the identity key
+        # (issuer, subject) must not depend on which form Google used.
+        issuer=issuer,
         subject=str(subject),
         email=claims.get("email"),
         display_name=claims.get("name"),
         email_verified=claims.get("email_verified") in (True, "true"),
     )
+
+
+def accepted_issuers(issuer: str) -> tuple[str, ...]:
+    """The exact `iss` values accepted for a configured issuer.
+
+    Google's own issuer admits its two documented forms; every other issuer
+    admits itself only. Exact string matches throughout: no prefix, suffix,
+    case or trailing-slash tolerance, and no other provider gains an alias.
+    """
+
+    if issuer == GOOGLE_ISSUER:
+        return GOOGLE_ISSUER_FORMS
+    return (issuer,)
 
 
 def _select_key(jwks: dict[str, Any], kid: str | None) -> PyJWK:
@@ -232,10 +279,15 @@ def _select_key(jwks: dict[str, Any], kid: str | None) -> PyJWK:
 class GoogleOIDCProvider:
     """03 §2's concrete provider. Satisfies `OIDCProvider` structurally.
 
-    `[LOCKED]` (03 §2) Track B's OIDC client is a **public client using PKCE**:
-    there is no `client_secret` parameter here and no way to configure one, which
-    is why `config.example.yaml` documents that a secret-shaped value in config
-    is a load-time failure rather than a supported option.
+    PKCE (S256) is always used. Google's token endpoint additionally
+    authenticates a **Web application** client by its client secret, so a
+    deployment may configure one by reference (`security.oidc.client_secret_ref`,
+    resolved per login by `server/auth/client_secret.py`). It is passed to
+    `exchange_code` for that one request and sent only in the POST body to the
+    fixed token endpoint: never in the authorization URL (which the browser
+    sees), never stored on this object, never logged. Without one, no secret is
+    sent — a public client, as before. A literal secret in config is still a
+    load-time failure (SECRET-004).
     """
 
     def __init__(
@@ -275,28 +327,92 @@ class GoogleOIDCProvider:
         }
         return f"{GOOGLE_AUTHORIZATION_ENDPOINT}?{urlencode(params)}"
 
-    async def exchange_code(self, *, code: str, code_verifier: str, redirect_uri: str) -> str:
+    async def exchange_code(
+        self,
+        *,
+        code: str,
+        code_verifier: str,
+        redirect_uri: str,
+        client_secret: str | None = None,
+    ) -> str:
+        form = {
+            "client_id": self._client_id,
+            "code": code,
+            "code_verifier": code_verifier,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        }
+        if client_secret is not None:
+            # client_secret_post (RFC 6749 §2.3.1): in the body of this one
+            # server-to-Google request only.
+            form["client_secret"] = client_secret
         client = self._client()
-        response = await client.post(
-            GOOGLE_TOKEN_ENDPOINT,
-            data={
-                "client_id": self._client_id,
-                "code": code,
-                "code_verifier": code_verifier,
-                "grant_type": "authorization_code",
-                "redirect_uri": redirect_uri,
-            },
-        )
+        response = await client.post(GOOGLE_TOKEN_ENDPOINT, data=form)
         if response.status_code >= 400:
             # The provider's body may echo request parameters; it is never
-            # surfaced to the client (02 §1.6) and never logged verbatim.
-            raise InvalidIdToken(f"token exchange failed with status {response.status_code}")
+            # surfaced to the client (02 §1.6) and never logged verbatim. Only
+            # the fixed RFC 6749 error code is logged, for the operator.
+            error = _token_error_code(response)
+            authenticated = client_secret is not None
+            logger.warning(
+                "Google token exchange refused: status=%s error=%s client_authenticated=%s",
+                response.status_code, error, authenticated,
+            )
+            if error in ("invalid_request", "invalid_client") and not authenticated:
+                logger.warning(
+                    "a Google Web application client must authenticate: set "
+                    "security.oidc.client_secret_ref (docs/GOOGLE_OIDC_SETUP.md)"
+                )
+            if error == "invalid_client":
+                if authenticated:
+                    logger.warning(
+                        "Google rejected the configured client secret for client_id %s: the secret behind "
+                        "security.oidc.client_secret_ref does not belong to this client (for example, a "
+                        "deleted client's secret). Replace it under the same handle with "
+                        "`python -m server.composition.oidc_client_secret rotate --handle <handle>`, then "
+                        "verify with `... check --live` (docs/GOOGLE_OIDC_SETUP.md)",
+                        self._client_id,
+                    )
+                raise OIDCClientRejected(f"token endpoint refused the client ({error})")
+            raise InvalidIdToken(f"token exchange failed with status {response.status_code} ({error})")
 
         payload = response.json()
         raw = payload.get("id_token")
         if not raw:
             raise InvalidIdToken("token exchange returned no id_token")
         return str(raw)
+
+    async def probe_client_authentication(self, *, client_secret: str | None, redirect_uri: str) -> str:
+        """Does Google accept this client's credentials? An operator check, not a login.
+
+        Sends the token request a deliberately invalid authorization code. Google
+        authenticates the client before it looks at the code, so the answer is
+        `invalid_client` when the client ID or secret is wrong and `invalid_grant`
+        when the client authenticated and only the (fake) code was refused. No
+        real code is involved and no token can be issued. Returns
+        "authenticated", "rejected" (`invalid_client`), "secret_missing"
+        (`invalid_request`, no secret sent) or "inconclusive"; only the RFC 6749
+        error code is ever read from the response.
+        """
+
+        form = {
+            "client_id": self._client_id,
+            "code": "jarvis-client-auth-probe-not-a-code",
+            "code_verifier": "A" * 43,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        }
+        if client_secret is not None:
+            form["client_secret"] = client_secret
+        response = await self._client().post(GOOGLE_TOKEN_ENDPOINT, data=form)
+        error = _token_error_code(response) if response.status_code >= 400 else "unexpected_success"
+        if error == "invalid_grant":
+            return "authenticated"
+        if error == "invalid_client":
+            return "rejected"
+        if error == "invalid_request" and client_secret is None:
+            return "secret_missing"
+        return "inconclusive"
 
     async def jwks(self) -> dict[str, Any]:
         """Fetch and cache the provider's keys (03 §2.3 check 1, "rotated")."""

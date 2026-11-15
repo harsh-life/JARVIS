@@ -25,6 +25,7 @@ from server.execution.device_hub import DeviceHub
 from server.execution.device_wake import CredentialProvider, DeviceWaker, FcmWakeSender, WakeOutcome
 from server.secrets.audit_port import SecretAuditEvent
 from server.secrets.requester import SecretRequester
+from server.secrets.store import store_handle
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
 from server.storage.models import SecretReference
@@ -44,7 +45,10 @@ def push_credential(secret_ref: str, app: FastAPI) -> CredentialProvider:
 
         return from_env
 
-    handle = secret_ref[len("secretstore:"):] if secret_ref.startswith("secretstore:") else secret_ref
+    # The configured value *is* the store's handle: stripping its prefix (as
+    # this did before) looked up a bare id that never exists, so a valid
+    # `service_account_ref: "secretstore:<id>"` could not resolve.
+    handle = store_handle(secret_ref)
     requester = SecretRequester.server()
 
     async def from_store() -> str:

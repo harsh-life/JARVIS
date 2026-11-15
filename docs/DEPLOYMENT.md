@@ -53,7 +53,11 @@ redirect URI and the Android App Link both need a stable HTTPS hostname.
    `https://jarvis.example.com/api/v1/auth/oidc/callback`. Keep the consent
    screen in **Testing** with the pilot users as test users — a second,
    external invite gate in front of `allowed_emails`.
-4. In `/etc/jarvis/config.yaml` set the same host in `server.base_url` and
+4. Store the client secret in the SecretStore
+   (`python -m server.composition.oidc_client_secret store`, after the bootstrap in §3)
+   and put the printed handle in `security.oidc.client_secret_ref`
+   (docs/GOOGLE_OIDC_SETUP.md). Never put the secret itself in config.
+5. In `/etc/jarvis/config.yaml` set the same host in `server.base_url` and
    `android.app_links.base_url`, the client id in `security.oidc.client_id`,
    and the APK signing certificate's SHA-256 in
    `android.app_links.sha256_cert_fingerprints` (public values).
