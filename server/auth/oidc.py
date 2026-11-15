@@ -371,6 +371,38 @@ class GoogleOIDCProvider:
             raise InvalidIdToken("token exchange returned no id_token")
         return str(raw)
 
+    async def probe_client_authentication(self, *, client_secret: str | None, redirect_uri: str) -> str:
+        """Does Google accept this client's credentials? An operator check, not a login.
+
+        Sends the token request a deliberately invalid authorization code. Google
+        authenticates the client before it looks at the code, so the answer is
+        `invalid_client` when the client ID or secret is wrong and `invalid_grant`
+        when the client authenticated and only the (fake) code was refused. No
+        real code is involved and no token can be issued. Returns
+        "authenticated", "rejected" (`invalid_client`), "secret_missing"
+        (`invalid_request`, no secret sent) or "inconclusive"; only the RFC 6749
+        error code is ever read from the response.
+        """
+
+        form = {
+            "client_id": self._client_id,
+            "code": "jarvis-client-auth-probe-not-a-code",
+            "code_verifier": "A" * 43,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        }
+        if client_secret is not None:
+            form["client_secret"] = client_secret
+        response = await self._client().post(GOOGLE_TOKEN_ENDPOINT, data=form)
+        error = _token_error_code(response) if response.status_code >= 400 else "unexpected_success"
+        if error == "invalid_grant":
+            return "authenticated"
+        if error == "invalid_client":
+            return "rejected"
+        if error == "invalid_request" and client_secret is None:
+            return "secret_missing"
+        return "inconclusive"
+
     async def jwks(self) -> dict[str, Any]:
         """Fetch and cache the provider's keys (03 §2.3 check 1, "rotated")."""
 

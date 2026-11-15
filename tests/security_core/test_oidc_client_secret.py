@@ -417,6 +417,51 @@ async def test_a_wrong_secret_is_an_ordinary_authentication_failure(world_factor
     assert "error=invalid_client" in caplog.text and wrong not in caplog.text
 
 
+@pytest.mark.parametrize(("stored", "expected"), [("right", "authenticated"), ("wrong", "rejected"),
+                                                   (None, "secret_missing")])
+async def test_the_live_probe_tells_a_wrong_secret_from_a_right_one(stored, expected):
+    right = new_secret()
+    google = FakeGoogle(expected_secret=right)
+    sent = {"right": right, "wrong": new_secret(), None: None}[stored]
+    verdict = await google.provider().probe_client_authentication(client_secret=sent,
+                                                                  redirect_uri="https://host.invalid/cb")
+    assert verdict == expected
+    (form,) = google.token_requests
+    assert form["grant_type"] == "authorization_code" and form["code"].startswith("jarvis-client-auth-probe")
+
+
+async def test_check_live_reports_a_secret_that_belongs_to_another_client(
+    storage, kek_value, tmp_path, monkeypatch, capsys
+):
+    from server.composition import oidc_client_secret as cli
+    import server.gateway.security as gateway_security
+
+    right, deleted_clients = new_secret(), new_secret()
+    handle = await store_secret(storage, deleted_clients)
+    google = FakeGoogle(expected_secret=right)
+    monkeypatch.setattr(gateway_security, "GoogleOIDCProvider", lambda **_: google.provider())
+    payload = make_test_config().model_dump(mode="json")
+    payload["database_url"] = storage._engine.url.render_as_string(hide_password=False)
+    payload["security"]["oidc"]["client_secret_ref"] = handle
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(payload), encoding="utf-8", newline="\n")
+
+    assert await cli._run("check", str(path), None) == 0            # resolvable: the old check passes
+    assert await cli._run("check", str(path), None, live=True) == 1  # the live check does not
+    out = capsys.readouterr()
+    assert "invalid_client" in out.err and "rotate --handle " + handle in out.err
+    assert deleted_clients not in out.out + out.err and right not in out.out + out.err
+
+    async with storage.session() as session:     # the operator rotates in this client's secret
+        store = EncryptedLocalSecretStore()
+        await store.unlock(session, resolve_kek(f"env:{TEST_KEK_ENV_VAR}"))
+        await store.rotate(session, handle, SecretRequester.server(), AuditLogger(session, request_id=uuid.uuid4()),
+                           new_value=right)
+        await session.commit()
+    assert await cli._run("check", str(path), None, live=True) == 0
+    assert "ok: Google accepts the client secret" in capsys.readouterr().out
+
+
 async def test_a_missing_secret_stops_the_login_before_google_is_called(world_factory, monkeypatch):
     monkeypatch.delenv(SECRET_ENV, raising=False)
     world = await world_factory(config=oidc_config(f"env:{SECRET_ENV}"), google=FakeGoogle(expected_secret=new_secret()))

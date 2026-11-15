@@ -10,8 +10,12 @@
         change; the next sign-in uses the new value). Refused unless the handle
         is a server-owned `oauth_token`.
 
-    python -m server.composition.oidc_client_secret check  [--config PATH]
+    python -m server.composition.oidc_client_secret check  [--config PATH] [--live]
         The startup check: is the configured `client_secret_ref` usable?
+        With --live, also ask Google whether it accepts this client ID and
+        secret: one token request with a deliberately invalid code (no real
+        code is used and no token can be issued). `invalid_client` means the
+        stored secret does not belong to this client — e.g. a deleted client's.
 
 Each command needs the KEK in the environment variable `secrets.kek_source`
 names, and an already-bootstrapped SecretStore (docs/RUNNING_SECURITY_CORE.md
@@ -29,7 +33,12 @@ import uuid
 
 from server.auth.client_secret import CLIENT_SECRET_CLASS, ClientSecretConfigError
 from server.config import load_config
-from server.gateway.security import build_security_core, unlock_secret_store, verify_oidc_client_secret
+from server.gateway.security import (
+    build_security_core,
+    probe_oidc_client_authentication,
+    unlock_secret_store,
+    verify_oidc_client_secret,
+)
 from server.secrets.requester import SecretRequester
 from server.security.audit import AuditLogger
 from server.storage import SQLAlchemyStorageBackend
@@ -51,7 +60,19 @@ def _read_secret() -> str:
     return value
 
 
-async def _run(command: str, config_path: str | None, handle: str | None) -> int:
+_LIVE_VERDICTS = {
+    "authenticated": (0, "ok: Google accepts the client secret for client_id {cid}"),
+    "rejected": (1, "NOT OK: Google rejected the client secret for client_id {cid} (invalid_client). The stored "
+                    "secret does not belong to this client (for example, a deleted client's secret). Replace it "
+                    "under the same handle: rotate --handle {ref}"),
+    "secret_missing": (1, "NOT OK: Google requires a client secret for client_id {cid}; set "
+                          "security.oidc.client_secret_ref"),
+    "inconclusive": (2, "INCONCLUSIVE: Google's answer did not show whether client_id {cid} authenticated"),
+    "unsupported": (2, "INCONCLUSIVE: the configured provider has no live client check"),
+}
+
+
+async def _run(command: str, config_path: str | None, handle: str | None, live: bool = False) -> int:
     config = load_config(config_path)
     storage = SQLAlchemyStorageBackend(config.database_url)
     core = build_security_core(config)
@@ -67,7 +88,13 @@ async def _run(command: str, config_path: str | None, handle: str | None) -> int
                 print(f"NOT OK: {exc}", file=sys.stderr)
                 return 1
             print(f"ok: {config.security.oidc.client_secret_ref} is usable")
-            return 0
+            if not live:
+                return 0
+            verdict = await probe_oidc_client_authentication(core, storage)
+            code, message = _LIVE_VERDICTS[verdict]
+            print(message.format(cid=config.security.oidc.client_id, ref=config.security.oidc.client_secret_ref),
+                  file=sys.stderr if code else sys.stdout)
+            return code
 
         value = _read_secret()
         requester = SecretRequester.server()
@@ -112,10 +139,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("command", choices=["store", "rotate", "check"])
     parser.add_argument("--config", default=None)
     parser.add_argument("--handle", default=None, help="the existing handle (rotate only)")
+    parser.add_argument("--live", action="store_true",
+                        help="check only: also ask Google whether it accepts this client ID and secret")
     args = parser.parse_args(argv)
     if args.command == "rotate" and not args.handle:
         parser.error("rotate needs --handle")
-    return asyncio.run(_run(args.command, args.config, args.handle))
+    if args.live and args.command != "check":
+        parser.error("--live applies to check only")
+    return asyncio.run(_run(args.command, args.config, args.handle, args.live))
 
 
 if __name__ == "__main__":

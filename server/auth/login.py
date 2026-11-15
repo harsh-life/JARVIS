@@ -29,7 +29,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from server.auth.bootstrap import issue_bootstrap_token
 from server.auth.client_secret import ClientSecretSource
 from server.auth.desktop_handoff import DESKTOP_HANDOFF_TTL, issue_desktop_handoff
-from server.auth.errors import AuthError, InvalidLoginState, LoginNotAdmitted, OIDCClientSecretUnavailable
+from server.auth.errors import (
+    AuthError,
+    InvalidLoginState,
+    LoginNotAdmitted,
+    OIDCClientSecretUnavailable,
+)
 from server.auth.oidc import (
     OIDCProvider,
     code_challenge_for,
@@ -142,6 +147,23 @@ class OIDCLoginFlow:
 
         if self._client_secret is not None:
             await self._client_secret.verify(session)
+
+    async def probe_client_authentication(self, session: AsyncSession, audit: AuditLogger) -> str:
+        """Operator check (`oidc_client_secret check --live`): ask the provider
+        whether it accepts this client's credentials, using a deliberately
+        invalid code (`GoogleOIDCProvider.probe_client_authentication`). The
+        secret is resolved here, inside the auth boundary, passed only to that
+        one request, and never returned. "unsupported" for a provider without
+        the probe."""
+
+        probe = getattr(self._provider, "probe_client_authentication", None)
+        if probe is None:
+            return "unsupported"
+        secret = await self._client_secret.resolve(session, audit) if self._client_secret is not None else None
+        try:
+            return await probe(client_secret=secret, redirect_uri=self._redirect_uri)
+        finally:
+            del secret
 
     async def start(
         self,

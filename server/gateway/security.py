@@ -21,6 +21,7 @@ credential returns an explicit failure rather than running in a degraded mode
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 
 from server.auth.client_secret import ClientSecretSource
@@ -42,6 +43,7 @@ from server.graph.resources import SecurityCoreResourceLoader
 from server.graph.service import GraphService
 from server.secrets.kek import resolve_kek
 from server.secrets.store import EncryptedLocalSecretStore
+from server.security.audit import AuditLogger
 from server.storage import StorageBackend
 
 OIDC_CALLBACK_PATH = "/api/v1/auth/oidc/callback"
@@ -172,6 +174,19 @@ async def unlock_secret_store(
         else:
             await core.secret_store.unlock(session, kek)
         await session.commit()
+
+
+async def probe_oidc_client_authentication(core: SecurityCore, storage: StorageBackend) -> str:
+    """After `unlock_secret_store`: does Google accept this deployment's client
+    ID and secret? One token request with a deliberately invalid code (no real
+    code, no token can be issued). Operator-run only (`check --live`), never at
+    startup. Audited like any resolution of the secret: by handle."""
+
+    async with storage.session() as session:
+        audit = AuditLogger(session, request_id=uuid.uuid4())
+        verdict = await core.login_flow.probe_client_authentication(session, audit)
+        await session.commit()
+    return verdict
 
 
 async def verify_oidc_client_secret(core: SecurityCore, storage: StorageBackend) -> None:
