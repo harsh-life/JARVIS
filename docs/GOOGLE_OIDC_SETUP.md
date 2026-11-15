@@ -128,6 +128,14 @@ in docs/DEPLOYMENT.md. The variable name is your choice.
   `oauth_token`. If the check fails the server **refuses to start**, naming the
   setting and the reference (never a value). Run the same check on demand with
   `python -m server.composition.oidc_client_secret check`.
+- **That check cannot tell whether Google accepts the secret.** A resolvable
+  secret of the *wrong* client (for example, a deleted client's) passes it and
+  fails only at the first real callback. `check --live` closes that gap: it
+  sends Google's token endpoint one request with a deliberately invalid
+  authorization code. Google authenticates the client first, so `invalid_client`
+  means the ID and secret are not a pair, and `invalid_grant` means the client
+  authenticated (only the fake code was refused). No real code is used and no
+  token can be issued. It is operator-run, never at startup.
 - **Each login:** the secret is resolved just before the code exchange and
   sent only in the POST body to `https://oauth2.googleapis.com/token`
   (`client_secret_post`). If it cannot be resolved, the callback answers
@@ -159,7 +167,7 @@ run the provisioning steps **yourself, in your own terminal**:
 # reads the client ID (shown) and the secret (hidden prompt), stores the secret,
 # writes only the handle into config.yaml, then runs the startup check
 python -m server.composition.oidc_client_secret store     # → secretstore:<id>
-python -m server.composition.oidc_client_secret check
+python -m server.composition.oidc_client_secret check --live   # Google accepts this ID + secret?
 ```
 
 Nothing on a command line, in shell history or in a file ever holds the secret.
@@ -212,8 +220,8 @@ The SecretStore handle is stable, so rotation never touches `config.yaml`:
    ```
    It is resolved per login, so the next sign-in uses the new value with no
    restart. Only an active server-owned `oauth_token` handle can be rotated.
-3. Check that a sign-in works, then disable and delete the old secret in the
-   console.
+3. Run `… check --live`, check that a sign-in works, then disable and delete
+   the old secret in the console.
 
 For `env:`, change the variable and restart the server.
 
@@ -238,7 +246,7 @@ lint-imports --config pyproject.toml
 | Callback `503 dependency_unavailable`; log `OIDC client secret unavailable: …` | resolution failed at login (variable removed, store locked, handle revoked) | as above; `… check` |
 | Callback `503`; log `OIDC client secret refused: … shaped like another credential` | the reference names something that is not a client secret, such as the push wake's service-account key (also a server-owned `oauth_token`) | point `client_secret_ref` at the handle `store` printed for the client secret |
 | Callback `401`; log `error=invalid_request client_authenticated=False` plus a hint naming `security.oidc.client_secret_ref` | a Web client with no secret configured | configure §3 |
-| Callback `401`; log `error=invalid_client client_authenticated=True` | wrong or deleted secret, or the secret of a different client | rotate (§5); check that `client_id` and secret are a pair |
+| Callback `401`; log `error=invalid_client client_authenticated=True` and `Google rejected the configured client secret for client_id …`; audit `auth:oidc:client_rejected` | wrong or deleted secret, or the secret of a different client (`check` still passes: the reference resolves) | `… check --live` confirms it; rotate (§5) with the secret of *this* client |
 | Callback `401`; log `error=invalid_grant` | code reused or expired, `redirect_uri` mismatch, or PKCE mismatch | start a new login; check §2 |
 | Google shows `redirect_uri_mismatch` before the callback | the URI on the client differs from `base_url` + callback path. Often `http://localhost:8000/…` registered while JARVIS sends `http://127.0.0.1:8000/…` | register the exact URI from §2; don't change `server.base_url` to match an old client |
 | Google shows `Error 401: deleted_client` | the OAuth client was deleted (or belongs to a deleted project). Its old secret is useless | create a new Web client (§1) and provision its secret (§3) |
