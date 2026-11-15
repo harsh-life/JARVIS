@@ -30,6 +30,7 @@ away.
 
 from __future__ import annotations
 
+import hmac
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
@@ -208,6 +209,53 @@ class EncryptedLocalSecretStore(SecretStore):
             kek, row.wrap_nonce, row.wrapped_dek, aad=row.key_id.encode("ascii")
         )
         self._key_id = row.key_id
+
+    async def rewrap_kek(
+        self,
+        session: AsyncSession,
+        old_kek: bytes,
+        new_kek: bytes,
+        audit: SecretAuditSink,
+    ) -> int:
+        """Replace the KEK: re-seal every DEK row under `new_kek` (12 §3).
+
+        The remedy for a KEK that may have been exposed. Ciphertext is bound
+        to its DEK (`key_id` is the AAD), never to the KEK, so no secret is
+        re-encrypted: each `secret_store_keys` row keeps its `key_id` and DEK
+        and only its wrap changes, in the caller's transaction. Every row must
+        open under `old_kek` first; one that does not raises
+        `SecretIntegrityError` and nothing is written, so a typo can never
+        leave the store split across two KEKs. Returns the rows re-sealed.
+
+        Backups taken before the rotation still open with the old KEK only —
+        docs/DEPLOYMENT.md says what to do with it.
+        """
+
+        if hmac.compare_digest(old_kek, new_kek):
+            raise ValueError("the new KEK must differ from the current one")
+        rows = list((await session.execute(select(SecretStoreKey))).scalars().all())
+        if not rows:
+            raise SecretStoreLocked(
+                "the SecretStore has never been bootstrapped — there is no key to re-seal (15 §3)"
+            )
+        resealed: list[tuple[SecretStoreKey, bytes, bytes]] = []
+        for row in rows:
+            aad = row.key_id.encode("ascii")
+            dek = aead_decrypt(old_kek, row.wrap_nonce, row.wrapped_dek, aad=aad)
+            resealed.append((row, *aead_encrypt(new_kek, dek, aad=aad)))
+        for row, nonce, wrapped in resealed:
+            row.wrap_nonce = nonce
+            row.wrapped_dek = wrapped
+        await session.flush()
+        await audit.record_secret_event(
+            SecretAuditEvent(
+                action="secret.kek.rotate",
+                secret_ref="secretstore:keys",
+                requester=SecretRequester.server().describe(),
+                result=AuditResult.SUCCESS,
+            )
+        )
+        return len(resealed)
 
     async def _load_active_key(self, session: AsyncSession) -> SecretStoreKey | None:
         result = await session.execute(

@@ -94,6 +94,8 @@ class AuditAction(str, Enum):
     SECRET_RESOLVED = "secret.get"
     SECRET_DELETED = "secret.delete"
     SECRET_ROTATED = "secret.rotate"
+    # The KEK was replaced: every DEK re-sealed under a new one (12 §3; deploy/rotate-kek.sh).
+    SECRET_KEK_ROTATED = "secret.kek.rotate"
 
     # ── superuser (12 §4, SUPER-001) ────────────────────────────────────
     SUPERUSER_AUTHENTICATED = "superuser.authenticated"
@@ -262,4 +264,5 @@ SECRET_ACTION_BY_NAME: dict[str, AuditAction] = {
     "secret.get": AuditAction.SECRET_RESOLVED,
     "secret.delete": AuditAction.SECRET_DELETED,
     "secret.rotate": AuditAction.SECRET_ROTATED,
+    "secret.kek.rotate": AuditAction.SECRET_KEK_ROTATED,
 }

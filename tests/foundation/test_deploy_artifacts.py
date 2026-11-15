@@ -133,6 +133,7 @@ def test_the_start_script_binds_loopback_and_logs_no_request_lines():
 @pytest.mark.parametrize(("shell", "script"), [
     ("sh", "jarvis-start.sh"),
     ("bash", "bootstrap.sh"),
+    ("bash", "rotate-kek.sh"),
 ])
 def test_the_scripts_parse(shell, script):
     if shutil.which(shell) is None:
@@ -204,6 +205,16 @@ def test_the_service_logs_with_level_and_logger_and_no_request_lines():
         assert config["loggers"][noisy]["level"] == "WARNING"
     assert config["root"]["level"] == "WARNING"
     logging.config.dictConfig({**config, "disable_existing_loggers": False})   # it loads
+
+
+# ── F7: backup, restore and KEK rotation ───────────────────────────────────
+
+def test_kek_rotation_keeps_keys_off_command_lines():
+    text = (DEPLOY / "rotate-kek.sh").read_text()
+    assert 'HYPERMIND_KEK="$(cat "$KEK")" HYPERMIND_NEW_KEK="$(cat "$NEW")" \\' in text
+    assert "-m server.composition.kek_rotate" in text
+    assert 'mv -f "$NEW" "$KEK"' in text                   # atomic swap
+    assert "if [ -t 1 ]; then" in text
 
 
 # ── F5: the proxies expose exactly the server's public surface ─────────────

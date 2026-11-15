@@ -22,7 +22,7 @@ from shared.schemas.enums import AuditResult
 
 @dataclass(frozen=True)
 class SecretAuditEvent:
-    action: str  # "secret.set" | "secret.get" | "secret.delete" | "secret.rotate"
+    action: str  # "secret.set" | "secret.get" | "secret.delete" | "secret.rotate" | "secret.kek.rotate"
     secret_ref: str
     requester: str  # SecretRequester.describe() — never a credential
     result: AuditResult
