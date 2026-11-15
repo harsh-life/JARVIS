@@ -276,7 +276,17 @@ def _assert_realpath_contained(root_real: str, dir_fd: int, name: str) -> None:
         f_getpath = getattr(fcntl, "F_GETPATH", None) if fcntl is not None else None
         if f_getpath is None:
             return
-        raw = fcntl.fcntl(dir_fd, f_getpath, bytes(1024))  # MAXPATHLEN
+        try:
+            raw = fcntl.fcntl(dir_fd, f_getpath, bytes(1024))  # MAXPATHLEN
+        except OSError as exc:
+            # The kernel was asked and could not answer, so containment is
+            # unverified: refuse (fail closed) through this module's own
+            # refusal path, never proceed as if the check had passed, and
+            # never let a raw OSError escape past the callers' ExecutionError
+            # handling.
+            raise _forbidden(
+                f"cannot verify the resolved path is inside the sandbox root: {exc}"
+            ) from exc
         resolved = os.fsdecode(raw.split(b"\0", 1)[0])
     root_with_sep = root_real.rstrip(os.sep) + os.sep
     if not (resolved == root_real or resolved.startswith(root_with_sep)):

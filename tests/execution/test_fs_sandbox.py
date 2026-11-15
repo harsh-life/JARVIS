@@ -8,11 +8,13 @@ the only way to prove otherwise is to actually attempt the escape.
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import stat as stat_module
 import sys
 import tarfile
+import types
 import uuid
 import zipfile
 from pathlib import Path
@@ -576,3 +578,54 @@ def test_a_write_never_follows_a_symlink_swapped_in_after_the_check(user_root, r
         sandbox.write_file(root, "raced_write.txt", "overwritten?")
     assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
     assert outside.read_text(encoding="utf-8") == "host file"
+
+
+# ── F_GETPATH failure (macOS/BSD belt-and-suspenders check) ─────────────
+
+
+class _FailingGetPath:
+    """Stands in for `fcntl` on a host where the kernel *is* asked for a
+    descriptor's path (F_GETPATH) but cannot answer."""
+
+    F_GETPATH = 50  # macOS's value; only its presence matters here
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def fcntl(self, fd, cmd, arg):
+        self.calls += 1
+        raise OSError(errno.EBADF, "Bad file descriptor")
+
+
+@pytest.fixture
+def failing_getpath(monkeypatch) -> _FailingGetPath:
+    from server.fs import paths
+
+    fake = _FailingGetPath()
+    monkeypatch.setattr(paths, "fcntl", fake)
+    # Take the non-Linux branch on every host so this runs in Linux CI too;
+    # only paths.py's own `sys` name is replaced, not the interpreter's.
+    monkeypatch.setattr(paths, "sys", types.SimpleNamespace(platform="darwin"))
+    return fake
+
+
+@requires_descriptor_containment
+def test_an_unanswerable_f_getpath_refuses_a_read(user_root, failing_getpath):
+    sandbox, root, _ = user_root
+    target = Path(root) / "present.txt"
+    target.write_text("secret", encoding="utf-8", newline="\n")
+    with pytest.raises(ExecutionError) as excinfo:  # not a raw OSError
+        sandbox.read_file(root, "present.txt")
+    assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
+    assert "cannot verify" in str(excinfo.value)
+    assert failing_getpath.calls == 1
+
+
+@requires_descriptor_containment
+def test_an_unanswerable_f_getpath_refuses_a_write_and_creates_nothing(user_root, failing_getpath):
+    sandbox, root, _ = user_root
+    with pytest.raises(ExecutionError) as excinfo:
+        sandbox.create_file(root, "never.txt", "content")
+    assert _error(excinfo) == ExecutionErrorCode.FORBIDDEN_PATH
+    assert failing_getpath.calls == 1
+    assert not (Path(root) / "never.txt").exists()
