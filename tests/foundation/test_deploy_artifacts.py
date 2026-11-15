@@ -133,6 +133,8 @@ def test_the_start_script_binds_loopback_and_logs_no_request_lines():
 @pytest.mark.parametrize(("shell", "script"), [
     ("sh", "jarvis-start.sh"),
     ("bash", "bootstrap.sh"),
+    ("bash", "backup.sh"),
+    ("bash", "restore.sh"),
     ("bash", "rotate-kek.sh"),
 ])
 def test_the_scripts_parse(shell, script):
@@ -208,6 +210,26 @@ def test_the_service_logs_with_level_and_logger_and_no_request_lines():
 
 
 # ── F7: backup, restore and KEK rotation ───────────────────────────────────
+
+def test_the_backup_never_includes_credentials_and_says_so():
+    text = (DEPLOY / "backup.sh").read_text()
+    commands = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+    assert not any("credentials" in line for line in commands)
+    assert 'echo "kek_included: no"' in text
+    assert "--exclude=./models" in text and "--exclude=./sandboxes" in text
+    assert "umask 077" in text and 'install -d -m 0700 "$OUT"' in text
+    assert 'chmod 0600 "$ARCHIVE.partial"' in text
+
+
+def test_the_restore_never_drops_or_overwrites():
+    text = (DEPLOY / "restore.sh").read_text()
+    assert "dropdb" not in text and "DROP " not in text.upper().replace("DROP AND RECREATE", "")
+    assert "is not empty" in text                          # an empty database only
+    assert "pre-restore-" in text                          # existing state moved aside
+    assert "jarvis is running" in text                     # refuses a live service
+    assert "sha256sum --check" in text
+    assert 'grep -qx "kek_included: no"' in text
+
 
 def test_kek_rotation_keeps_keys_off_command_lines():
     text = (DEPLOY / "rotate-kek.sh").read_text()
