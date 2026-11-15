@@ -708,3 +708,16 @@ async def test_requester_kinds_are_exactly_the_documented_set():
         "server",
         "superuser",
     }
+
+
+def test_store_handle_maps_a_reference_to_the_stores_own_handle():
+    """A `secretstore:` reference from config is the handle unchanged; only the
+    stored model-row form (one extra prefix, by design) loses exactly one."""
+
+    from server.secrets.store import new_handle, store_handle
+
+    handle = new_handle()
+    assert handle.startswith("secretstore:")
+    assert store_handle(handle) == handle
+    assert store_handle("secretstore:" + handle) == handle
+    assert store_handle("env:NAME") == "env:NAME"

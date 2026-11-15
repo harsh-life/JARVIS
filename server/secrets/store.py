@@ -69,6 +69,21 @@ def new_handle() -> str:
     return f"{HANDLE_PREFIX}{uuid.uuid4().hex}"
 
 
+def store_handle(secret_ref: str) -> str:
+    """The SecretStore handle a `secretstore:` reference names.
+
+    A handle already begins with `secretstore:` (`new_handle`), so a reference
+    from configuration — which `SecretRef` validates as `secretstore:<id>`, with
+    no further colon — **is** the handle, unchanged. The one doubled form,
+    `secretstore:secretstore:<id>`, is what a stored model-configuration row
+    carries by design (`server/gateway/routers/model_config.py:_row_ref`); exactly
+    one prefix is removed from it. Nothing else is rewritten.
+    """
+
+    doubled = HANDLE_PREFIX + HANDLE_PREFIX
+    return secret_ref[len(HANDLE_PREFIX):] if secret_ref.startswith(doubled) else secret_ref
+
+
 class SecretStore(ABC):
     """12 §1's interface. Replaceable (SECRET-001) — a future OS-keychain or
     KMS backend implements this same contract, and callers change nothing

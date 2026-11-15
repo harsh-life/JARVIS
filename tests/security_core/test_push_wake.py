@@ -557,8 +557,82 @@ async def test_wakes_are_audited_by_device_and_the_credential_class_is_enforced(
             await db.commit()
         return handle
 
+    # The handle `set` returns already begins `secretstore:` and is exactly what
+    # `service_account_ref` holds (never a doubled `secretstore:secretstore:…`,
+    # which config refuses to load).
     good = await store('{"type": "service_account", "k": 1}', SecretClass.OAUTH_TOKEN)
-    assert await push_credential(f"secretstore:{good}", app)() == '{"type": "service_account", "k": 1}'
+    assert good.startswith("secretstore:") and not good.startswith("secretstore:secretstore:")
+    assert await push_credential(good, app)() == '{"type": "service_account", "k": 1}'
     wrong = await store("sk-model-key", SecretClass.MODEL_API_KEY)
     with pytest.raises(SecretUnavailable):
-        await push_credential(f"secretstore:{wrong}", app)()
+        await push_credential(wrong, app)()
+
+
+# ── service_account_ref: a valid `secretstore:` reference resolves ─────────
+
+
+async def test_a_configured_secretstore_reference_resolves_the_push_credential(api):
+    """Regression: `push_credential` used to strip the `secretstore:` prefix off
+    the configured reference, then look up a bare id that never exists — so a
+    valid `service_account_ref` could not resolve (only an invalid doubled
+    form, which config refuses to load, did). The value is taken from a
+    *validated* config here, exactly as `build_push` passes it."""
+
+    from fastapi import FastAPI
+    from pydantic import ValidationError
+
+    from server.composition.push import push_credential
+    from server.composition.secret_context import SecretUnavailable
+    from server.secrets.errors import SecretStoreError
+    from server.secrets.requester import SecretRequester
+    from server.security.audit import AuditLogger
+    from shared.schemas.enums import SecretClass, SecretOwnerScopeType
+
+    app = FastAPI()
+    app.state.storage, app.state.security = api.storage, api.core
+
+    async def store(value: str, secret_class: SecretClass, scope=SecretOwnerScopeType.SERVER, scope_id=None) -> str:
+        async with api.storage.session() as db:
+            handle = await api.core.secret_store.set(
+                db, value=value, secret_class=secret_class, owner_scope_type=scope, owner_scope_id=scope_id,
+                requester=SecretRequester.server(), audit=AuditLogger(db, request_id=uuid.uuid4()),
+            )
+            await db.commit()
+        return handle
+
+    def configured(ref: str) -> str:
+        return AndroidPushConfig.model_validate(
+            {"provider": "fcm", "fcm": {"client": CLIENT.model_dump(), "service_account_ref": ref}}
+        ).fcm.service_account_ref
+
+    key = '{"type": "service_account", "regression": true}'
+    handle = await store(key, SecretClass.OAUTH_TOKEN)
+    ref = configured(handle)
+    assert ref == handle
+    assert await push_credential(ref, app)() == key
+    with pytest.raises(ValidationError):
+        configured(f"secretstore:{handle}")          # the doubled form never loads
+
+    # Valid references to anything but an active server-owned oauth_token are refused.
+    refused = {
+        "model key": await store("sk-model-key", SecretClass.MODEL_API_KEY),
+        "device credential": await store("device-cred", SecretClass.DEVICE_CREDENTIAL),
+        "user-owned oauth": await store(key, SecretClass.OAUTH_TOKEN, SecretOwnerScopeType.USER, str(uuid.uuid4())),
+        "unknown": "secretstore:" + uuid.uuid4().hex,
+    }
+    revoked = await store(key, SecretClass.OAUTH_TOKEN)
+    async with api.storage.session() as db:
+        await api.core.secret_store.delete(db, revoked, SecretRequester.server(), AuditLogger(db, request_id=uuid.uuid4()))
+        await db.commit()
+    refused["revoked"] = revoked
+    # A wrong class or an unknown handle is refused by push itself
+    # (SecretUnavailable); a user-owned or revoked one by the SecretStore's own
+    # authorization (SecretDenied). Either way nothing is returned, and the only
+    # caller (`FcmWakeSender._access_token`) treats any failure as "no
+    # credential" before any request is made.
+    for label, other in refused.items():
+        with pytest.raises((SecretUnavailable, SecretStoreError)):
+            await push_credential(configured(other), app)()
+    async with api.storage.session() as db:
+        blocked = (await db.execute(select(AuditEvent).where(AuditEvent.action == "secret.get"))).scalars().all()
+    assert {r.resource for r in blocked if r.result.value == "blocked"} >= {refused["model key"], refused["device credential"]}
