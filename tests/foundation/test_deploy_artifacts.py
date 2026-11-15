@@ -190,6 +190,22 @@ def test_a_local_model_needs_no_model_key_but_the_unit_always_loads_one():
     assert 'if [ -s "$CREDENTIALS_DIRECTORY/superuser_token" ]; then' in start
 
 
+def test_the_service_logs_with_level_and_logger_and_no_request_lines():
+    import json
+    import logging.config
+
+    start = (DEPLOY / "jarvis-start.sh").read_text()
+    assert '--log-config "$JARVIS_HOME/deploy/logging.json"' in start
+    config = json.loads((DEPLOY / "logging.json").read_text())
+    assert "%(levelname)s %(name)s" in config["formatters"]["journal"]["format"]
+    assert config["loggers"]["hypermind"]["level"] == "INFO"
+    assert config["loggers"]["uvicorn.access"] == {"level": "WARNING", "handlers": [], "propagate": False}
+    for noisy in ("httpx", "httpcore"):                    # whole request URLs at INFO
+        assert config["loggers"][noisy]["level"] == "WARNING"
+    assert config["root"]["level"] == "WARNING"
+    logging.config.dictConfig({**config, "disable_existing_loggers": False})   # it loads
+
+
 # ── F5: the proxies expose exactly the server's public surface ─────────────
 
 def _caddy_paths() -> set[str]:

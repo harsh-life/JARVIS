@@ -32,8 +32,12 @@ if [ -s "$CREDENTIALS_DIRECTORY/superuser_token" ]; then
     export HYPERMIND_SUPERUSER_TOKEN
 fi
 
+# Logging (deploy/logging.json): one line per record, level and logger name,
+# to stderr — journald adds time, unit and PID. The server's own `hypermind.*`
+# loggers at INFO; libraries at WARNING (httpx logs whole request URLs at INFO).
 cd "$JARVIS_HOME"
 exec "$JARVIS_HOME/.venv/bin/uvicorn" server.composition.main:app \
     --host 127.0.0.1 --port "$JARVIS_PORT" \
     --proxy-headers --forwarded-allow-ips=127.0.0.1 \
+    --log-config "$JARVIS_HOME/deploy/logging.json" \
     --no-access-log
