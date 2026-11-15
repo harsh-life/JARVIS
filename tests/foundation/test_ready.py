@@ -103,6 +103,7 @@ _REMOTE = {
 def _config(*, budgets: tuple[float, float, float], allowed: list[str]):
     task, user, total = budgets
     return make_test_config(
+        server={"base_url": "https://jarvis.example.test"},
         agent={**_REMOTE, "bounds": {"per_task_budget": task}},
         security={
             "oidc": {"client_id": TEST_CLIENT_ID, "issuer": TEST_ISSUER, "allowed_emails": allowed},
@@ -111,8 +112,39 @@ def _config(*, budgets: tuple[float, float, float], allowed: list[str]):
     )
 
 
-def test_a_local_primary_has_no_preconditions():
-    assert deployment_problems(make_test_config()) == []
+def test_a_local_primary_has_no_budget_or_allow_list_preconditions():
+    assert deployment_problems(make_test_config(server={"base_url": "http://127.0.0.1:8000"})) == []
+
+
+@pytest.mark.parametrize("base_url", [
+    "https://jarvis.example.test",
+    "http://127.0.0.1:8000",
+    "http://127.8.9.10:8000",
+    "http://localhost:8000",
+    "http://[::1]:8000",
+])
+def test_https_or_loopback_base_urls_start(base_url):
+    assert deployment_problems(make_test_config(server={"base_url": base_url})) == []
+
+
+@pytest.mark.parametrize("base_url", [
+    "http://192.168.1.20:8000",       # the LAN: codes and tokens in the clear
+    "http://10.0.0.5",
+    "http://0.0.0.0:8000",
+    "http://jarvis.local:8000",
+    "http://localhost.example.test",  # not loopback, whatever the name says
+    "ftp://jarvis.example.test",
+])
+def test_a_plain_http_base_url_off_loopback_does_not_start(base_url):
+    with pytest.raises(ConfigError, match="server.base_url must be https"):
+        check_deployment(make_test_config(server={"base_url": base_url}))
+
+
+def test_the_transport_rule_applies_to_a_remote_primary_too():
+    config = _config(budgets=(0.05, 1.0, 10.0), allowed=["alice@example.test"])
+    config.server.base_url = "http://192.168.1.20:8000"
+    with pytest.raises(ConfigError, match="server.base_url must be https"):
+        check_deployment(config)
 
 
 def test_a_remote_primary_with_budgets_and_an_allow_list_starts():

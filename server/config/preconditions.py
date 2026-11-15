@@ -8,7 +8,12 @@ they are the conditions under which a *deployed* server refuses to start
   budget and both daily cost limits must be greater than zero;
 * OD-PILOT-5 — with a non-local primary the pilot is invite-only, so the
   sign-in allow-list (`security.oidc.allowed_emails` / `allowed_domains`)
-  must not be empty.
+  must not be empty;
+* transport — `server.base_url` is `https://`, unless it names this machine's
+  loopback (development). Plain http to any other host would carry OIDC codes,
+  access tokens and device proofs across the network in the clear; the desktop
+  companion and Android App Links refuse such a server anyway, so it can only
+  have been a mistake (docs/DEPLOYMENT.md §5, "Remote connections").
 
 `server/composition/main.py` calls `check_deployment` before building the
 application; a failure is a `ConfigError`, the same fail-closed path as any
@@ -17,16 +22,44 @@ other invalid configuration.
 
 from __future__ import annotations
 
+import ipaddress
+from urllib.parse import urlsplit
+
 from server.config.errors import ConfigError
 from server.config.schema import LOCAL_MODEL_PROVIDERS, AppConfig
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    if not host:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def transport_problems(config: AppConfig) -> list[str]:
+    parts = urlsplit(config.server.base_url)
+    if parts.scheme == "https":
+        return []
+    if parts.scheme == "http" and _is_loopback_host(parts.hostname):
+        return []
+    return [
+        "server.base_url must be https:// unless it is this machine's loopback "
+        "(http://127.0.0.1, http://localhost): put Caddy or a Cloudflare named tunnel "
+        "in front (docs/DEPLOYMENT.md §5)"
+    ]
 
 
 def deployment_problems(config: AppConfig) -> list[str]:
     """Every precondition `config` fails, as operator-facing sentences (no values)."""
 
+    problems = transport_problems(config)
     if config.agent.provider in LOCAL_MODEL_PROVIDERS:
-        return []
-    problems = [
+        return problems
+    problems += [
         f"{name} must be greater than zero when agent.provider is not local (OD-PILOT-2)"
         for name, value in (
             ("agent.bounds.per_task_budget", config.agent.bounds.per_task_budget),
