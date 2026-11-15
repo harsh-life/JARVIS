@@ -171,8 +171,11 @@ What the code does, and what was **actually verified**. "CI" means a GitHub
 Actions runner smoke-testing the installed package (§9); a smoke test proves
 the packaged webview loads the atlas, runs the shared policy on a synthetic
 report and shows the expected expression, and that the transparent window and
-tray are created. It does not prove how a particular window manager stacks or
-composites the window.
+tray are created. It is one-shot: it writes one result, then exits by itself
+with status 0 (1 on failure) without saving preferences, and CI checks the
+result and the process's termination and status as separate conditions
+(`desktop/src-tauri/src/smoke.rs`, `desktop/scripts/smoke-lifecycle.mjs`). It
+does not prove how a particular window manager stacks or composites the window.
 
 | | Windows 10/11 | macOS 11+ | Linux X11 | Linux Wayland |
 |---|---|---|---|---|

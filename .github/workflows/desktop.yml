@@ -107,7 +107,12 @@ jobs:
       # ── smoke tests of the installed packages ──────────────────────────
       # `--smoke-test` opens the real companion window, loads the sprite atlas
       # in the packaged webview, feeds a synthetic report through the shared
-      # policy and records what is shown — no network, no credential store.
+      # policy and records what is shown — no network, no credential store, no
+      # saved preferences — then exits (desktop/src-tauri/src/smoke.rs).
+      # scripts/smoke-lifecycle.mjs judges each run on three separate
+      # conditions: the result says ok, the process ended by itself within
+      # 90 s, and its status was 0. A run still alive at the bound fails, and
+      # only the PID the harness started is killed.
 
       - name: Smoke test — .deb installed, X11 (Xvfb, no compositor)
         if: runner.os == 'Linux'
@@ -122,10 +127,9 @@ jobs:
           # A coloured root window, so a transparent companion is visibly not black.
           dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" bash -c "
             xsetroot -solid '#3a6ea5'
-            \"$BIN\" --smoke-test ../smoke/linux-x11-${{ matrix.os }}.json & PID=\$!
-            sleep 6; import -window root ../smoke/linux-x11-${{ matrix.os }}.png || true
-            wait \$PID"
-          cat ../smoke/linux-x11-${{ matrix.os }}.json
+            node scripts/smoke-lifecycle.mjs --result ../smoke/linux-x11-${{ matrix.os }}.json \\
+              --screenshot-after-s 6 --screenshot 'import -window root ../smoke/linux-x11-${{ matrix.os }}.png' \\
+              -- \"$BIN\""
 
       - name: Smoke test — .deb installed, X11 with a compositor (xcompmgr)
         if: runner.os == 'Linux'
@@ -134,10 +138,9 @@ jobs:
           dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" bash -c "
             xsetroot -solid '#3a6ea5'
             xcompmgr & sleep 1
-            \"$JARVIS_BIN\" --smoke-test ../smoke/linux-x11-composited-${{ matrix.os }}.json & PID=\$!
-            sleep 6; import -window root ../smoke/linux-x11-composited-${{ matrix.os }}.png || true
-            wait \$PID"
-          cat ../smoke/linux-x11-composited-${{ matrix.os }}.json
+            node scripts/smoke-lifecycle.mjs --result ../smoke/linux-x11-composited-${{ matrix.os }}.json \\
+              --screenshot-after-s 6 --screenshot 'import -window root ../smoke/linux-x11-composited-${{ matrix.os }}.png' \\
+              -- \"$JARVIS_BIN\""
 
       - name: Smoke test — .deb installed, Wayland (Weston, headless)
         if: runner.os == 'Linux'
@@ -152,8 +155,7 @@ jobs:
           export WAYLAND_DISPLAY=wl-ci GDK_BACKEND=wayland XDG_SESSION_TYPE=wayland LIBGL_ALWAYS_SOFTWARE=1
           unset DISPLAY
           export JARVIS_SMOKE_HOLD_MS=6000
-          dbus-run-session -- "$BIN" --smoke-test ../smoke/linux-wayland-${{ matrix.os }}.json
-          cat ../smoke/linux-wayland-${{ matrix.os }}.json
+          dbus-run-session -- node scripts/smoke-lifecycle.mjs --result ../smoke/linux-wayland-${{ matrix.os }}.json -- "$BIN"
 
       - name: Smoke test — AppImage
         if: matrix.os == 'ubuntu-22.04'
@@ -163,8 +165,7 @@ jobs:
           # Absolute: AppRun changes the working directory.
           OUT="$GITHUB_WORKSPACE/smoke/linux-appimage.json"
           export JARVIS_SMOKE_HOLD_MS=4000 APPIMAGE_EXTRACT_AND_RUN=1
-          dbus-run-session -- xvfb-run -a "$APP" --smoke-test "$OUT"
-          cat "$OUT"
+          dbus-run-session -- xvfb-run -a node scripts/smoke-lifecycle.mjs --result "$OUT" -- "$APP"
 
       - name: Smoke test — app run from the mounted DMG
         if: runner.os == 'macOS'
@@ -174,11 +175,12 @@ jobs:
           MNT=$(hdiutil attach -nobrowse -readonly "$DMG" | grep -o '/Volumes/.*' | head -1)
           APPBIN=$(ls "$MNT"/*.app/Contents/MacOS/* | head -1)
           export JARVIS_SMOKE_HOLD_MS=8000
-          "$APPBIN" --smoke-test ../smoke/macos.json & PID=$!
-          sleep 6; screencapture -x ../smoke/macos.png || echo "screencapture unavailable"
-          wait $PID
+          status=0
+          node scripts/smoke-lifecycle.mjs --result ../smoke/macos.json \
+            --screenshot-after-s 6 --screenshot 'screencapture -x ../smoke/macos.png || echo "screencapture unavailable"' \
+            -- "$APPBIN" || status=$?
           hdiutil detach "$MNT" -quiet
-          cat ../smoke/macos.json
+          exit $status
 
       - name: Smoke test — MSI installed
         if: runner.os == 'Windows'
@@ -192,17 +194,18 @@ jobs:
           if (-not $exe) { $exe = Get-ChildItem $env:ProgramFiles, ${env:ProgramFiles(x86)}, "$env:LOCALAPPDATA\Programs" -Filter "*jarvis*.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 }
           Write-Host "installed: $($exe.FullName)"
           $env:JARVIS_SMOKE_HOLD_MS = "8000"
-          $out = (Resolve-Path ..\smoke).Path + "\windows.json"
-          $app = Start-Process $exe.FullName -ArgumentList "--smoke-test `"$out`"" -PassThru
-          Start-Sleep -Seconds 6
+          $smoke = (Resolve-Path ..\smoke).Path
+          @'
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
           $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
           [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
-          $bmp.Save((Resolve-Path ..\smoke).Path + "\windows.png")
-          $app.WaitForExit(60000) | Out-Null
-          Get-Content $out
-          if ($app.ExitCode -ne 0) { throw "smoke test exited $($app.ExitCode)" }
+          $bmp.Save($args[0])
+          '@ | Set-Content "$smoke\screenshot.ps1"
+          node scripts/smoke-lifecycle.mjs --result "$smoke\windows.json" `
+            --screenshot-after-s 6 --screenshot "pwsh -NoProfile -File `"$smoke\screenshot.ps1`" `"$smoke\windows.png`"" `
+            -- $exe.FullName
+          if ($LASTEXITCODE -ne 0) { throw "smoke test failed (see the harness summary above)" }
 
       - name: Checksums
         run: |

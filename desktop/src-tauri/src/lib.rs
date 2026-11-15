@@ -27,6 +27,7 @@ pub mod loopback;
 pub mod net;
 pub mod platform;
 pub mod prefs;
+pub mod smoke;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -88,6 +89,7 @@ pub struct AppState {
 struct Smoke {
     path: PathBuf,
     result: Mutex<serde_json::Value>,
+    finished: smoke::Once,
 }
 
 #[derive(Serialize)]
@@ -152,6 +154,12 @@ fn set_connection(app: &AppHandle, c: Connection) {
 
 fn save_prefs(app: &AppHandle) {
     let s = state(app);
+    // A smoke run starts from the defaults and must leave the user's saved
+    // preferences as they were: moving its window (placement on start) would
+    // otherwise write those defaults over the real prefs.json.
+    if s.smoke.is_some() {
+        return;
+    }
     let p = s.prefs.lock().unwrap().clone();
     if let Err(e) = p.save(&s.prefs_path) {
         warn!("could not save preferences: {e}");
@@ -701,17 +709,32 @@ fn smoke_arg() -> Option<PathBuf> {
     None
 }
 
+/// Ends a smoke run exactly once (see `smoke.rs`): records the verdict,
+/// reports it, and exits with its status. A second caller (the deadline after
+/// the hold already finished) does nothing.
 fn finish_smoke(app: &AppHandle) {
     let s = state(app);
     let Some(smoke) = &s.smoke else { return };
+    if !smoke.finished.claim() {
+        return;
+    }
     let mut r = smoke.result.lock().unwrap().clone();
-    let ok = r["renderer"] == serde_json::json!(true)
-        && r["shown"] == serde_json::json!("happy")
-        && r["window"] == serde_json::json!(true);
+    let mut ok = smoke::verdict(&r, std::env::consts::OS);
     r["ok"] = serde_json::json!(ok);
-    let _ = std::fs::write(&smoke.path, serde_json::to_vec_pretty(&r).unwrap());
-    info!("smoke test {}", if ok { "passed" } else { "FAILED" });
-    app.exit(if ok { 0 } else { 1 });
+    if let Err(e) = std::fs::write(&smoke.path, serde_json::to_vec_pretty(&r).unwrap()) {
+        warn!("smoke test result could not be written ({e})");
+        ok = false;
+    }
+    let code = smoke::exit_code(ok);
+    info!("smoke test {}; exiting with status {code}", if ok { "passed" } else { "FAILED" });
+    // `exit` only asks the event loop to unwind. If that shutdown stalls, the
+    // run must still end, with the same status, rather than stay alive.
+    std::thread::spawn(move || {
+        std::thread::sleep(smoke::FORCED_EXIT_AFTER);
+        warn!("smoke test: graceful shutdown did not finish in {:?}; exiting", smoke::FORCED_EXIT_AFTER);
+        std::process::exit(code);
+    });
+    app.exit(code);
 }
 
 pub fn run() {
@@ -758,6 +781,7 @@ pub fn run() {
                     "session": platform::display_session(),
                     "renderer": false, "shown": null, "window": false, "tray": false,
                 })),
+                finished: smoke::Once::default(),
             });
             app.manage(AppState {
                 prefs: Mutex::new(prefs.clone()),
@@ -828,7 +852,7 @@ pub fn run() {
                 tauri::async_runtime::spawn({
                     let h = handle.clone();
                     async move {
-                        tokio::time::sleep(Duration::from_secs(60)).await;
+                        tokio::time::sleep(smoke::DEADLINE).await;
                         finish_smoke(&h);
                     }
                 });
