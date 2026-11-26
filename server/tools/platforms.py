@@ -33,6 +33,7 @@ from typing import Mapping
 from uuid import UUID
 
 from server.execution.android import DeviceTransport, UnavailableDeviceTransport, build_operation
+from server.execution.automation import N8nWorkflowExecutor
 from server.execution.device_observations import render_vision_observation
 from server.execution.process import ConstrainedProcessExecutor
 from server.fs import FilesystemSandbox
@@ -221,6 +222,59 @@ def net_request_tool(client: EgressClient, *, egress_policy: EgressPolicy) -> To
         contract=contract,
         operations=_tool_action("get", "post"),
         adapters={ExecutionPlatform.SERVER: adapter},
+    )
+
+
+# ── automation (n8n, docs/32 [PROPOSAL] OD-AUTO-1) ──────────────────────
+
+
+class AutomationWorkflowAdapter:
+    """`automation.workflow`'s one operation. Builds the ExecutionRequest from
+    the already-authorized invocation and hands it to the executor, which
+    enforces the operator-pinned workflow catalogue and typed inputs. Nothing
+    here authorizes; nothing n8n returns can authorize anything."""
+
+    def __init__(self, executor: N8nWorkflowExecutor) -> None:
+        self._executor = executor
+
+    async def execute(self, invocation: ToolInvocation) -> ToolOutput:
+        request = ExecutionRequest.from_invocation(invocation)
+        try:
+            if request.operation != "run_workflow":
+                raise ExecutionError(
+                    ExecutionErrorCode.PLATFORM_UNSUPPORTED, f"unsupported operation {request.operation!r}"
+                )
+            result = await self._executor.run(request)
+        except ExecutionError as exc:
+            return _failed(exc)
+        return _ok(result)
+
+
+def _describe_workflows(executor: N8nWorkflowExecutor) -> str:
+    lines = []
+    for workflow in executor.workflows.values():
+        fields = ", ".join(
+            f"{name}:{field.type}{'' if field.required else '?'}" for name, field in workflow.inputs.items()
+        )
+        lines.append(f"{workflow.id}({fields}) — {workflow.description}".strip())
+    return "; ".join(lines)
+
+
+def automation_workflow_tool(executor: N8nWorkflowExecutor) -> ToolDefinition:
+    contract = _contract(
+        "automation.run_workflow", "automation.workflow", RiskCategory.CONSEQUENTIAL, True,
+        description=(
+            "Run one operator-pinned automation workflow with typed inputs; the user confirms "
+            "first. Arguments: {\"workflow_id\": <pinned id>, \"inputs\": {...}}. Workflows: "
+            + _describe_workflows(executor)
+        ),
+        network={"automation_host": "loopback, operator-pinned (automation.n8n.base_url)"},
+        timeout_seconds=int(max([w.timeout_seconds for w in executor.workflows.values()] or [20])) + 10,
+    )
+    return ToolDefinition(
+        contract=contract,
+        operations=_tool_action("run_workflow"),
+        adapters={ExecutionPlatform.SERVER: AutomationWorkflowAdapter(executor)},
     )
 
 

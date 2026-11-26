@@ -65,6 +65,9 @@ AGENT_DEFINE_CAPABILITY = "agent.define"
 BROWSER_SESSION_CAPABILITY = "browser.session"
 AGENT_INSPECT_CAPABILITY = "agent.inspect"
 AGENT_DELETE_CAPABILITY = "agent.delete"
+# [PROPOSAL — NOT CANONICAL UNTIL RATIFIED] OD-AUTO-1 (docs/32_AUTOMATION_N8N.md).
+AUTOMATION_WORKFLOW_CAPABILITY = "automation.workflow"
+RUN_WORKFLOW_OPERATION = "run_workflow"
 
 
 class UnknownCapability(Exception):
@@ -325,6 +328,20 @@ def _registry() -> Mapping[str, CapabilityDefinition]:
             description="Delete one of the user's agent definitions, with confirmation (docs/29).",
             operations=MappingProxyType({"delete": RiskCategory.CONSEQUENTIAL}),
             scope_keys=frozenset(),
+        ),
+        # [PROPOSAL] OD-AUTO-1: run one operator-pinned n8n workflow. A
+        # workflow acts outside JARVIS on the user's behalf and is not
+        # reversible by JARVIS, so it is never automatic: every run is
+        # confirmed against its exact workflow id and inputs. A grant may be
+        # narrowed to one workflow. n8n executes; it never decides.
+        CapabilityDefinition(
+            name=AUTOMATION_WORKFLOW_CAPABILITY,
+            description=(
+                "Run one operator-pinned automation workflow (n8n) with typed inputs, "
+                "after the user confirms the exact workflow and inputs (docs/32)."
+            ),
+            operations=MappingProxyType({RUN_WORKFLOW_OPERATION: RiskCategory.CONSEQUENTIAL}),
+            scope_keys=frozenset({"workflow_id"}),
         ),
     )
     return MappingProxyType({d.name: d for d in definitions})
