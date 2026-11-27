@@ -352,3 +352,15 @@ Tests: `HYPERMIND_REQUIRE_CONTAINER_STACK=1 python -m pytest
 tests/execution/test_containers_live.py tests/agents/test_browser_live.py`
 as that unprivileged user, with `HYPERMIND_TEST_BROWSER_IMAGE` set to a
 local image digest (CI job `containers`).
+
+**What the egress proxy does and does not enforce** (`docs/ADR_EGRESS_TLS_ORIGIN.md`).
+It enforces the CONNECT host (exact, from JARVIS's list), resolves it itself,
+refuses any non-public answer, pins the TCP connection to the checked address
+(checked IP = connected IP), and bounds attempts, concurrent connections and
+bytes per run — each counted atomically (2026-11-27: concurrent connections
+could previously pass the same admission check, and concurrent relays could
+together overspend the byte budget). It does **not** inspect TLS: the SNI, the
+certificate and the HTTP `Host`/`:authority` inside the tunnel are unseen. On
+a shared IP (a CDN), a contained run can therefore reach a different site
+served from an allowed host's address. This is an address-level control, not
+TLS or HTTP origin enforcement.

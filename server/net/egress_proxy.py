@@ -34,6 +34,33 @@ ends on close, on the run's byte budget, on `idle_timeout`, or when the
 proxy stops. Every decision is reported to `on_decision` (the audit trail);
 a refusal carries a reason code and never echoes what the runtime sent.
 
+**Limits, and exactly what they count** (all accounting is check-and-update
+with no `await` in between, so concurrent connections cannot pass the same
+check before any of them updates it — the event loop is the lock):
+
+* *connection attempt* — a CONNECT whose head, host name, host and port all
+  passed. Each one counts against `max_connections` (the run's lifetime cap)
+  the moment it is admitted, **before** DNS is awaited, whether or not
+  resolution or the upstream connection then succeeds;
+* *active connection* — an admitted attempt from that moment until its
+  handler ends (DNS, connect, relay, close). At most `max_concurrent` at once.
+  The slot is released in one `finally`, whatever ended it (DNS failure, a
+  blocked address, a failed or mismatched connect, timeout, client
+  disconnect, cancellation, proxy stop, an unexpected error, normal close);
+* *bytes* — one budget per run, shared by every connection and both
+  directions, measured as bytes **admitted for forwarding**: a chunk's share
+  is reserved before it is written, and never refunded (a failed or slow
+  write still spent it). `bytes_up + bytes_down` can therefore never exceed
+  `max_bytes`. When the budget is spent, every tunnel of the run is closed.
+
+**What this proxy does not guarantee** (docs/ADR_EGRESS_TLS_ORIGIN.md): it
+checks the CONNECT authority, resolves it itself and pins the connection to
+the checked address. It does **not** see inside TLS, so it cannot verify the
+TLS SNI or the HTTP `Host`/`:authority` the client then sends. On a shared
+IP (a CDN, a multi-tenant host), a client may reach a *different* site
+served from the same address as an allowed host. CONNECT host + pinned IP is
+an address-level control, not verified TLS/HTTP origin enforcement.
+
 Like the rest of `server/net`, the proxy authorizes nothing: the run's
 hosts were decided before it started.
 """
@@ -189,6 +216,8 @@ class EgressProxy:
         self._server: asyncio.base_events.Server | None = None
         self._tasks: set[asyncio.Task] = set()
         self._writers: set[asyncio.StreamWriter] = set()
+        # Set once the run's byte budget is spent: every relay waits on it.
+        self._budget_spent = asyncio.Event()
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -220,25 +249,28 @@ class EgressProxy:
             self._tasks.add(task)
         self._writers.add(writer)
         upstream_writer: asyncio.StreamWriter | None = None
+        reserved = False
         try:
             try:
                 host, port, leftover = await self._read_head(reader)
-                ip, up_reader, upstream_writer = await self._admit(host, port)
+                name = self._check_and_reserve(host, port)
+                reserved = True
+                ip, up_reader, upstream_writer = await self._open_upstream(name, port)
             except _Refused as refused:
                 self._decide(ProxyDecision(refused.host, refused.port, False, refused.reason))
                 await self._refuse(writer, refused.status)
                 return
-            self._decide(ProxyDecision(host, port, True, "allowed", ip))
+            self._decide(ProxyDecision(name, port, True, "allowed", ip))
             writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             await writer.drain()
-            self.stats.active += 1
-            try:
-                await self._relay(reader, writer, up_reader, upstream_writer, leftover)
-            finally:
-                self.stats.active -= 1
+            await self._relay(reader, writer, up_reader, upstream_writer, leftover)
         except (ConnectionError, asyncio.CancelledError, asyncio.IncompleteReadError, OSError):
             pass
         finally:
+            # The one place a concurrent slot is released — however the
+            # connection ended.
+            if reserved:
+                self.stats.active -= 1
             for w in (upstream_writer, writer):
                 if w is not None:
                     with contextlib.suppress(Exception):
@@ -269,7 +301,11 @@ class EgressProxy:
             raise _Refused(400, "malformed_connect")
         return match.group(1).decode("ascii"), int(match.group(2)), leftover
 
-    async def _admit(self, host: str, port: int):
+    def _check_and_reserve(self, host: str, port: int) -> str:
+        """Every admission check, then the reservation — synchronously, with no
+        `await` anywhere in between, so no other connection can be admitted
+        between this one's check and its count. Returns the normal host name."""
+
         name = _normal_host(host)
         if _is_ip_literal(name) or not _HOST.fullmatch(name):
             raise _Refused(403, "not_a_host_name", None, port)
@@ -279,6 +315,13 @@ class EgressProxy:
             raise _Refused(403, "host_not_allowed", name, port)
         if port not in self.policy.ports:
             raise _Refused(403, "port_not_allowed", name, port)
+        if self._budget_spent.is_set():
+            raise _Refused(429, "byte_budget_spent", name, port)
+        self.stats.connections += 1   # the attempt, against the lifetime cap
+        self.stats.active += 1        # the slot, released by `_handle`'s finally
+        return name
+
+    async def _open_upstream(self, name: str, port: int):
         try:
             ip = await asyncio.wait_for(asyncio.to_thread(
                 checked_address, name, port, allow_private_net=self.policy.allow_private_net,
@@ -288,7 +331,6 @@ class EgressProxy:
                            "unresolved" if exc.reason == "unresolved" else "destination_blocked", name, port) from None
         except (OSError, TimeoutError, ValueError):
             raise _Refused(502, "unresolved", name, port) from None
-        self.stats.connections += 1
         try:
             up_reader, up_writer, peer = await asyncio.wait_for(self._connect(ip, port), self.policy.connect_timeout)
         except (OSError, TimeoutError):
@@ -299,37 +341,46 @@ class EgressProxy:
             raise _Refused(502, "ip_mismatch", name, port)
         return ip, up_reader, up_writer
 
-    async def _relay(self, down_reader, down_writer, up_reader, up_writer, leftover: bytes) -> None:
-        budget = self.policy
+    def _reserve_bytes(self, wanted: int, *, up: bool) -> int:
+        """Take up to `wanted` bytes from the run's one budget, synchronously.
+        What is taken is spent — counted now, before the write, and never
+        refunded — so concurrent relays can never together exceed the budget."""
 
-        def room() -> int:
-            return budget.max_bytes - (self.stats.bytes_up + self.stats.bytes_down)
+        room = self.policy.max_bytes - (self.stats.bytes_up + self.stats.bytes_down)
+        granted = max(0, min(wanted, room))
+        if up:
+            self.stats.bytes_up += granted
+        else:
+            self.stats.bytes_down += granted
+        if granted == room:
+            self._budget_spent.set()
+        return granted
+
+    async def _relay(self, down_reader, down_writer, up_reader, up_writer, leftover: bytes) -> None:
+        idle = self.policy.idle_timeout
 
         async def pump(src: asyncio.StreamReader, dst: asyncio.StreamWriter, up: bool, first: bytes = b"") -> None:
             data = first
             while True:
                 if data:
-                    allowed = room()
-                    if allowed <= 0:
-                        return
-                    data = data[:allowed]
-                    dst.write(data)
-                    await dst.drain()
-                    if up:
-                        self.stats.bytes_up += len(data)
-                    else:
-                        self.stats.bytes_down += len(data)
-                    if room() <= 0:
+                    granted = self._reserve_bytes(len(data), up=up)
+                    if granted:
+                        dst.write(data[:granted])
+                        await dst.drain()
+                    if granted < len(data) or self._budget_spent.is_set():
                         return
                 try:
-                    data = await asyncio.wait_for(src.read(65536), budget.idle_timeout)
+                    data = await asyncio.wait_for(src.read(65536), idle)
                 except TimeoutError:
                     return
                 if not data:
                     return
 
         tasks = [asyncio.ensure_future(pump(down_reader, up_writer, True, leftover)),
-                 asyncio.ensure_future(pump(up_reader, down_writer, False))]
+                 asyncio.ensure_future(pump(up_reader, down_writer, False)),
+                 # The budget is the run's, not the tunnel's: once any relay
+                 # spends it, every tunnel closes.
+                 asyncio.ensure_future(self._budget_spent.wait())]
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
