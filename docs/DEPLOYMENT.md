@@ -170,6 +170,13 @@ revision ids or error text, and is `Cache-Control: no-store`. M1 is done when
 
 ## 7. Invite-only and budgets (OD-PILOT-2, OD-PILOT-5)
 
+* **Remote exposure needs an explicit admission policy** (2026-11-27). A server
+  whose `server.host` is not loopback, or whose `server.base_url` names a
+  routable host (the pilot's shape), refuses to start with both allow-lists
+  empty — empty would admit any verified Google account. Set the lists, or
+  (deliberately, logged at every start) `security.oidc.allow_open_registration:
+  true`. Local development on loopback is unaffected. A non-local primary
+  still requires an allow-list regardless (OD-PILOT-5).
 * **Admission.** `security.oidc.allowed_emails` (exact addresses) and
   `allowed_domains` (exact domains — not their subdomains) decide who may sign
   in. Only a Google-*verified* email can match. Anyone else completes Google's

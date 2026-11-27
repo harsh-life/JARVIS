@@ -784,6 +784,11 @@ class OIDCConfig(StrictModel):
     # no wildcard, and a domain never covers its subdomains.
     allowed_emails: list[str] = Field(default_factory=list)
     allowed_domains: list[str] = Field(default_factory=list)
+    # A remotely exposed server (server/config/preconditions.py) refuses to
+    # start with both lists empty — empty must never *silently* mean "any
+    # Google account in the world may register". Setting this to true is the
+    # operator's explicit, logged choice to run open registration anyway.
+    allow_open_registration: bool = False
 
     @field_validator("allowed_emails")
     @classmethod
