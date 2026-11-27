@@ -19,6 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.time.Instant
+import java.util.concurrent.TimeUnit
 
 /** Tasks from the phone against a mock server replaying the server's own renderings. */
 class TaskControllerTest {
@@ -39,26 +40,32 @@ class TaskControllerTest {
     @After
     fun tearDown() = server.shutdown()
 
-    private fun respond(name: String) {
+    private fun respond(
+        name: String,
+        headersDelaySeconds: Long = 0,
+    ) {
         val sample = samples.getValue(name)
         server.enqueue(
             MockResponse()
                 .setResponseCode(sample.getValue("http_status").jsonPrimitive.int)
-                .setBody(sample.getValue("body").toString()),
+                .setBody(sample.getValue("body").toString())
+                .setHeadersDelay(headersDelaySeconds, TimeUnit.SECONDS),
         )
     }
 
     private var stepUps = 0
 
-    private fun controller(stepUp: StepUpResult = StepUpResult.Attested(Instant.EPOCH)) =
-        TaskController(
-            api = { ApiClient(OkHttpClient(), server.url("/").toString().trimEnd('/')) },
-            accessToken = { "token-1" },
-            stepUp = {
-                stepUps++
-                stepUp
-            },
-        )
+    private fun controller(
+        stepUp: StepUpResult = StepUpResult.Attested(Instant.EPOCH),
+        http: OkHttpClient = OkHttpClient(),
+    ) = TaskController(
+        api = { ApiClient(http, server.url("/").toString().trimEnd('/')) },
+        accessToken = { "token-1" },
+        stepUp = {
+            stepUps++
+            stepUp
+        },
+    )
 
     private fun pendingOf(name: String): TaskView.NeedsConfirmation {
         val sample = samples.getValue(name)
@@ -137,5 +144,29 @@ class TaskControllerTest {
             val confirm = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
             assertEquals("ct_sample_token_not_real", confirm.getValue("confirmation_token").jsonPrimitive.content)
             assertEquals("false", confirm.getValue("approve").jsonPrimitive.content)
+        }
+
+    @Test
+    fun `calls that run the agent wait past the shared read timeout`() =
+        runBlocking {
+            // The server answers a submit or a confirmation only at the task's
+            // next pause or end (bounded by its 120 s wall clock, OD-02); a slow
+            // model turn must not read as "Could not reach your server".
+            assertTrue(ApiClient.TASK_READ_TIMEOUT_SECONDS > 120)
+            val shortReads = OkHttpClient.Builder().readTimeout(1, TimeUnit.SECONDS).build()
+            val slow = { name: String -> respond(name, headersDelaySeconds = 2) }
+
+            slow("completed")
+            val submitted = controller(http = shortReads).submit("summarise my notes")
+            assertTrue((submitted as TaskController.Outcome.Shown).view is TaskView.Result)
+
+            val paused = pendingOf("awaiting_confirmation")
+            slow("completed")
+            val approved = controller(http = shortReads).approve(paused.taskId, paused.pending) { it }
+            assertTrue(approved is TaskController.Outcome.Shown)
+
+            // A plain read keeps the shared timeout: it is not the agent working.
+            slow("completed")
+            assertEquals(TaskController.Outcome.Unreachable, controller(http = shortReads).refresh(paused.taskId))
         }
 }

@@ -28,6 +28,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /** An error from the Track B API, in its canonical envelope (02 §1.6/§1.7). */
 class ApiException(
@@ -45,6 +46,18 @@ class ApiClient(
     private val baseUrl: String,
 ) {
     private val lenient = Json { ignoreUnknownKeys = true }
+
+    /**
+     * For the calls that run the agent (submit, confirm, cancel, an agent's
+     * "Run"): the server answers only at the task's next pause or end, which
+     * `agent.bounds.wall_clock_timeout_seconds` bounds (120 s, OD-02). The
+     * shared client's read timeout is far shorter, so a slow model turn made
+     * the phone report "Could not reach your server" for a task that had
+     * arrived and was running.
+     */
+    private val taskHttp: OkHttpClient by lazy {
+        http.newBuilder().readTimeout(TASK_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS).build()
+    }
 
     @Serializable
     data class Registered(
@@ -319,7 +332,7 @@ class ApiClient(
         onSent: () -> Unit = {},
     ): TaskView {
         val client =
-            http
+            taskHttp
                 .newBuilder()
                 .eventListener(
                     object : EventListener() {
@@ -353,6 +366,7 @@ class ApiClient(
                 .header("Authorization", "Bearer $accessToken")
                 .post(ByteArray(0).toRequestBody(JSON))
                 .build(),
+            taskHttp,
         )
 
     fun getTask(
@@ -386,10 +400,11 @@ class ApiClient(
                         put("approve", approve)
                     }.toString().toRequestBody(JSON),
                 ).build(),
+            taskHttp,
         )
 
     /** The owner's agents (docs/29 §23.2): list, and the owner's own "Run". */
-    val agents: AgentsApi get() = AgentsApi(http, ::api)
+    val agents: AgentsApi get() = AgentsApi(http, ::api, runHttp = taskHttp)
 
     /** OD-CHAR-4: the read-only activity report. */
     val activity: ActivityApi get() = ActivityApi(http, ::api)
@@ -455,6 +470,9 @@ class ApiClient(
     companion object {
         private val JSON = "application/json".toMediaType()
         private const val NOT_FOUND = 404
+
+        /** Above the server's default task wall clock (120 s) with room for the network and storage. */
+        const val TASK_READ_TIMEOUT_SECONDS = 150L
 
         /** The server URL must be a bare https origin — never cleartext. */
         fun validServerUrl(url: String): String? {

@@ -19,6 +19,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 class AgentsApi(
     private val http: OkHttpClient,
     private val api: (String) -> HttpUrl,
+    // A run answers only at the task's next pause or end (ApiClient.taskHttp).
+    private val runHttp: OkHttpClient = http,
 ) {
     fun listAgents(accessToken: String): AgentList =
         http
@@ -42,7 +44,7 @@ class AgentsApi(
         agentId: String,
         reminderDeliveryId: String?,
     ): TaskView =
-        http
+        runHttp
             .newCall(
                 Request
                     .Builder()
