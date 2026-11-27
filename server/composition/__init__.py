@@ -42,6 +42,7 @@ from server.composition.agents import (
 )
 from server.composition.break_glass import BreakGlassRegistry
 from server.composition.execution_tools import build_execution_tools
+from server.composition.automation_ledger import automation_ledger_for
 from server.composition.console import build_console
 from server.composition.evaluation import build_evaluation
 from server.composition.facade import AgentTaskFacade
@@ -255,6 +256,7 @@ def build_application(
         build_execution_tools(
             config, break_glass=break_glass, device_transport=device_hub,
             screenshot_vision=_screenshot_vision(config, factory),
+            automation_ledger=automation_ledger_for(config, storage),
         )
         if extra_tools is None
         else extra_tools

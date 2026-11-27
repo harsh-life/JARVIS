@@ -85,6 +85,9 @@ class ExecutionErrorCode(str, Enum):
     AUTOMATION_UNAVAILABLE = "automation_unavailable"
     # The workflow ran and reported failure (an n8n error response).
     WORKFLOW_FAILED = "workflow_failed"
+    # An identical request may already have reached the target and its outcome
+    # is unknown (or another attempt holds it): never repeated automatically.
+    OUTCOME_UNCERTAIN = "outcome_uncertain"
 
 
 class ExecutionError(Exception):

@@ -498,9 +498,11 @@ async def make_harness(tmp_path, monkeypatch) -> AsyncIterator[Callable]:
             # run through the full authorization chain exactly like every
             # other tool — proving the wiring end to end rather than through
             # a fake that merely records what it was asked to do.
+            from server.composition.automation_ledger import automation_ledger_for
             from server.composition.execution_tools import build_execution_tools
 
-            tools = build_execution_tools(app_config, break_glass=break_glass)
+            tools = build_execution_tools(app_config, break_glass=break_glass,
+                                          automation_ledger=automation_ledger_for(app_config, storage))
         else:
             tools = [*file_tools(reads, writes), android_ui_tool(ui)]
         if memory_provider is not None:

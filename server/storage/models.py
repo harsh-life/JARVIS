@@ -30,6 +30,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     String,
+    Text,
     Uuid,
     event,
     text,
@@ -1390,6 +1391,44 @@ class IntelligenceProfileVersionRow(Base):
 
     __table_args__ = (
         CheckConstraint("version >= 1", name="ck_intelligence_profile_versions_version"),
+    )
+
+
+class AutomationInvocationRow(Base):
+    """The durable idempotency record of one n8n workflow call (docs/32 §4,
+    2026-11-27 hardening). Keyed by a SHA-256 of the authenticated user, the
+    task, the workflow and the canonical inputs. Written **before** anything is
+    sent, so it survives a restart, eviction and concurrent duplicates:
+
+    `reserved` → `in_progress` (committed just before the POST) → one of
+    `completed` (result kept), `failed` (n8n answered with a failure),
+    `failed_before_send` (nothing reached n8n — a later attempt may run),
+    `outcome_uncertain` (sent, but no usable answer: timeout, connection lost,
+    cancelled, crash). A key in any state but `failed_before_send` (or a stale
+    `reserved`) is **never executed again** automatically.
+
+    `result_content` is the bounded, untrusted workflow result for a completed
+    call (owner-private user data; never an audit field, never a credential).
+    Retention: `docs/32_AUTOMATION_N8N.md` §4."""
+
+    __tablename__ = "automation_invocations"
+
+    idempotency_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    workflow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('reserved', 'in_progress', 'completed', 'failed', 'failed_before_send', "
+            "'outcome_uncertain')",
+            name="ck_automation_invocations_state",
+        ),
     )
 
 
