@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Android 12+ draws a launch splash for every app. Name its icon explicitly: the
+      launcher icon, i.e. the satisfied face on its navy disc, centred on the app's own
+      background, so the splash, the launcher and the app header show the same mark.
+    -->
+    <style name="Theme.Jarvis" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#080C16</item>
+        <item name="android:navigationBarColor">#080C16</item>
+        <item name="android:windowBackground">#080C16</item>
+        <item name="android:windowSplashScreenBackground">#080C16</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+    </style>
+</resources>

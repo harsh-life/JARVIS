@@ -1,5 +1,12 @@
 import org.gradle.process.ExecOperations
+import java.awt.AlphaComposite
+import java.awt.RenderingHints
+import java.awt.geom.Ellipse2D
+import java.awt.geom.RoundRectangle2D
+import java.awt.image.BufferedImage
+import javax.imageio.ImageIO
 import javax.inject.Inject
+import java.awt.Color as AwtColor
 
 plugins {
     alias(libs.plugins.android.application)
@@ -37,6 +44,162 @@ val bundleCharacterAssets by tasks.registering(Sync::class) {
         )
     }
     into(layout.buildDirectory.dir("generated/characterAssets/character"))
+}
+
+// The brand mark: the satisfied face (assets/character/default/satisfied.png, the owner's original)
+// is JARVIS's logo. Its launcher, round-launcher and notification icons are rendered from that one
+// file at build time, at every density, so the artwork is never copied, redrawn or committed twice.
+// The square below frames the hood, face and raised fists (source pixels; it may run past the
+// image, where the sticker is transparent). MainActivity's header badge draws the part of it a
+// launcher shows, from the bundled original (BuildConfig.BRAND_FRAME_*).
+val brandSource = characterAssetsDir.resolve("default/satisfied.png")
+val brandFrame = listOf(-19, 56, 880) // left, top, side
+val brandStatusFrame = listOf(150, 230, 545) // the head alone, for the status bar
+
+/** Renders the brand mark's launcher and notification icons from the satisfied-face original. */
+abstract class BrandIcons : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val source: RegularFileProperty
+
+    @get:Input abstract val frame: ListProperty<Int>
+
+    @get:Input abstract val statusFrame: ListProperty<Int>
+
+    @get:Input abstract val backgroundRgb: Property<Int>
+
+    @get:OutputDirectory abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun render() {
+        System.setProperty("java.awt.headless", "true")
+        val src = ImageIO.read(source.get().asFile) ?: error("unreadable: ${source.get()}")
+        check(src.colorModel.hasAlpha()) { "the brand artwork must keep its transparent surroundings" }
+        val out = outputDir.get().asFile
+        out.deleteRecursively()
+        val (l, t, s) = frame.get()
+        val art = crop(src, l, t, s)
+        val (hl, ht, hs) = statusFrame.get()
+        val status = statusSilhouette(crop(src, hl, ht, hs))
+        val densities = listOf("mdpi" to 1.0, "hdpi" to 1.5, "xhdpi" to 2.0, "xxhdpi" to 3.0, "xxxhdpi" to 4.0)
+        for ((bucket, scale) in densities) {
+            // Adaptive icon (API 26+): a 108dp foreground layer over the background colour.
+            val fg = scaleTo(art, (108 * scale).toInt())
+            write(fg, out.resolve("mipmap-$bucket/ic_launcher_foreground.png"))
+            // Legacy icons (API 24-25): the adaptive icon's centre, on its background, masked with a margin round the hood.
+            val legacy = (48 * scale).toInt()
+            val inner = scaleTo(crop(art, s / 8, s / 8, s * 3 / 4), legacy)
+            write(legacyIcon(inner, roundRect = true), out.resolve("mipmap-$bucket/ic_launcher.png"))
+            write(legacyIcon(inner, roundRect = false), out.resolve("mipmap-$bucket/ic_launcher_round.png"))
+            // Status-bar icon: white, alpha only (the platform tints it).
+            write(scaleTo(status, (24 * scale).toInt()), out.resolve("drawable-$bucket/ic_stat_jarvis.png"))
+        }
+    }
+
+    private fun crop(
+        img: BufferedImage,
+        left: Int,
+        top: Int,
+        side: Int,
+    ): BufferedImage {
+        val o = BufferedImage(side, side, BufferedImage.TYPE_INT_ARGB_PRE)
+        o.createGraphics().apply { drawImage(img, -left, -top, null) }.dispose()
+        return o
+    }
+
+    /** Halve with bicubic filtering until close, then one last step: clean edges at every size. */
+    private fun scaleTo(
+        img: BufferedImage,
+        px: Int,
+    ): BufferedImage {
+        var cur = img
+        var side = img.width
+        while (side / 2 >= px) {
+            side /= 2
+            cur = resample(cur, side)
+        }
+        return if (side == px) cur else resample(cur, px)
+    }
+
+    private fun resample(
+        img: BufferedImage,
+        px: Int,
+    ): BufferedImage {
+        val o = BufferedImage(px, px, BufferedImage.TYPE_INT_ARGB_PRE)
+        o
+            .createGraphics()
+            .apply {
+                setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC)
+                setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
+                drawImage(img, 0, 0, px, px, null)
+            }.dispose()
+        return o
+    }
+
+    private fun legacyIcon(
+        art: BufferedImage,
+        roundRect: Boolean,
+    ): BufferedImage {
+        val px = art.width
+        val o = BufferedImage(px, px, BufferedImage.TYPE_INT_ARGB_PRE)
+        o
+            .createGraphics()
+            .apply {
+                setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val d = px.toDouble()
+                fill(
+                    if (roundRect) {
+                        RoundRectangle2D.Double(0.0, 0.0, d, d, d * 0.35, d * 0.35)
+                    } else {
+                        Ellipse2D.Double(0.0, 0.0, d, d)
+                    },
+                )
+                // The background, then the art, only inside the (anti-aliased) shape just drawn.
+                composite = AlphaComposite.SrcIn
+                color = AwtColor(this@BrandIcons.backgroundRgb.get())
+                fillRect(0, 0, px, px)
+                composite = AlphaComposite.SrcAtop
+                drawImage(art, 0, 0, null)
+            }.dispose()
+        return o
+    }
+
+    /**
+     * The artwork's own tones as a white mask: its light areas (fur, face, sticker edge) stay,
+     * its dark line work (outlines, hair, eyes, smile) is cut out, so the face still reads
+     * when the platform tints the icon one colour.
+     */
+    private fun statusSilhouette(img: BufferedImage): BufferedImage {
+        val o = BufferedImage(img.width, img.height, BufferedImage.TYPE_INT_ARGB_PRE)
+        for (y in 0 until img.height) {
+            for (x in 0 until img.width) {
+                val p = img.getRGB(x, y)
+                val a = p ushr 24
+                val lum = (0.2126 * (p shr 16 and 255) + 0.7152 * (p shr 8 and 255) + 0.0722 * (p and 255)) / 255
+                val keep = ((lum - 0.25) / 0.35).coerceIn(0.0, 1.0)
+                o.setRGB(x, y, (Math.round(a * keep).toInt() shl 24) or 0xFFFFFF)
+            }
+        }
+        return o
+    }
+
+    private fun write(
+        img: BufferedImage,
+        file: File,
+    ) {
+        file.parentFile.mkdirs()
+        val o = BufferedImage(img.width, img.height, BufferedImage.TYPE_INT_ARGB)
+        o.createGraphics().apply { drawImage(img, 0, 0, null) }.dispose()
+        check(ImageIO.write(o, "png", file)) { "could not write $file" }
+    }
+}
+
+val renderBrandIcons by tasks.registering(BrandIcons::class) {
+    source.set(brandSource)
+    frame.set(brandFrame)
+    statusFrame.set(brandStatusFrame)
+    // res/values/colors.xml ic_launcher_background, the adaptive icon's background layer.
+    backgroundRgb.set(0x0E1424)
 }
 
 // The character player's native library (docs/CHARACTER_RIG.md): android/rig-native, the vendored
@@ -157,6 +320,13 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        // The in-app header's brand badge shows what a launcher shows of the icon: the adaptive
+        // layer's central two thirds (72 of 108dp), i.e. the middle of renderBrandIcons' frame.
+        val (brandLeft, brandTop, brandSide) = brandFrame
+        buildConfigField("String", "BRAND_ASSET", "\"character/default/${brandSource.name}\"")
+        buildConfigField("int", "BRAND_FRAME_LEFT", "${brandLeft + brandSide / 6}")
+        buildConfigField("int", "BRAND_FRAME_TOP", "${brandTop + brandSide / 6}")
+        buildConfigField("int", "BRAND_FRAME_SIDE", "${brandSide * 2 / 3}")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // docs/23 §3: the App Link host — the server's stable public hostname,
         // set per deployment (`-Pjarvis.appLinkHost=jarvis.example.com`). A
@@ -218,6 +388,14 @@ android {
 }
 
 tasks.named("preBuild") { dependsOn(bundleSharedMapping, bundleCharacterAssets) }
+
+// The brand icons join the app's resources as a generated source, so every task that reads
+// resources (merge, lint, unit tests) depends on renderBrandIcons.
+androidComponents {
+    onVariants { variant ->
+        variant.sources.res?.addGeneratedSourceDirectory(renderBrandIcons, BrandIcons::outputDir)
+    }
+}
 tasks
     .matching {
         it.name.startsWith("merge") && it.name.endsWith("JniLibFolders")

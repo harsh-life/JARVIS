@@ -69,6 +69,7 @@ import com.hypermind.jarvis.reminders.RunOffer
 import com.hypermind.jarvis.tasks.TaskTracker
 import com.hypermind.jarvis.ui.AgentsPanel
 import com.hypermind.jarvis.ui.AppGrid
+import com.hypermind.jarvis.ui.BrandHeader
 import com.hypermind.jarvis.ui.DeviceStatusPanel
 import com.hypermind.jarvis.ui.GridRows
 import com.hypermind.jarvis.ui.InstalledApps
@@ -157,7 +158,7 @@ class MainActivity : FragmentActivity() {
                         modifier = Modifier.padding(padding).verticalScroll(rememberScrollState()).padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Text("JARVIS", style = MaterialTheme.typography.headlineSmall)
+                        BrandHeader()
                         CharacterPortrait(app)
                         notice.value?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                         when (val mapping = app.mapping) {
