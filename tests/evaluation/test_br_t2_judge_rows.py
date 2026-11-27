@@ -91,8 +91,12 @@ async def test_br_t2_judge_rows_after_retirement(evaluated):
     assert not reached, "row 38R changed: a global tuning path is back — re-run BR-T2, update §3e"
 
     # 38R-b — the deterministic record itself carries no user text another user could be shown.
-    [evaluation] = await h.rows(TaskEvaluation)
-    in_record = PRIVATE in repr(evaluation.findings) or PRIVATE in repr(evaluation.redactions)
+    # Bob's task is evaluated too, in the background; whether its row has landed
+    # yet depends on the store's timing, so select Alice's record explicitly.
+    await drain(h)
+    [evaluation] = await h.rows(TaskEvaluation, TaskEvaluation.owner_user_id == alice.user_id)
+    every_record = await h.rows(TaskEvaluation)
+    in_record = any(PRIVATE in repr(r.findings) or PRIVATE in repr(r.redactions) for r in every_record)
     rows.append(("38R-b", "A's private content is copied into the evaluation record", in_record,
                  "findings are step refs and failure categories only; the trace is not persisted"))
     assert not in_record and evaluation.owner_user_id == alice.user_id
