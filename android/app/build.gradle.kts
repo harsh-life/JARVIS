@@ -47,8 +47,9 @@ val bundleCharacterAssets by tasks.registering(Sync::class) {
 }
 
 // The brand mark: the satisfied face (assets/character/default/satisfied.png, the owner's original)
-// is JARVIS's logo. Its launcher, round-launcher and notification icons are rendered from that one
-// file at build time, at every density, so the artwork is never copied, redrawn or committed twice.
+// is JARVIS's logo. Its launcher icons (with their themed-icon layer) and notification icon are
+// rendered from that one file at build time, at every density, so the artwork is never copied,
+// redrawn or committed twice.
 // The square below frames the hood, face and raised fists (source pixels; it may run past the
 // image, where the sticker is transparent). MainActivity's header badge draws the part of it a
 // launcher shows, from the bundled original (BuildConfig.BRAND_FRAME_*).
@@ -81,11 +82,14 @@ abstract class BrandIcons : DefaultTask() {
         val art = crop(src, l, t, s)
         val (hl, ht, hs) = statusFrame.get()
         val status = statusSilhouette(crop(src, hl, ht, hs))
+        val monochrome = statusSilhouette(art)
         val densities = listOf("mdpi" to 1.0, "hdpi" to 1.5, "xhdpi" to 2.0, "xxhdpi" to 3.0, "xxxhdpi" to 4.0)
         for ((bucket, scale) in densities) {
             // Adaptive icon (API 26+): a 108dp foreground layer over the background colour.
             val fg = scaleTo(art, (108 * scale).toInt())
             write(fg, out.resolve("mipmap-$bucket/ic_launcher_foreground.png"))
+            // Its themed-icon layer (API 33+): the same frame in one colour, which the launcher tints.
+            write(scaleTo(monochrome, (108 * scale).toInt()), out.resolve("mipmap-$bucket/ic_launcher_monochrome.png"))
             // Legacy icons (API 24-25): the adaptive icon's centre, on its background, masked with a margin round the hood.
             val legacy = (48 * scale).toInt()
             val inner = scaleTo(crop(art, s / 8, s / 8, s * 3 / 4), legacy)

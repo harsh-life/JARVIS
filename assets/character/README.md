@@ -55,8 +55,9 @@ beside the "JARVIS" heading in the app all show it. The build renders the
 icons from this file at every density (`renderBrandIcons` in
 `android/app/build.gradle.kts`), framed on the hood, face and raised fists so
 the face stays legible at launcher size; the file itself is not changed. The
-status-bar icon keeps the artwork's light areas and cuts out its line work,
-because Android draws notification icons in a single colour. Replacing
+status-bar icon, and the launcher icon's themed-icon layer (Android 13+),
+keep the artwork's light areas and cut out its line work, because Android
+draws them in a single colour. Replacing
 `satisfied.png` changes the logo with it.
 
 The logo is not a character state. It does not follow the character's

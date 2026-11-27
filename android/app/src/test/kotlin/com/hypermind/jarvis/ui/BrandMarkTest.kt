@@ -1,6 +1,7 @@
 package com.hypermind.jarvis.ui
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.test.core.app.ApplicationProvider
 import com.hypermind.jarvis.BuildConfig
@@ -70,12 +71,19 @@ class BrandMarkTest {
         val foreground = BitmapFactory.decodeResource(res, R.mipmap.ic_launcher_foreground)
         assertNotNull(foreground)
         assertEquals(foreground.width, foreground.height)
-        // A status-bar icon must be white on transparent: the platform tints it.
-        val status = BitmapFactory.decodeResource(res, R.drawable.ic_stat_jarvis)
+        // The status-bar icon and the themed-icon layer are white on transparent: the platform tints them.
+        assertWhiteOnTransparent(BitmapFactory.decodeResource(res, R.drawable.ic_stat_jarvis))
+        val monochrome = BitmapFactory.decodeResource(res, R.mipmap.ic_launcher_monochrome)
+        assertEquals(foreground.width, monochrome.width)
+        assertEquals(foreground.height, monochrome.height)
+        assertWhiteOnTransparent(monochrome)
+    }
+
+    private fun assertWhiteOnTransparent(icon: Bitmap) {
         var opaque = 0
-        for (y in 0 until status.height) {
-            for (x in 0 until status.width) {
-                val p = status.getPixel(x, y)
+        for (y in 0 until icon.height) {
+            for (x in 0 until icon.width) {
+                val p = icon.getPixel(x, y)
                 // (premultiplied storage rounds faint pixels' colour, so judge the solid ones)
                 if (p ushr 24 >= 0x40) {
                     opaque++
