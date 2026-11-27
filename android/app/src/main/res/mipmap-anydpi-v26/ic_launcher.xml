@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  JARVIS's launcher icon: the satisfied face (assets/character/default/satisfied.png)
+  over the navy background. The foreground is rendered from that original at every
+  density by the build (renderBrandIcons in app/build.gradle.kts), framed so the hood
+  sits inside the safe zone of any launcher mask. With themed icons on (Android 13+),
+  the launcher tints the monochrome layer: the same frame, the artwork's light areas
+  kept and its line work cut out. API 24-25 use the legacy
+  mipmap-*dpi/ic_launcher*.png the same task renders.
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
 </adaptive-icon>

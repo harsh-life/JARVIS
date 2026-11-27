@@ -56,14 +56,14 @@ class AndroidReminderNotifier(
         val public =
             builder()
                 .setContentTitle(context.getString(R.string.reminder_title))
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setSmallIcon(R.drawable.ic_stat_jarvis)
                 .build()
         val notification =
             builder()
                 .setContentTitle(title)
                 .setContentText(reminder.taskReason)
                 .setStyle(Notification.BigTextStyle().bigText(reminder.taskReason))
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setSmallIcon(R.drawable.ic_stat_jarvis)
                 .setContentIntent(actionIntent)
                 .setAutoCancel(true)
                 .setVisibility(Notification.VISIBILITY_PRIVATE)
