@@ -1,6 +1,10 @@
 # Release validation — the Real-Data Gate
 
 **Date:** 2026-09-28 · **Validated tree:** `main` @ `8b15e39` (Phase H + Stage 5: Judge J1–J4, operator console)
+
+> **Note (2026-11-27).** This is the record of the 2026-09-28 gate run and is kept as evidence. The Judge it
+> validates was later retired (D-JDG-RETIRE); blocker #5 is cleared by that retirement. The 2026-11-27 hardening
+> pass (`docs/DECISION_REGISTER.md` §2P) adds its own evidence there and in §R below; the gate stays **CLOSED**.
 **Branch:** `claude/peaceful-fermi-rl8wa1` (evidence and measurements only; no feature)
 **Authority:** `17_TEST_ACCEPTANCE_VALIDATION.md` §0/§4/§5 ("a requirement is met only when its test passes
 with recorded evidence"), `14_SECURITY_BLAST_RADIUS.md` §4, PRD §38 (PILOT-004) and §39 (the 32 criteria),
@@ -345,7 +349,12 @@ It is the supported pilot store. SQLite stays for development.
 | Temporary / runtime files | this run's scratch DBs, logs and Mem0 directories stayed in the session scratchpad and per-test tmp dirs. The tree's `data/` holds only the provisioned public embedding model (git-ignored) | nothing committed |
 | Fixtures | 17 §6: test secrets clearly marked | TEST-ONLY markers enforced by the tracked-file scan |
 
-## K. Judge validation
+## K. Judge validation — HISTORICAL (superseded 2026-11-27)
+
+> The Judge validated here was **retired** (D-JDG-RETIRE, `DECISION_REGISTER.md` §2P) because of the row-38
+> finding below. Current evaluation is the deterministic `RulesEvaluator`; its evidence is
+> `tests/evaluation/test_rules_*.py`, `test_judge_retirement.py` and the re-measured BR-T2 rows 38R–41R
+> (`docs/OD_A1_BR_T2.md` §3e). Mutants M32–M38 were re-targeted at the retirement and the evaluator.
 
 - JDG-T1..T9 present and green (`tests/evaluation/`, 9 IDs, 23 labelled assertions). The Judge is **off** by
   default (`evaluation.enabled: false`, `provider: null`, `may_request_stop: false`, `budget: 0.0`).
@@ -456,7 +465,7 @@ green. #32 is now met on PostgreSQL (H-1, §I), but the other blockers in §P st
 | ~~2~~ | ~~PRD #32 per-principal fairness not met~~ **Cleared by the H-1 run**: owner decision PostgreSQL, implemented, #32 **MET** on PostgreSQL | §I (after), §Q | — | deploy on PostgreSQL, one server process | — | **no longer** (for a PostgreSQL deployment) |
 | 3 | Memory at rest: plaintext facts, retained deleted vectors | BR-T2 27–28 | a stolen disk or backup reveals memory | OD-MB-4 | **owner decision** | **yes**, if memory is enabled |
 | 4 | Push token at rest | BR-T2 36 | token readable from a stolen DB (usable only with the FCM credential, for a content-free wake) | H-2 | **owner decision** | **yes**, if push is enabled |
-| 5 | Judge guidance carries one user's content to all users | BR-T2 38 | cross-user disclosure through an operator approval | OD-JDG-5 | **owner decision** | **yes**, if the Judge is enabled |
+| ~~5~~ | ~~Judge guidance carries one user's content to all users~~ **Cleared 2026-11-27 by retiring the Judge** (D-JDG-RETIRE); re-measured contained (BR-T2 38R) | BR-T2 38 / 38R | — (historical rows inert; cleanup `RUNNING_EVALUATION.md` §5) | — | — | **no longer** |
 | 6 | Real-integration smoke not performed end to end. Only a live server, Mem0 and console run was done (§J) | no OIDC client, stable hostname, FCM credential or phone | the integrated path under real auth has never run end to end | provide the infrastructure; run the smoke with disposable pilot accounts | **infrastructure / hardware** | **yes** |
 | 7 | PRD #28 end-to-end self-host not exercised | test/build path green only | first real self-host is unproven | same as 6 | **infrastructure** | **yes** |
 

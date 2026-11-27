@@ -151,10 +151,14 @@ cross-package import):
   `server/dashboard/ports.py`.
 - **Only `server.gateway` and `server.composition` may reach superuser
   authority** (`server.security.superuser`, `server.gateway.control_port`,
-  break-glass, the Judge's control switches) — every other package, the
-  dashboard included, is explicitly barred.
-- **`server.evaluation` (the Judge) never authorizes, executes, or resolves
-  secrets**, and the runtime (`server.agent`) never depends on it.
+  break-glass) — every other package, the dashboard included, is explicitly
+  barred.
+- **`server.evaluation` (the deterministic `RulesEvaluator`) never authorizes,
+  executes, resolves secrets, or makes a model call**, and the runtime
+  (`server.agent`) never depends on it. The LLM Judge and its global
+  prompt-tuning path were retired (docs/DECISION_REGISTER.md §2P, D-JDG-RETIRE);
+  do not reintroduce an LLM evaluator or any mechanism by which traces,
+  evaluations or model suggestions change a shared prompt or setting.
 - **`shared/` never imports `server`** — it's the one thing both the server
   and the Android client import; the dependency direction must stay one-way.
 
@@ -172,8 +176,8 @@ Subsystem map (see `docs/PROJECT_STATUS.md` for the full narrative per branch):
 | `server/memory` / `server/vault` | Mem0-backed `MemoryProvider` (visibility re-checked at hydration) + the Git-backed Knowledge Vault |
 | `server/scheduler` | task-linked reminders (`scheduled_jobs` table; a firing reminder delivers a message, never executes; an agent's reminder only carries `agent_id` as data — the tap is the owner's own run) |
 | `server/voice` | STT/TTS; on-device by default; voice can never confirm or step up |
-| `server/evaluation` | the Judge (scoring/recommendation only, no authority) |
-| `server/agents` | the Agent Factory (docs/29, a proposal, off by default): templates, ability table, pure selector/compiler, owner-private definitions, the native runtime provider; Phase 2 runs are present-user, on-demand ordinary tasks (envelope gate in `server/agent/envelope.py`, run port in `server/agent/agent_run.py`, wiring in `server/composition/agents.py`); Phases 3–4 add the in-process Agent/Model Gateway (`server/agents/gateway/`: run tokens, nonces, replay, model alias + live month budget), owner-scoped `agent.purpose` Judge candidates, the operator's agent pause, and reminder-tap runs (`kind = reminder_tap`); Phase 5 adds unattended runs under a StandingDelegation (`server/agents/delegation.py`, `server/agents/triggers.py`, the trigger loop in `server/composition/agent_triggers.py`; the run's principal is a `DelegatedPrincipal` with no device/session; off unless `agents.unattended_enabled`); never an authority (contracts AF-C1…C6) |
+| `server/evaluation` | `RulesEvaluator`: deterministic, informational task diagnostics (no model, no authority). The LLM Judge is retired |
+| `server/agents` | the Agent Factory (docs/29, a proposal, off by default): templates, ability table, pure selector/compiler, owner-private definitions, the native runtime provider; Phase 2 runs are present-user, on-demand ordinary tasks (envelope gate in `server/agent/envelope.py`, run port in `server/agent/agent_run.py`, wiring in `server/composition/agents.py`); Phases 3–4 add the in-process Agent/Model Gateway (`server/agents/gateway/`: run tokens, nonces, replay, model alias + live month budget), the operator's agent pause (the Judge's `agent.purpose` candidates were retired), and reminder-tap runs (`kind = reminder_tap`); Phase 5 adds unattended runs under a StandingDelegation (`server/agents/delegation.py`, `server/agents/triggers.py`, the trigger loop in `server/composition/agent_triggers.py`; the run's principal is a `DelegatedPrincipal` with no device/session; off unless `agents.unattended_enabled`); never an authority (contracts AF-C1…C6) |
 | `server/dashboard` | read-only operator views |
 | `server/composition` | the composition root — the only place upper-layer Protocols get their concrete implementations wired in; `server/composition/main.py` is the app entrypoint |
 | `server/gateway` | FastAPI routers, request context, the one HTTP entry to superuser auth |

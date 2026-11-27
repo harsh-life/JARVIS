@@ -21,7 +21,6 @@ from server.agent.ports import Hydration, TaskEnvironment, UsageLimitReached
 from server.auth.errors import StepUpRequired
 from server.composition.agents import agent_factory_scope
 from server.composition.break_glass import BreakGlassRegistry
-from server.composition.improvements import TuningCache
 from server.composition.latch import InProcessLatch, SupervisorGate
 from server.composition.memory import MemoryFacade, VaultFacade
 from server.composition.models import ConfiguredModelResolver, ProviderFactory
@@ -86,14 +85,12 @@ class AgentTaskFacade:
         break_glass: BreakGlassRegistry | None = None,
         memory: MemoryFacade | None = None,
         vault: VaultFacade | None = None,
-        tuning: TuningCache | None = None,
         agent_runs: "Callable[[AsyncSession, AuditLogger], AgentRunPort] | None" = None,
         delegations: "DelegationCheck | None" = None,
     ) -> None:
         self._agent_runs = agent_runs
         # docs/29 §15.2: is an unattended run's principal fresh? (Phase 5.)
         self._delegations = delegations
-        self._tuning = tuning
         self._memory = memory
         self._vault = vault
         self._latch = latch
@@ -135,8 +132,6 @@ class AgentTaskFacade:
             hydrator=_BoundHydrator(self._hydrator, session, self._vault),
             supervisor=SupervisorGate(self._latch, session),
             memory=self._memory.bound_formation(session, audit) if self._memory is not None else None,
-            # 19 §9: human-approved worker tuning, read with its own session.
-            tuning=self._tuning,
             # docs/29 Phase 2: only when `agents.enabled`.
             agent_runs=self._agent_runs(session, audit) if self._agent_runs is not None else None,
         )

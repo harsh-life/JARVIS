@@ -200,13 +200,19 @@ class** because it needs no running process. Its impact is a content-free wake
 at most, and only together with the FCM credential. It is listed in §5 as an
 owner action rather than accepted here.
 
-### 3e. The Judge's improvement path (real-data gate re-run, docs/19 §9)
+### 3e. The Judge's improvement path (real-data gate re-run, docs/19 §9) — HISTORICAL; path retired
+
+> **Superseded 2026-11-27 (D-JDG-RETIRE, `DECISION_REGISTER.md` §2P).** The
+> measurement below is preserved as the evidence for the retirement. Row 38
+> was REACHABLE; instead of adding a control around it, the owner retired the
+> LLM Judge and every global improvement path. The re-measurement after
+> retirement is at the end of this section.
 
 The tables above predate Stage 5 (the Judge and the operator console). Stage 5
 adds one data path none of them measures. A Judge candidate is written from
 **one** user's task trace (19 §4, JDG-T7). An approved `worker.system_prompt`
-change then applies to **every** user's worker prompt (19 §9). The re-run lives
-in `tests/evaluation/test_br_t2_judge_rows.py`. It runs on the production
+change then applies to **every** user's worker prompt (19 §9). The re-run lived
+in `tests/evaluation/test_br_t2_judge_rows.py` (as of a30e34b). It ran on the production
 composition root with a scripted Judge whose suggestion copies the user's
 details, which a real model summarising the trace can also do. Every row is
 asserted in both directions.
@@ -221,7 +227,34 @@ asserted in both directions.
 Row 38 is **not** inside OD-A1 (a)'s class. It needs no compromised process,
 only a human approval made without reading the text. The row exists only when
 the Judge is enabled (`evaluation.enabled: false` by default) with a provider
-that writes candidates. It is listed in §5 as an owner action.
+that writes candidates. It was listed in §5 as an owner action.
+
+The original assertion for row 38 (a30e34b) — kept here because the code it
+exercised no longer exists:
+
+```python
+approved = await h.client.post(f"{CONTROL}/candidates/{candidate.candidate_id}/approve",
+                               json={"reason": "looks_useful"}, headers=SU)
+assert approved.status_code == 200, approved.text
+reached = PRIVATE in await _bobs_system_prompt(h, bob)
+assert reached, "row 38 changed: re-run BR-T2 and update docs/OD_A1_BR_T2.md §3e"
+```
+
+**Re-measured after retirement (2026-11-27).** `tests/evaluation/test_br_t2_judge_rows.py`
+now runs the same attacker model and private string with deterministic
+evaluation **enabled**, and additionally plants a pre-retirement *approved*
+`worker.system_prompt` row in `config_versions` (as historical data would be):
+
+| # | Attempt | Model | Result | Why |
+|---|---|---|---|---|
+| 38R | A's private content reaches B's worker prompt through the (retired) improvement path | authorized | contained | No evaluator writes candidates; the approve route is gone (404); `config_versions` is never read — the worker prompt is built from code and this task's state only |
+| 38R-b | A's private content is copied into the evaluation record | authorized | contained | Findings are step refs and failure categories; the trace is not persisted |
+| 39R/40R | A suggestion (plain or secret-shaped) is queued from A's task | authorized | contained | No candidate writer exists |
+| 41R | A's private content appears in the console's default views | authorized | contained | Redacted to its length; retired candidates are shown as counts only |
+
+Residual: historical rows in `improvement_candidates` / `config_versions`
+written before the retirement may contain user content. They are inert and
+private; their retention and cleanup are `docs/RUNNING_EVALUATION.md` §5.
 
 ### 3f. Unattended agents (Phase 5, docs/29 §15)
 
@@ -285,7 +318,7 @@ hardware (below):
 | Android device (`08`, docs/23) | **MEASURED** — §3d rows 29–37 | Authorized reach contained. In-process reach into a phone is bounded by that phone's own guard (rows 30–32). At-rest: push token plaintext (row 36, owner action) |
 | Contained runtimes (docs/29 §21, Phase 6) | **MEASURED** — §3g rows 46–53 | Compromised-runtime reach contained (in software here, in the kernel by the live container suite); owner-granted form submission REACHABLE by design (row 52); in-process reach REACHABLE (accepted class) |
 | Unattended agents (docs/29 §15) | **MEASURED** — §3f rows 42–45 | Authorized reach contained; a forged delegated principal in-process is REACHABLE (accepted class) |
-| Judge improvement path / operator console (19 §9, 28) | **MEASURED** — §3e rows 38–41 | Unapproved, secret-shaped and default-view reach are contained. Operator-approved guidance carries one user's content to every user (row 38, owner action) |
+| Judge improvement path / operator console (19 §9, 28) | **MEASURED** — §3e rows 38–41 (historical), 38R–41R (after retirement) | Row 38 was REACHABLE; the path was **retired** (D-JDG-RETIRE). Re-measured: all rows contained |
 | Android device on **physical hardware** | **NOT MEASURED** | No phone or emulator was available. §3d runs the reference guard against the real hub; the Kotlin guard is unit- and mutation-tested on the JVM. A physical-device re-run of rows 30–32 remains outstanding (docs/RELEASE_VALIDATION.md §9) |
 
 `[LOCKED]` these rows are **pending, not passing**. They are measured on the same
@@ -318,7 +351,7 @@ the measured radius.
 | Push registration token at rest (§3d row 36) | Stored in plaintext so the waker can address the phone | Needs the server's separate FCM credential to be usable at all, and then only for a content-free wake; revocation clears it | **Owner decision** (low severity): accept for the pilot, or encrypt the column |
 | Memory store **at rest**: live facts in plaintext, deleted facts' vectors retained (§3c rows 27, 28) | No at-rest encryption for memory yet (docs/21 §7, DECISION_REGISTER §4 "future hardening"); hnswlib marks rather than erases | Owner-only (0700) store directories; disk/backup protection is the operator's | **Owner decision needed before real data**: accept for the pilot, or require encrypted storage / a periodic index rebuild first |
 
-| Judge guidance carries one user's content to every user (§3e row 38) | An approved `worker.system_prompt` is global (19 §9). Approval screens for secret shapes only, and the approver's default view is redacted | Judge off by default. Nothing applies without a superuser approval. Secret-shaped values are refused. Every approval is audited and can be rolled back | **Owner decision** before the Judge runs on real data: e.g. require the audited unredacted view before approving, scope guidance per user, or keep the Judge off for real data (OD-JDG-5, `DECISION_REGISTER.md` §2H) |
+| ~~Judge guidance carries one user's content to every user (§3e row 38)~~ | — | — | **Resolved by retirement** (2026-11-27, D-JDG-RETIRE): the Judge and every global tuning path were removed; re-measured contained (§3e 38R). Historical rows may hold user content: inert, private, cleanup per `docs/RUNNING_EVALUATION.md` §5 |
 
 | A contained run's resource limits not enforced (§3g) | `agents.containers.ignore_cgroups` is for hosts whose cgroups are not delegated to the unprivileged user | Off by default; the per-run deadline, model-call and budget ceilings still bound a run; the network and filesystem boundary does not depend on cgroups | **Owner/operator decision**: delegate cgroups (systemd user slice) before running browser agents on a shared host |
 | A browser run submits forms on its granted hosts (§3g row 52) | OD-AF-13: no TLS interception | `low_write`, a standing owner grant on exact hosts, the card says so, never unattended | **Ratified** (OD-AF-15) |

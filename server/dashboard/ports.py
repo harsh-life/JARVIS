@@ -1,7 +1,7 @@
 """What the operator console reads from live, in-process state (28 §3).
 
 `server.dashboard` may not import the runtime, the break-glass registry, the
-device hub, memory, the vault, the Judge or the composition root (pyproject:
+device hub, memory, the vault, evaluation or the composition root (pyproject:
 "The dashboard is read-only"). It declares here — as **read-only** Protocols
 with plain-data results — the few live facts its views need, and the
 composition root satisfies them (`server/composition/console.py`).
@@ -60,7 +60,7 @@ class LiveStateView(Protocol):
 class ComponentProbes(Protocol):
     async def components(self, *, probe_models: bool) -> dict[str, dict]:
         """Per-component status: `database`, `secret_store`, `model_providers`,
-        `mem0`, `vault`, `scheduler`, `device_channel`, `judge`."""
+        `mem0`, `vault`, `scheduler`, `device_channel`, `evaluation`."""
         ...
 
     async def connected_device_ids(self) -> set[uuid.UUID]: ...
@@ -71,7 +71,7 @@ class ComponentProbes(Protocol):
 
     async def vault_status(self) -> dict | None: ...
 
-    def judge_state(self) -> dict: ...
+    def evaluation_state(self) -> dict: ...
 
 
 class SecretResolvability(Protocol):

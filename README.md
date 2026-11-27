@@ -27,7 +27,7 @@ You run the server yourself. You choose the model: a local one through Ollama by
 - **A desktop companion** in [`desktop/`](desktop/) for Linux, macOS and Windows: a small pixel-art JARVIS that shows what JARVIS is doing. It signs in through your browser as its own revocable device and can only read its activity report — it never approves, confirms or runs anything. See [the desktop companion](docs/CHARACTER_DESKTOP_PROPOSAL.md).
 - **The Intelligence Workbench**: a browser page at `/ui` for your model choice and for experiment profiles. See [How to use the Workbench](#how-to-use-the-workbench).
 
-**Built but off by default** (the operator turns each on in `config.yaml`): persistent memory and a Git-backed Knowledge Vault, the Agent Factory (owner-private agents, including a sandboxed browser agent), the Judge (evaluation), the Android device channel and push wake, the desktop companion's sign-in (`desktop.enabled`), server-side voice providers, and a read-only operator console API.
+**Built but off by default** (the operator turns each on in `config.yaml`): persistent memory and a Git-backed Knowledge Vault, the Agent Factory (owner-private agents, including a sandboxed browser agent), deterministic task evaluation (`RulesEvaluator` — no model, no authority; the LLM Judge was retired, see docs/DECISION_REGISTER.md D-JDG-RETIRE), the Android device channel and push wake, the desktop companion's sign-in (`desktop.enabled`), server-side voice providers, and a read-only operator console API.
 
 **Experimental:** the experiment harness in [`experiments/`](experiments/), which tests orchestration ideas on synthetic tasks. Production never imports it.
 

@@ -77,7 +77,6 @@ from shared.schemas.agent_factory import (
     SpecBudget,
 )
 from shared.schemas.enums import Visibility
-from shared.schemas.evaluation import CandidateStatus
 
 _RUN_STATUS = {
     AgentTaskStatus.COMPLETED: AgentRunStatus.COMPLETED,
@@ -366,7 +365,8 @@ class AgentDefinitionService:
         # notices go with the inbox below).
         await self.end_agent_delegations(session, definition.agent_id, DelegationStatus.REVOKED, "deleted",
                                          notify=False)
-        # The Judge's suggestions for this agent are its owner's content: gone with it.
+        # Historical suggestions the retired Judge made for this agent are its
+        # owner's content: gone with it (nothing writes new ones).
         await session.execute(delete(ImprovementCandidateRow).where(
             ImprovementCandidateRow.agent_id == definition.agent_id,
             ImprovementCandidateRow.target == PURPOSE_TARGET))
@@ -797,38 +797,6 @@ class AgentDefinitionService:
         result = await session.execute(delete(AgentRunTokenRow).where(AgentRunTokenRow.expires_at < cutoff))
         await session.flush()
         return int(result.rowcount or 0)
-
-    # ── the Judge's purpose suggestions (docs/29 §18) ───────────────────
-
-    async def purpose_candidates(self, session: AsyncSession, agent_id: uuid.UUID,
-                                 owner_user_id: uuid.UUID) -> list[ImprovementCandidateRow]:
-        rows = (await session.execute(
-            select(ImprovementCandidateRow).where(
-                ImprovementCandidateRow.agent_id == agent_id,
-                ImprovementCandidateRow.target == PURPOSE_TARGET,
-                ImprovementCandidateRow.source_user_id == owner_user_id,
-            ).order_by(ImprovementCandidateRow.created_at.desc(), ImprovementCandidateRow.candidate_id).limit(100)
-        )).scalars().all()
-        return list(rows)
-
-    async def purpose_candidate(self, session: AsyncSession, candidate_id: uuid.UUID) -> ImprovementCandidateRow | None:
-        row = await session.get(ImprovementCandidateRow, candidate_id, populate_existing=True)
-        return row if row is not None and row.target == PURPOSE_TARGET else None
-
-    async def decide_candidate(self, session: AsyncSession, row: ImprovementCandidateRow, *, approved: bool,
-                               reason: str) -> None:
-        row.status = (CandidateStatus.APPROVED if approved else CandidateStatus.REJECTED).value
-        row.decided_at = self._clock()
-        row.decided_by = "owner"
-        row.decision_reason = reason[:128]
-        await session.flush()
-
-    async def discard_preview(self, session: AsyncSession, compile_id: uuid.UUID) -> None:
-        await session.execute(delete(AgentCompilePreviewRow).where(AgentCompilePreviewRow.compile_id == compile_id))
-        await session.flush()
-
-    async def run_for_task(self, session: AsyncSession, task_id: uuid.UUID) -> AgentRunRow | None:
-        return (await session.execute(select(AgentRunRow).where(AgentRunRow.task_id == task_id))).scalars().first()
 
     async def _synced(self, session: AsyncSession, run: AgentRunRow) -> AgentRunRow:
         """A run whose task ended without its live state (a restart, a cancel

@@ -1,4 +1,4 @@
-"""The TaskTrace — what a Judge is allowed to see about one task (19 §4).
+"""The TaskTrace — what the rules evaluator is allowed to see about one task.
 
 Assembled from records that already exist, in the runtime's own vocabulary:
 
@@ -25,14 +25,13 @@ Four rules, each enforced here rather than hoped for downstream:
   without the value (JDG-T6).
 * **Bounded.** Each text is cut to `max_chars`; the step list is capped; a live
   window is the last `window_steps` steps.
-* **Only produced artifacts.** The Judge sees what the worker output and what
-  the runtime recorded — never hidden model internals, which nothing here
+* **Only produced artifacts.** The evaluator sees what the worker output and
+  what the runtime recorded — never hidden model internals, which nothing here
   claims to have.
 """
 
 from __future__ import annotations
 
-import json
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -144,31 +143,6 @@ class TaskTrace:
 
     def refs(self) -> set[str]:
         return {s.ref for s in self.steps}
-
-    def for_judge(self) -> dict[str, Any]:
-        """The trace as the Judge receives it: no user id, no graph id — the
-        Judge evaluates a task, not a person."""
-
-        return {
-            "task_id": str(self.task_id),
-            "evaluation_kind": self.kind.value,
-            "mode": self.mode,
-            "user_request": self.user_request,
-            "status": self.status,
-            "failure_code": self.failure_code,
-            "final_response": self.final_response,
-            "worker_reported_unresolved": self.unresolved,
-            "counters": self.counters,
-            "elapsed_seconds": round(self.elapsed_seconds, 3),
-            "stalls": self.stalls,
-            "breaker_trips": list(self.trips),
-            "steps": [s.as_dict() for s in self.steps],
-            "steps_omitted": self.truncated,
-            **({"agent_run": self.agent} if self.agent else {}),
-        }
-
-    def to_json(self) -> str:
-        return json.dumps(self.for_judge(), ensure_ascii=False, sort_keys=True)
 
 
 @dataclass

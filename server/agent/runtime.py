@@ -36,7 +36,6 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Mapping
@@ -166,10 +165,6 @@ _TRIP_NOTES: dict[str, str] = {
         "Stopped by the safety breaker: you declined too many proposed actions in this task."
     ),
     TripSource.OPERATOR.value: "Stopped by the server operator.",
-    TripSource.EVALUATOR.value: (
-        "Stopped by the safety breaker: an automated evaluator flagged this task's behaviour as "
-        "anomalous, and the breaker stopped it."
-    ),
     TripSource.GLOBAL_LATCH.value: "Stopped: the server operator has suspended all tasks.",
 }
 _GENERIC_TRIP_NOTE = "Stopped by the safety breaker."
@@ -766,7 +761,6 @@ class AgentRuntime:
             except ModelUnavailable:
                 raise _Stop(AgentFailureCode.MODEL_UNAVAILABLE) from None
             state.allowed_tool_ids = models.allowed_tool_ids
-            state.tuning = await self._load_tuning(env)
 
             while True:
                 # 18 §5.3: the breaker's checkpoint comes first — a tripped task
@@ -860,12 +854,13 @@ class AgentRuntime:
         bounded, budget-checked, and metered."""
 
         messages = list(state.messages)
-        tuning = state.tuning
+        # The system prompt is built from the operator's code and this task's
+        # own state only. No shared, learned or evaluator-derived text is ever
+        # added to it (the retired Judge's global prompt tuning — docs/OD_A1_BR_T2.md
+        # §3e row 38 — no longer exists).
         messages[0] = ctx.ChatMessage(
             "system", ctx.system_prompt(
                 self._visible_tools(state), state.active_capability_names(), state.mode,
-                guidance=tuning.system_prompt if tuning else None,
-                descriptions=tuning.tool_descriptions if tuning else None,
                 runtime_tools=self._runtime_tools(state),
             )
         )
@@ -971,7 +966,7 @@ class AgentRuntime:
         outage, which stays `model_unavailable` (a dependency is down).
         """
 
-        policy = self._recovery_for(state)
+        policy = self._recovery
         chain = models.chain
         current = state.worker_index
         nxt = next(
@@ -1008,7 +1003,7 @@ class AgentRuntime:
         """18 §4.1 no-progress stall: `stall_window` consecutive steps without
         a successful tool execution or capability activation."""
 
-        policy = self._recovery_for(state)
+        policy = self._recovery
         assert policy is not None
         state.no_progress_steps = 0 if state.progressed else state.no_progress_steps + 1
         state.progressed = False
@@ -1369,7 +1364,7 @@ class AgentRuntime:
             key = operation_key(call.tool, call.operation, (call.platform or ExecutionPlatform.SERVER).value,
                                 call.arguments, call.resource_ref, call.scope)
             state.operation_counts[key] = state.operation_counts.get(key, 0) + 1
-            if state.operation_counts[key] >= self._recovery_for(state).loop_repeat_limit:
+            if state.operation_counts[key] >= self._recovery.loop_repeat_limit:
                 await self._event(env, state, AgentEvent.STALL_DETECTED, AuditResult.BLOCKED,
                                   resource=f"stall:{state.task_id}:loop")
                 await self._switch(env, state, models, SwitchReason.LOOP, stuck=AgentFailureCode.STALLED)
@@ -2212,35 +2207,6 @@ class AgentRuntime:
         code = await env.agent_runs.check(state.agent)
         if code is not None:
             raise _Stop(code)
-
-    # ── tuning (19 §9) ──────────────────────────────────────────────────
-
-    @staticmethod
-    async def _load_tuning(env: TaskEnvironment):
-        if env.tuning is None:
-            return None
-        try:
-            return await env.tuning.current()
-        except Exception:  # noqa: BLE001 — unreadable tuning = the base config
-            logger.warning("worker tuning could not be read; using the base configuration", exc_info=False)
-            return None
-
-    def _recovery_for(self, state: TaskState) -> RecoveryPolicy | None:
-        """The recovery bounds for this task: the operator's, with any value a
-        superuser approved (19 §9) in place of it. Only when recovery is
-        configured at all — tuning never turns it on."""
-
-        policy, tuning = self._recovery, state.tuning
-        if policy is None or tuning is None:
-            return policy
-        overrides = {
-            name: value for name in ("stall_window", "loop_repeat_limit", "max_worker_switches")
-            if (value := getattr(tuning, name)) is not None
-        }
-        try:
-            return replace(policy, **overrides) if overrides else policy
-        except ValueError:
-            return policy
 
     @staticmethod
     def _pending_resource(pending: PendingStep) -> str:

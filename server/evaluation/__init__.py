@@ -1,29 +1,27 @@
-"""evaluation — the Judge (19_JUDGE_EVALUATION.md).
+"""evaluation — deterministic, informational task diagnostics (`RulesEvaluator`).
 
-The Judge observes and scores. It never authorizes, never executes, and never
-kills on its own authority; its only effect on a running task is a stop
-*request* that the deterministic circuit breaker enforces (19 §0, JDG-T3).
+  * `trace`   — the one-task, one-user, redacted, bounded TaskTrace
+  * `rules`   — `RulesEvaluator`: redundant proposals, failures, an
+                informational anomaly flag; no model, no cost, no authority
+  * `service` — one evaluation of one finished task, start to finish
+  * `runner`  — the bounded queue that keeps the record's write off the task's
+                own path (the task never waits for it)
+  * `ports`   — the one thing this package needs (a sink), satisfied by the
+                composition root
 
-  * `trace`      — the one-task, one-user, redacted, bounded TaskTrace (19 §4)
-  * `provider`   — the EvaluationProvider interface, `LLMJudge` (on an existing
-                   ModelProvider) and `RulesJudge` (19 §3); strict parsing (§5)
-  * `metering`   — every Judge model call metered against its own budget (§8)
-  * `candidates` — the closed registry of what an improvement may target (§9)
-  * `service`    — one evaluation, start to finish, with §7's failure outcomes
-  * `runner`     — the asynchronous queue; the task never waits for the Judge
-  * `ports`      — what this package needs, satisfied by the composition root
-
-Boundaries (pyproject contracts "The Judge is never an authority", "The runtime
-never depends on the Judge", "The Judge opens no process or socket", and
-"Only the gateway reaches superuser authority"):
+Boundaries (pyproject contracts "The rules evaluator is never an authority",
+"The rules evaluator makes no model call", "The runtime never depends on
+evaluation", "Evaluation opens no process or socket"):
 
   * the runtime never imports this package — it notifies an observer port the
-    composition root satisfies;
-  * this package cannot reach authorization (`server.capabilities`,
-    `server.graph`), identity, secrets, execution, the file sandbox, the egress
-    client, tools, the runtime, the gateway, the operator control path,
-    break-glass records, or the improvement approval path. It cannot approve
-    its own candidates: approval is a superuser action in the composition root.
+    composition root satisfies, and never reads anything back;
+  * this package cannot reach authorization, identity, secrets, execution,
+    the file sandbox, the egress client, tools, the runtime, the model layer,
+    the gateway, the operator control path or break-glass records.
 
-Track B is fully functional with `evaluation.enabled: false` (JDG-T1).
+The LLM Judge, its prompt/rubric, metering, stop requests, improvement
+candidates and the global prompt-tuning path that used to live here were
+retired (docs/DECISION_REGISTER.md, D-JDG-RETIRE; docs/OD_A1_BR_T2.md §3e).
+They are not dormant: the code is gone, and configuration that names them is
+refused at startup. Track B is fully functional with `evaluation.enabled: false`.
 """

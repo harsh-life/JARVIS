@@ -83,7 +83,7 @@ flowchart TB
         VAULT["server/vault\nKnowledge Vault (Git-backed)"]
         NOTEBOOK["AgentNotebookEntryRow\n(owner-private, per agent)"]
         SCHED["server/scheduler\nDatabaseSchedulerBackend"]
-        JUDGE["server/evaluation\nMeteredJudgeModel / Judge"]
+        JUDGE["server/evaluation\nRulesEvaluator (deterministic)"]
         USAGE["UsageEvent ledger"]
         AUDIT["AuditEvent log"]
     end
@@ -160,7 +160,7 @@ flowchart LR
         LLM["Any LLM / model provider\n(server/models, server/modeltools)"]
         NATIVE_RT["Native agent runtime\n(server/agent)"]
         EXT_RT["External runtime\n(Browser Use, in its container)"]
-        JUDGE2["Judge\n(server/evaluation)\nscores/recommends only"]
+        JUDGE2["RulesEvaluator\n(server/evaluation)\nrecords findings only"]
         SCHED2["Scheduler\n(server/scheduler)\ndelivers a message only"]
         ANDROID2["Android client\n(android/:app)\nperceives + relays intent"]
         VOICE2["Voice\n(server/voice)\nSTT/TTS only"]
@@ -211,7 +211,7 @@ escalate, or execute on their own say):
 | Any LLM / model provider | emits the next proposed step | parsed deterministically, authorized like any untrusted input (`05`) |
 | Native agent runtime (`server/agent`) | orchestrates propose→authorize→execute→observe | it *calls* `AuthorizationEngine.authorize()`; it cannot import `server.secrets`, `server.capabilities`, or `server.graph` directly (import-linter contract) |
 | External runtime / Browser Use | runs untrusted code in a container | contained by `server/execution/containers.py` + `server/net/egress_proxy.py`, which it cannot reach around; its own `allowed_domains`/judge/approval mechanisms are read by nothing on the JARVIS side |
-| Judge (`server/evaluation`) | scores and recommends | `server.evaluation` never authorizes, executes, or resolves secrets, and the runtime never depends on it (CLAUDE.md layering) |
+| Evaluation (`server/evaluation`, `RulesEvaluator`) | records deterministic findings | never authorizes, executes, resolves secrets or calls a model; the runtime never depends on it (CLAUDE.md layering). The LLM Judge was retired (D-JDG-RETIRE) |
 | Scheduler (`server/scheduler`) | fires a reminder that delivers a message | a firing reminder "delivers a message, never executes" (CLAUDE.md); the tap that follows is the owner's own authenticated run, re-checked from scratch |
 | Memory (`server/memory`, Mem0) | hydrates context | visibility is re-checked with the engine's own predicate at hydration, never trusted from the store |
 | Android client | perceives the device, carries user intent | "a phone is an execution target bound to a principal, not a source of authority" (docs/PROJECT_STATUS.md) |
@@ -402,7 +402,7 @@ composition
 | Agent notebook | `server/storage/models.py` | `AgentNotebookEntryRow` — owner-private, per agent, separate from Mem0 |
 | Knowledge Vault | `server/vault` | `VaultIndex` — Git-backed, separate store from Mem0 and the notebook |
 | Scheduler | `server/scheduler` | `SchedulerBackend`, `DatabaseSchedulerBackend` — fires a reminder, never a tool |
-| Judge | `server/evaluation` | `MeteredJudgeModel` and friends — observes, scores, never authorizes |
+| Evaluation | `server/evaluation` | `RulesEvaluator` — observes finished tasks, records findings, never authorizes (the LLM Judge was retired) |
 | Usage ledger | `server/storage/models.py` | `UsageEvent` |
 | Audit log | `server/security/audit.py`, `server/storage/models.py` | `AuditLogger`, `AuditEvent` |
 | Android server-side dispatch | `server/execution` (Android/Shizuku half) | capability→operation→primitive mapping |
@@ -443,7 +443,7 @@ composition
 | Knowledge Vault | Git-backed documents, indexed and queried separately | not Mem0, not the notebook |
 | Usage | the metering ledger every model/tool call writes to | attribution target for budgets; not authorization |
 | Audit | the append-only log of security-relevant events | evidence, not enforcement |
-| Judge | scores/recommends from finished traces | never authorizes, executes, or resolves secrets |
+| Evaluation | records deterministic findings from finished traces | never authorizes, executes, resolves secrets or calls a model |
 | Scheduler | fires reminders on time | "delivers a message, never executes" |
 | Android endpoint | perceives the device, carries intent, executes authorized device ops | never a trust root |
 | External runtime | untrusted code in a rootless gVisor container | contained by deterministic infrastructure it cannot see around |

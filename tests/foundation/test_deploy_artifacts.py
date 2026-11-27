@@ -55,7 +55,7 @@ def test_the_pilot_config_carries_the_pilot_decisions(pilot):
     assert {k for k, v in pilot.agents.runtimes.items() if v.enabled} == {"native"}   # P13
     assert "browser_monitor" not in pilot.agents.enabled_templates
     assert pilot.evaluation.enabled and pilot.evaluation.evaluator == "rules"         # D7
-    assert pilot.evaluation.provider is None
+    assert not hasattr(pilot.evaluation, "provider")                 # the LLM Judge is retired (D-JDG-RETIRE)
     assert pilot.voice.providers == [] and pilot.android.push.provider == "none"      # P22 / H-2
     assert pilot.execution.process.break_glass.enabled is False
     for apps in (pilot.android.app_classification.non_sensitive,

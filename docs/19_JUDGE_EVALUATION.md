@@ -1,6 +1,16 @@
 # 19_JUDGE_EVALUATION.md
 ## JARVIS / Hypermind Track B — Judge, EvaluationProvider & Human-Approved Improvement
 
+> **SUPERSEDED — HISTORICAL DESIGN RECORD (2026-11-27).** The LLM Judge and
+> the human-approved improvement path this document specifies were **retired
+> and removed from the code** (`docs/DECISION_REGISTER.md` §2P, D-JDG-RETIRE),
+> after BR-T2 §3e row 38 (`docs/OD_A1_BR_T2.md`) showed one user's private
+> task content reaching every user's worker prompt through an approved
+> candidate. Nothing below describes a supported feature. What remains is
+> deterministic, informational evaluation (`RulesEvaluator`, the §3 "rules"
+> evaluator): `docs/RUNNING_EVALUATION.md`. This document is kept so the
+> reasoning, and the vulnerability, stay on record.
+
 **Package:** next-build subsystem contract · **Depth:** deep · **Written:** 2026-09-24
 **Status:** formalizes the owner's **Judge / Evaluation decision** (owner-ratified 2026-09-24). The Judge is **optional**; Track B must be fully functional with it disabled.
 **Authority:** below `00_CANONICAL_PRD.md` and `docs/DECISION_REGISTER.md`. Relates to `26_DECISION_PROVIDER.md` (a different abstraction — §2), `18` (circuit breaker), `13` (metering), `11` (visibility of stored records), `28` (display).
