@@ -253,8 +253,12 @@ async def test_two_instances_sharing_the_store_send_once(store):
     # the other has reached its decision while it is, before the POST answers.
     # (A fixed sleep let the second instance arrive after the first completed
     # under load, where it correctly replays the result instead of refusing.)
-    await asyncio.wait_for(sent.wait(), timeout=30)
-    done, _ = await asyncio.wait({first, second}, timeout=30, return_when=asyncio.FIRST_COMPLETED)
+    # A generous bound: the refusal takes well under a second normally, but
+    # several seconds on a heavily loaded host. It only limits how long a
+    # broken ledger (both instances sending, neither finishing) takes to fail.
+    bound = 120
+    await asyncio.wait_for(sent.wait(), timeout=bound)
+    done, _ = await asyncio.wait({first, second}, timeout=bound, return_when=asyncio.FIRST_COMPLETED)
     assert len(done) == 1, "the instance that did not send should have decided while the other's call was open"
     release.set()
     results = await asyncio.gather(first, second, return_exceptions=True)
