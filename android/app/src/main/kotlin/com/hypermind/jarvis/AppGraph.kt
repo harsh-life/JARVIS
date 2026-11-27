@@ -67,6 +67,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
@@ -305,6 +306,13 @@ class AppGraph(
 
     private val platformState = MutableStateFlow(platforms.snapshot())
     private val enrolledState = MutableStateFlow(enrolled)
+
+    /**
+     * Whether this phone is enrolled, for the setup screen. A wipe (removal,
+     * revocation) sets it at once; returning to the app re-reads it, which is
+     * how a finished sign-in shows up.
+     */
+    val enrollment: StateFlow<Boolean> = enrolledState.asStateFlow()
     private val pushState = MutableStateFlow(pushStatus())
     private val voiceState = MutableStateFlow(VoiceActivity.NONE)
 

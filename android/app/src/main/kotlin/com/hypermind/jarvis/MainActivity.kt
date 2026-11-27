@@ -73,6 +73,7 @@ import com.hypermind.jarvis.ui.DeviceStatusPanel
 import com.hypermind.jarvis.ui.GridRows
 import com.hypermind.jarvis.ui.InstalledApps
 import com.hypermind.jarvis.ui.PanelContent
+import com.hypermind.jarvis.ui.RemovePhoneButton
 import com.hypermind.jarvis.ui.RunOfferCard
 import com.hypermind.jarvis.ui.SecureTouch
 import com.hypermind.jarvis.ui.StatusHeader
@@ -247,7 +248,9 @@ class MainActivity : FragmentActivity() {
         val graph = app.graph
         val scope = rememberCoroutineScope()
         val state by graph.channel.state.collectAsState()
-        var enrolled by remember { mutableStateOf(graph.enrolled) }
+        // The graph's own flow, not a copy taken once: a finished sign-in (seen
+        // on return to the app) and a removal both switch this screen at once.
+        val enrolled by graph.enrollment.collectAsState()
         var server by remember { mutableStateOf(graph.store.serverUrl.orEmpty()) }
 
         if (!enrolled || state is ChannelState.Revoked) {
@@ -335,7 +338,7 @@ class MainActivity : FragmentActivity() {
             else -> {
                 if (graph.pushOffered) PushToggle(app)
                 OverlayToggle(app)
-                RemovePhone(app) { enrolled = false }
+                RemovePhone(app)
                 if (BuildConfig.DEBUG) CharacterPreview(app)
             }
         }
@@ -421,15 +424,16 @@ class MainActivity : FragmentActivity() {
         )
     }
 
-    /** "Remove this phone": revoke server-side (best effort) and wipe everything here. */
+    /**
+     * "Remove this phone", after the user confirms it: revoke server-side (best
+     * effort) and wipe everything here. The wipe flips [AppGraph.enrollment],
+     * which takes the screen back to sign-in at once.
+     */
     @Composable
-    private fun RemovePhone(
-        app: JarvisApplication,
-        onRemoved: () -> Unit,
-    ) {
+    private fun RemovePhone(app: JarvisApplication) {
         val graph = app.graph
         val scope = rememberCoroutineScope()
-        OutlinedButton(onClick = {
+        RemovePhoneButton {
             scope.launch {
                 withContext(Dispatchers.IO) {
                     val device = graph.store.deviceId
@@ -437,6 +441,8 @@ class MainActivity : FragmentActivity() {
                         if (device != null) graph.api().revoke(device, graph.sessions.accessToken().first)
                     } catch (ignored: IOException) {
                         // Removed locally regardless; the server-side revoke can be done from another device.
+                    } catch (ignored: com.hypermind.jarvis.auth.ApiException) {
+                        // The server refused (e.g. already revoked): removed locally regardless.
                     } catch (ignored: com.hypermind.jarvis.auth.EnrollmentLost) {
                         // Already unusable server-side.
                     }
@@ -444,11 +450,10 @@ class MainActivity : FragmentActivity() {
                 graph.connection.wanted = false
                 ChannelService.stop(this@MainActivity)
                 graph.forgetKey()
-                graph.revocation.wipe()
-                onRemoved()
                 notice.value = "This phone was removed."
+                graph.revocation.wipe()
             }
-        }) { Text("Remove this phone") }
+        }
     }
 
     /**
