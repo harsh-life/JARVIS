@@ -80,6 +80,11 @@ class ExecutionErrorCode(str, Enum):
     UNAUTHORIZED_EXECUTABLE = "unauthorized_executable"
     UNKNOWN_TOOL = "unknown_tool"
     INTERNAL = "internal_error"
+    # docs/32 (n8n, [PROPOSAL]): the automation host did not answer, or
+    # answered outside the contract (non-JSON, redirect, auth refused).
+    AUTOMATION_UNAVAILABLE = "automation_unavailable"
+    # The workflow ran and reported failure (an n8n error response).
+    WORKFLOW_FAILED = "workflow_failed"
 
 
 class ExecutionError(Exception):

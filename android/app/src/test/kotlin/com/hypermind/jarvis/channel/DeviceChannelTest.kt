@@ -184,6 +184,21 @@ class DeviceChannelTest {
     }
 
     @Test
+    fun `start leaves the Stopped state before it returns`() {
+        // ChannelService stops itself on Stopped and subscribes right after
+        // start(): a channel still reporting Stopped here would be torn down
+        // by its own service before the hello is sent.
+        acceptConnections(1)
+        val channel = channel(UnimplementedOperations)
+        assertTrue(channel.state.value is ChannelState.Stopped)
+        channel.start()
+        assertTrue(channel.state.value !is ChannelState.Stopped)
+        connected(channel, connections.take())
+        channel.stop()
+        assertTrue(channel.state.value is ChannelState.Stopped)
+    }
+
+    @Test
     fun `a reminder is shown, acknowledged, and never reaches the operation handler`() {
         acceptConnections(1)
         val received = mutableListOf<Reminder>()

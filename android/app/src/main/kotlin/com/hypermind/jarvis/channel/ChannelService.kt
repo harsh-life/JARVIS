@@ -48,6 +48,11 @@ class ChannelService : Service() {
         ensureChannel()
         startInForeground("Connecting to your JARVIS server")
         val channel = (application as JarvisApplication).graph.channel
+        // Start before watching: a not-yet-started channel is `Stopped`, and the
+        // watcher stops this service on `Stopped`. Watching first let a fast
+        // collector see that initial value and tear down the socket it had
+        // just opened (closed 1000 "stopped" before the hello was sent).
+        channel.start()
         watcher =
             scope.launch {
                 channel.state.collectLatest { state ->
@@ -63,7 +68,6 @@ class ChannelService : Service() {
             }
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(callback)
         networkCallback = callback
-        channel.start()
         attachOverlay()
     }
 

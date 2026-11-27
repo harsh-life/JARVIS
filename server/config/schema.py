@@ -1192,6 +1192,85 @@ class WorkbenchConfig(StrictModel):
         return self
 
 
+# ── automation (n8n) — [PROPOSAL — NOT CANONICAL UNTIL RATIFIED], OD-AUTO-1 ──
+#
+# n8n is an *execution target*, not an authority (docs/32_AUTOMATION_N8N.md).
+# The operator pins every workflow the agent may name; the model can only pick
+# one of these ids and fill its typed inputs. Off by default.
+
+_WORKFLOW_ID = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
+_WEBHOOK_PATH = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_INPUT_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+class AutomationInputField(StrictModel):
+    type: Literal["string", "integer", "number", "boolean"]
+    required: bool = True
+    # Strings only: the longest value accepted.
+    max_length: int = Field(default=500, gt=0, le=4000)
+
+
+class AutomationWorkflowConfig(StrictModel):
+    """One operator-pinned workflow: a stable id the agent may name, the n8n
+    production-webhook path it maps to, and the closed set of typed inputs."""
+
+    id: str
+    webhook_path: str
+    description: str = Field(default="", max_length=300)
+    inputs: dict[str, AutomationInputField] = Field(default_factory=dict)
+    timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+
+    @model_validator(mode="after")
+    def _shape(self) -> "AutomationWorkflowConfig":
+        if not _WORKFLOW_ID.match(self.id):
+            raise ValueError(f"automation workflow id {self.id!r}: expected ^[a-z][a-z0-9_.-]{{0,63}}$")
+        if not _WEBHOOK_PATH.match(self.webhook_path):
+            raise ValueError(f"automation workflow {self.id!r}: webhook_path must be one path segment")
+        if len(self.inputs) > 16:
+            raise ValueError(f"automation workflow {self.id!r}: at most 16 inputs")
+        for name in self.inputs:
+            if not _INPUT_NAME.match(name):
+                raise ValueError(f"automation workflow {self.id!r}: input name {name!r} is not allowed")
+        return self
+
+
+class N8nConfig(StrictModel):
+    enabled: bool = False
+    # Loopback only: the n8n editor and its webhooks stay on this host. A
+    # remote n8n is a separate decision (it would need egress policy, TLS and
+    # its own threat model), so it is refused here rather than half-supported.
+    base_url: str = "http://127.0.0.1:5678"
+    # Sent as the value of `auth_header` on every call; n8n's Header Auth
+    # credential checks it. A reference, never the value (SECRET-004).
+    secret_ref: SecretRef | None = None
+    auth_header: str = Field(default="X-Jarvis-Webhook-Token", pattern=r"^X-[A-Za-z0-9-]{1,64}$")
+    max_response_bytes: int = Field(default=65536, gt=0, le=1_048_576)
+    max_request_bytes: int = Field(default=8192, gt=0, le=65536)
+    workflows: list[AutomationWorkflowConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _shape(self) -> "N8nConfig":
+        match = re.match(r"^(https?)://(\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+)(?::(\d{1,5}))?/?$", self.base_url)
+        if match is None:
+            raise ValueError("automation.n8n.base_url must be a bare http(s)://host[:port] origin")
+        host = match.group(2).strip("[]")
+        if host not in _LOOPBACK_HOSTS:
+            raise ValueError("automation.n8n.base_url must be a loopback origin (the n8n instance stays private)")
+        ids = [w.id for w in self.workflows]
+        if len(ids) != len(set(ids)):
+            raise ValueError("automation.n8n.workflows: ids must be unique")
+        if self.enabled and self.secret_ref is None:
+            raise ValueError("automation.n8n.enabled needs secret_ref: an unauthenticated webhook is refused")
+        if self.enabled and not self.workflows:
+            raise ValueError("automation.n8n.enabled needs at least one pinned workflow")
+        return self
+
+
+class AutomationConfig(StrictModel):
+    n8n: N8nConfig = Field(default_factory=N8nConfig)
+
+
 class AppConfig(StrictModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     agent: AgentSectionConfig = Field(default_factory=AgentSectionConfig)
@@ -1204,6 +1283,7 @@ class AppConfig(StrictModel):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    automation: AutomationConfig = Field(default_factory=AutomationConfig)
     android: AndroidConfig = Field(default_factory=AndroidConfig)
     # OD-DESK-1 — the desktop companion's login handoff, off by default.
     desktop: DesktopConfig = Field(default_factory=DesktopConfig)
