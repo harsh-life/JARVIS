@@ -4,7 +4,7 @@
 
 > **Note (2026-11-27).** This is the record of the 2026-09-28 gate run and is kept as evidence. The Judge it
 > validates was later retired (D-JDG-RETIRE); blocker #5 is cleared by that retirement. The 2026-11-27 hardening
-> pass (`docs/DECISION_REGISTER.md` §2P) adds its own evidence there and in §R below; the gate stays **CLOSED**.
+> pass (`docs/DECISION_REGISTER.md` §2P; status table in `docs/PROJECT_STATUS.md`) records its own evidence there; the gate stays **CLOSED**.
 **Branch:** `claude/peaceful-fermi-rl8wa1` (evidence and measurements only; no feature)
 **Authority:** `17_TEST_ACCEPTANCE_VALIDATION.md` §0/§4/§5 ("a requirement is met only when its test passes
 with recorded evidence"), `14_SECURITY_BLAST_RADIUS.md` §4, PRD §38 (PILOT-004) and §39 (the 32 criteria),
