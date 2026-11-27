@@ -26,7 +26,7 @@ from shared.schemas.enums import RiskCategory
 if TYPE_CHECKING:
     from server.agent.agent_run import AgentRunBinding
     from server.agent.breaker import Trip
-    from server.agent.ports import TraceEvent, WorkerTuning
+    from server.agent.ports import TraceEvent
 
 # 19 §4: the task's own events, mirrored for an observer. Bounded: the oldest
 # are dropped first (and counted), so a long task cannot grow it without limit.
@@ -141,8 +141,6 @@ class TaskState:
     created_monotonic: float = field(default_factory=time.monotonic)
     # 19 §4 — volatile like the transcript, discarded with the task.
     trace_events: "deque[TraceEvent]" = field(default_factory=lambda: deque(maxlen=MAX_TRACE_EVENTS))
-    # 19 §9 — the human-approved worker tuning read when this segment started.
-    tuning: "WorkerTuning | None" = None
     # docs/29 Phase 2: set, once, at submission for an agent run — the
     # compiled ceiling this task runs under. `None` for every ordinary task.
     agent: "AgentRunBinding | None" = None

@@ -30,6 +30,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     String,
+    Text,
     Uuid,
     event,
     text,
@@ -891,20 +892,34 @@ class SupervisorLatch(Base):
     __table_args__ = (CheckConstraint("latch_id = 1", name="ck_supervisor_latch_single_row"),)
 
 
-# ── the Judge (docs/19) ────────────────────────────────────────────────────
+# ── evaluation (rules evaluator) + the retired Judge's inert tables ─────────
+#
+# D-JDG-RETIRE: the LLM Judge, its improvement candidates, versioned prompt
+# tuning and operator switches were retired. `evaluations` is still written by
+# the deterministic RulesEvaluator. `improvement_candidates`, `config_versions`
+# and `evaluation_control` are kept **inert** for historical records: no
+# server code inserts or updates them, nothing reads them to change behaviour,
+# and no route exposes them (tests/evaluation/test_judge_retirement.py checks
+# this structurally). The only remaining write is a deletion — an agent's
+# historical suggestions go with the agent. Retention and the manual cleanup
+# procedure are in docs/RUNNING_EVALUATION.md "Historical Judge records".
+# The ORM classes stay so the schema and the models agree (`alembic check`)
+# without a destructive migration.
 
 
 class TaskEvaluation(Base):
-    """One evaluation attempt of one task (19 §5, §7) — every outcome recorded:
-    `recorded`, `unavailable`, `malformed`, `over_budget`.
+    """One evaluation attempt of one task — every outcome recorded.
 
-    A record, never a control: nothing reads `quality`, `efficiency` or the
-    reward in `findings` to decide anything. Stored with the task's ownership
-    and the most restrictive visibility (owner-private, 11's triplet); the
-    operator console shows it redacted (28). `reason_code`,
-    `anomaly_reason` and `stop_not_honoured_because` are identifiers; `findings`
-    holds the Judge's step refs, failure categories, notes and reward — never
-    the trace itself, which is not persisted.
+    Written today by the RulesEvaluator (`recorded` / `unavailable`; `quality`
+    is always NULL and the stop columns always false). Historical rows from the
+    retired LLM Judge may also carry `malformed` / `over_budget`, a `quality`
+    score, a reward and stop flags; they are kept as data.
+
+    A record, never a control: nothing reads it to decide anything. Stored with
+    the task's ownership and the most restrictive visibility (owner-private,
+    11's triplet); the operator console shows it redacted (28). `findings`
+    holds step refs and failure categories — never the trace itself, which is
+    not persisted.
     """
 
     __tablename__ = "evaluations"
@@ -934,13 +949,15 @@ class TaskEvaluation(Base):
 
 
 class ImprovementCandidateRow(Base):
-    """19 §9's review queue. A candidate is a suggestion awaiting a human: it
-    changes nothing until a **superuser** approves it, and approval produces a
-    `ConfigVersion` row that can be rolled back. `target` is from the closed
-    registry (`server/evaluation/candidates.py`) — a candidate aimed anywhere
-    else never reaches this table. `proposed_value` and `expected_effect` are
-    model-written text derived from one user's task: user content, shown
-    redacted in the console by default (DASH-006)."""
+    """INERT — historical only (D-JDG-RETIRE). The retired Judge's review queue.
+
+    Rows here were written from one user's task trace by an LLM; approving a
+    `worker.system_prompt` candidate once put that text into **every** user's
+    worker prompt (BR-T2 row 38, docs/OD_A1_BR_T2.md §3e). Nothing writes,
+    approves or applies a row any more. `proposed_value` / `expected_effect`
+    are user-derived content: treat them as private data (only counts are
+    shown in the console). Deleted with their agent; otherwise retained until
+    the operator's manual cleanup (docs/RUNNING_EVALUATION.md)."""
 
     __tablename__ = "improvement_candidates"
 
@@ -969,14 +986,11 @@ class ImprovementCandidateRow(Base):
 
 
 class ConfigVersion(Base):
-    """The versioned, human-approved configuration changes (19 §9).
-
-    Append-only history: every approval and every rollback is a new row, and
-    the effective value of a target is its latest row's `value` (`NULL` = back
-    to the operator's base configuration). Nothing updates or deletes a row, so
-    the history of what applied, when, by whom and why is itself the record.
-    Only the superuser path writes here (`server/composition/improvements.py`).
-    """
+    """INERT — historical only (D-JDG-RETIRE). The retired Judge's approved
+    configuration versions (worker prompt text, tool descriptions, recovery
+    thresholds, rubric). **Nothing reads these rows any more**: the worker
+    prompt and recovery bounds come from code and the operator's config file
+    only. Kept as the audit history of what was once applied."""
 
     __tablename__ = "config_versions"
 
@@ -994,12 +1008,9 @@ class ConfigVersion(Base):
 
 
 class EvaluationControl(Base):
-    """The operator's runtime switches for the Judge (28 §1: "Judge
-    enable/disable"), one row, id 1. Each switch is **capped by configuration**:
-    it can turn the Judge or its stop requests off, and back on only where
-    `evaluation.enabled` / `evaluation.may_request_stop` already allow — so no
-    runtime action, and no Judge output, can silently turn a stop ability on.
-    No row means "as configured"."""
+    """INERT — historical only (D-JDG-RETIRE). The retired Judge's operator
+    switches (one row, id 1). Nothing reads or writes it; there is no Judge or
+    stop request left to switch."""
 
     __tablename__ = "evaluation_control"
 
@@ -1380,6 +1391,44 @@ class IntelligenceProfileVersionRow(Base):
 
     __table_args__ = (
         CheckConstraint("version >= 1", name="ck_intelligence_profile_versions_version"),
+    )
+
+
+class AutomationInvocationRow(Base):
+    """The durable idempotency record of one n8n workflow call (docs/32 §4,
+    2026-11-27 hardening). Keyed by a SHA-256 of the authenticated user, the
+    task, the workflow and the canonical inputs. Written **before** anything is
+    sent, so it survives a restart, eviction and concurrent duplicates:
+
+    `reserved` → `in_progress` (committed just before the POST) → one of
+    `completed` (result kept), `failed` (n8n answered with a failure),
+    `failed_before_send` (nothing reached n8n — a later attempt may run),
+    `outcome_uncertain` (sent, but no usable answer: timeout, connection lost,
+    cancelled, crash). A key in any state but `failed_before_send` (or a stale
+    `reserved`) is **never executed again** automatically.
+
+    `result_content` is the bounded, untrusted workflow result for a completed
+    call (owner-private user data; never an audit field, never a credential).
+    Retention: `docs/32_AUTOMATION_N8N.md` §4."""
+
+    __tablename__ = "automation_invocations"
+
+    idempotency_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    workflow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('reserved', 'in_progress', 'completed', 'failed', 'failed_before_send', "
+            "'outcome_uncertain')",
+            name="ck_automation_invocations_state",
+        ),
     )
 
 

@@ -136,3 +136,58 @@ def test_the_entrypoint_checks_the_preconditions_before_building_the_app():
 
     source = (Path(__file__).resolve().parents[2] / "server" / "composition" / "main.py").read_text()
     assert "check_deployment(load_config())" in source
+
+
+# ── remote exposure needs an explicit admission policy (2026-11-27) ────────
+
+
+def _exposed(*, host="127.0.0.1", base_url="http://127.0.0.1:8000", allowed=(), open_registration=False):
+    oidc = {"client_id": TEST_CLIENT_ID, "issuer": TEST_ISSUER, "allowed_emails": list(allowed),
+            "allow_open_registration": open_registration}
+    return make_test_config(server={"host": host, "port": 8000, "base_url": base_url},
+                            security={"oidc": oidc})
+
+
+@pytest.mark.parametrize("host, base_url", [
+    ("127.0.0.1", "http://127.0.0.1:8000"),
+    ("::1", "http://localhost:8000"),
+    ("127.0.0.1", "http://jarvis.localhost:8000"),
+    ("127.0.0.1", "http://test.invalid"),
+])
+def test_local_development_stays_open_and_usable(host, base_url):
+    assert deployment_problems(_exposed(host=host, base_url=base_url)) == []
+
+
+@pytest.mark.parametrize("host, base_url", [
+    ("127.0.0.1", "https://jarvis.example.com"),     # behind Caddy / a named tunnel: the pilot's shape
+    ("0.0.0.0", "http://127.0.0.1:8000"),            # binds every interface
+    ("192.168.1.20", "http://192.168.1.20:8000"),    # a LAN address is not "local"
+    ("127.0.0.1", "http://jarvis.local:8000"),       # mDNS: reachable on the LAN
+])
+def test_a_remotely_exposed_server_without_an_admission_policy_does_not_start(host, base_url):
+    config = _exposed(host=host, base_url=base_url)
+    with pytest.raises(ConfigError, match="explicit admission policy"):
+        check_deployment(config)
+
+
+def test_a_remotely_exposed_server_with_an_allow_list_starts():
+    config = _exposed(base_url="https://jarvis.example.com", allowed=["alice@example.com"])
+    assert check_deployment(config) is config
+
+
+def test_open_registration_on_a_remote_server_is_an_explicit_logged_choice(caplog):
+    config = _exposed(base_url="https://jarvis.example.com", open_registration=True)
+    with caplog.at_level("WARNING", logger="hypermind.config.preconditions"):
+        assert check_deployment(config) is config
+    assert any("OPEN REGISTRATION" in r.message for r in caplog.records)
+
+
+def test_open_registration_never_relaxes_the_invite_only_paid_primary():
+    config = _config(budgets=(0.05, 1.0, 10.0), allowed=[])
+    config.security.oidc.__dict__["allow_open_registration"] = True
+    with pytest.raises(ConfigError, match="OD-PILOT-5"):
+        check_deployment(config)
+
+
+def test_the_flag_defaults_to_closed():
+    assert make_test_config().security.oidc.allow_open_registration is False

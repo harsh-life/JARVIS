@@ -22,8 +22,8 @@ Three rules this module exists to hold (18 §0, §5.2):
 
 Every trigger calls the same `trip()`: the three in-task counters here, the
 operator's stops and the global latch (18 §5.4, `server/composition/
-supervisor.py`), and the evaluator's stop request (19 §6, `server/composition/
-evaluation.py`) — the last only if the operator opted in.
+supervisor.py`). Evaluation (`server/evaluation`) is not a trigger: the
+rules evaluator is informational and holds no handle on the breaker.
 """
 
 from __future__ import annotations
@@ -52,10 +52,9 @@ class TripSource(str, Enum):
     # itself clear).
     OPERATOR = "operator"
     GLOBAL_LATCH = "global_latch"
-    # 19 §6: an EvaluationProvider's stop request, handed to `trip()` by the
-    # composition root — and only when the operator opted in
-    # (`evaluation.may_request_stop`). One trigger among many (18 §5.1).
-    EVALUATOR = "evaluator"
+    # (Retired: `evaluator`, the LLM Judge's stop request. Evaluation is now
+    # deterministic and informational only; nothing it produces can trip a
+    # task. Historical audit rows may still carry the string.)
 
 
 # Refusals by an execution boundary (09 sandbox, 10 egress, the process

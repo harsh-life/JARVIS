@@ -13,20 +13,22 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
 from fastapi.routing import APIRoute
+from sqlalchemy import select
 
 from server.gateway.routers import admin
 from server.secrets.requester import SecretRequester
 from server.security.audit import AuditLogger
 from server.security.events import AuditAction
 from server.security.superuser import SUPERUSER_TOKEN_ENV
-from server.storage.models import AuditEvent
+from server.storage.models import AuditEvent, ImprovementCandidateRow, TaskEvaluation
 from shared.schemas.enums import SecretClass, SecretOwnerScopeType
-from tests.evaluation.conftest import drain, verdict
-from tests.runtime.conftest import ScriptedModel, ask, call, final
+from tests.evaluation.conftest import drain
+from tests.runtime.conftest import ask, call, final
 
 pytestmark = pytest.mark.asyncio
 
@@ -42,28 +44,27 @@ PRIVATE_TEXT = "my private medical appointment is on tuesday"
 @pytest_asyncio.fixture
 async def console(make_harness, monkeypatch):
     monkeypatch.setenv(SUPERUSER_TOKEN_ENV, TOKEN)
-    monkeypatch.setenv("JUDGE_KEY_FOR_TEST", SECRET)
-    judge = ScriptedModel("scripted-judge")
+    monkeypatch.setenv("ADVISOR_KEY_FOR_TEST", SECRET)
     h = await make_harness(config={
-        "evaluation": {
-            "enabled": True,
-            "provider": {"provider": "openai", "model": "scripted-judge", "endpoint": "https://judge.invalid/v1",
-                         "secret_ref": "env:JUDGE_KEY_FOR_TEST",
-                         "pricing": {"input_per_1k_tokens": 0.0, "output_per_1k_tokens": 0.0}},
-            "post_hoc": {"sample_successful": 1.0},
-        },
+        "evaluation": {"enabled": True, "evaluator": "rules", "post_hoc": {"sample_successful": 1.0}},
+        # A configured (disabled) model-as-tool whose key is a resolvable handle,
+        # so the console has a real secret reference it must never reveal.
+        "models_as_tools": [{"id": "advisor", "provider": "openai", "model": "advisor-model",
+                             "endpoint": "https://advisor.invalid/v1", "secret_ref": "env:ADVISOR_KEY_FOR_TEST",
+                             "pricing": {"input_per_1k_tokens": 0.0, "output_per_1k_tokens": 0.0}}],
         "agent": {"provider": "ollama", "model": "scripted-primary",
                   "fallback": {"provider": "openai", "model": "fallback-model", "endpoint": "https://x.invalid/v1",
                                "secret_ref": "env:UNSET_FALLBACK_KEY",
                                "pricing": {"input_per_1k_tokens": 0.0, "output_per_1k_tokens": 0.0}}},
-    }, models={"scripted-judge": judge})
-    h.judge = judge
+    })
     return h
 
 
 async def populate(h) -> dict:
-    """A task with private content, a secret in its observation, an evaluation
-    with a note and a candidate — everything the console must not leak."""
+    """A task with private content, a secret in its observation, and its
+    evaluation — everything the console must not leak. Plus a historical
+    (retired) Judge candidate carrying the private text, as pre-retirement
+    data would: the console must neither list nor leak it."""
 
     alice = await h.user("alice")
     await h.grant(alice, "file.read")
@@ -74,15 +75,17 @@ async def populate(h) -> dict:
         return ToolOutput(ok=True, content=f"token: {SECRET}")
 
     h.reads.execute = leaky
-    h.judge.push(verdict(
-        quality=0.4, failures=[{"step_ref": "s1", "category": "slow_start", "note": PRIVATE_TEXT}],
-        improvement_candidates=[{"target": "worker.system_prompt", "proposed_change": PRIVATE_TEXT}],
-    ))
     h.model.push(ask("file.read"), call("files.read", "list_directory"), final(PRIVATE_TEXT))
     resp = await h.submit(alice, PRIVATE_TEXT)
     assert resp.status_code == 200, resp.text
     await drain(h)
     async with h.storage.session() as s:
+        [evaluation] = (await s.execute(select(TaskEvaluation))).scalars().all()
+        s.add(ImprovementCandidateRow(
+            evaluation_id=evaluation.evaluation_id, task_id=evaluation.task_id, source_user_id=alice.user_id,
+            evaluator_id="llm_judge", target="worker.system_prompt", proposed_value=PRIVATE_TEXT,
+            expected_effect=PRIVATE_TEXT, evidence=[], status="pending", created_at=datetime.now(timezone.utc)))
+        await s.flush()
         handle = await h.core.secret_store.set(
             s, owner_scope_type=SecretOwnerScopeType.SERVER, owner_scope_id=None,
             secret_class=SecretClass.MODEL_API_KEY, value=SECRET, requester=SecretRequester.server(),
@@ -145,9 +148,6 @@ async def test_no_ordinary_or_forged_credential_reaches_any_admin_route(console)
         ("POST", f"{ADMIN}/control/stop"), ("POST", f"{ADMIN}/control/global-stop"),
         ("POST", f"{ADMIN}/control/global-clear"), ("POST", f"{ADMIN}/control/break-glass"),
         ("GET", f"{ADMIN}/control/break-glass"),
-        ("POST", f"{ADMIN}/control/evaluation/switches"),
-        ("POST", f"{ADMIN}/control/evaluation/candidates/{uuid.uuid4()}/approve"),
-        ("POST", f"{ADMIN}/control/evaluation/config-versions/1/rollback"),
     ]
     for headers in forged:
         for method, url in targets:
@@ -165,15 +165,21 @@ async def test_every_view_answers_with_its_data_and_the_banners(console):
     assert health["database"]["status"] == "ok"
     assert health["secret_store"]["status"] == "unlocked"
     assert {e["role"] for e in health["model_providers"]["entries"]} >= {"agent.primary", "agent.fallback",
-                                                                        "evaluation.provider"}
-    assert health["judge"]["judge_enabled"] is True and health["judge"]["queue"]["completed"] == 1
+                                                                        "models_as_tools.advisor"}
+    assert not [e for e in health["model_providers"]["entries"] if e["role"].startswith("evaluation")]
+    assert health["evaluation"] == {"enabled": True, "evaluator": "rules_evaluator",
+                                    "queue": {"pending": 0, "completed": 1, "failed": 0, "dropped": 0}}
     tasks = views["tasks"]["data"]
     assert tasks["counts"]["terminal"] == 1 and tasks["tasks"][0]["status"] == "completed"
     evaluations = views["evaluations"]["data"]
-    assert evaluations["evaluations"][0]["quality"] == 0.4
-    assert evaluations["candidates"][0]["status"] == "pending"
+    assert evaluations["evaluations"][0]["evaluator_id"] == "rules_evaluator"
+    assert evaluations["evaluations"][0]["quality"] is None
+    # The retired review queue is never listed — counts only, no content, no ids to act on.
+    assert "candidates" not in evaluations and "config_versions" not in evaluations
+    assert evaluations["retired_judge_records"] == {"improvement_candidates": 1, "config_versions": 0}
     usage = views["usage"]["data"]
-    assert usage["global"]["last_24h"]["calls"] >= 3 and usage["global"]["judge_last_24h"]["calls"] == 1
+    assert usage["global"]["last_24h"]["calls"] >= 3 and usage["global"]["retired_judge_last_24h"]["calls"] == 0
+    assert "evaluation_budget" not in usage["limits"]
     devices = views["devices"]["data"]["devices"]
     assert len(devices) == 1 and devices[0]["revoked"] is False
     audit = views["audit"]["data"]["events"]
@@ -200,7 +206,8 @@ async def test_no_view_ever_contains_a_secret_value(console):
 async def test_configuration_shows_handles_and_whether_they_resolve(console):
     await populate(console)
     config = (await console.client.get(f"{ADMIN}/configuration", headers=SU)).json()["data"]["effective"]
-    assert config["evaluation"]["provider"]["secret_ref"] == {"handle": "env:JUDGE_KEY_FOR_TEST", "resolves": True}
+    assert config["models_as_tools"][0]["secret_ref"] == {"handle": "env:ADVISOR_KEY_FOR_TEST", "resolves": True}
+    assert set(config["evaluation"]) == {"enabled", "evaluator", "post_hoc", "max_observation_chars", "queue_size"}
     assert config["agent"]["fallback"]["secret_ref"] == {"handle": "env:UNSET_FALLBACK_KEY", "resolves": False}
     assert config["secrets"]["kek_source"]["handle"].startswith("env:")
     assert config["secrets"]["kek_source"]["resolves"] is True
@@ -223,8 +230,6 @@ async def test_user_content_is_redacted_by_default(console):
     assert PRIVATE_TEXT not in blob
     task = (await console.client.get(f"{ADMIN}/tasks", headers=SU)).json()["data"]["tasks"][0]
     assert task["response"] == {"redacted": True, "chars": len(PRIVATE_TEXT)}
-    candidate = (await console.client.get(f"{ADMIN}/evaluations", headers=SU)).json()["data"]["candidates"][0]
-    assert candidate["proposed_value"]["redacted"] is True
     assert seeded["task_id"] in blob  # ids and results are visible; content is not
 
 
@@ -240,8 +245,9 @@ async def test_the_unredacted_view_is_privileged_and_audited(console):
     assert resp.status_code == 200, resp.text
     content = resp.json()["data"]
     assert content["response"] == PRIVATE_TEXT
-    assert content["evaluations"][0]["failures"][0]["note"] == PRIVATE_TEXT
-    assert content["candidates"][0]["proposed_value"] == PRIVATE_TEXT
+    assert content["evaluations"][0]["evaluator_id"] == "rules_evaluator"
+    # Even the privileged view no longer surfaces a retired Judge candidate's text.
+    assert "candidates" not in content and PRIVATE_TEXT not in json.dumps(content["evaluations"])
     assert SECRET not in json.dumps(content)  # even unredacted, never a secret
     views = [r for r in await console.rows(AuditEvent) if r.action == AuditAction.CONSOLE_UNREDACTED_VIEW.value]
     assert [v.resource for v in views] == [f"console:unredacted:task:{seeded['task_id']}:support_case"]
@@ -298,9 +304,9 @@ async def test_actions_go_to_the_owning_subsystem_not_the_dashboard(console):
             # handler reports starlette's 405 in its own envelope).
             assert resp.status_code >= 400 and "Method Not Allowed" in resp.text, (method, view, resp.text)
     assert len(await console.rows(AuditEvent)) == before  # nothing ran, not even authentication
-    from server.gateway.routers import control, evaluation_control
+    from server.gateway.routers import control
 
     control_paths = {p for p in _admin_paths(console.app) if p.startswith(f"{ADMIN}/control")}
-    owned = {f"/api/v1{r.path}" for r in (*control.router.routes, *evaluation_control.router.routes)}
+    owned = {f"/api/v1{r.path}" for r in control.router.routes}
     assert control_paths and control_paths == owned
     assert not ({f"/api/v1{r.path}" for r in admin.router.routes} & control_paths)

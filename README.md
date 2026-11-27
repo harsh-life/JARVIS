@@ -27,7 +27,7 @@ You run the server yourself. You choose the model: a local one through Ollama by
 - **A desktop companion** in [`desktop/`](desktop/) for Linux, macOS and Windows: a small pixel-art JARVIS that shows what JARVIS is doing. It signs in through your browser as its own revocable device and can only read its activity report — it never approves, confirms or runs anything. See [the desktop companion](docs/CHARACTER_DESKTOP_PROPOSAL.md).
 - **The Intelligence Workbench**: a browser page at `/ui` for your model choice and for experiment profiles. See [How to use the Workbench](#how-to-use-the-workbench).
 
-**Built but off by default** (the operator turns each on in `config.yaml`): persistent memory and a Git-backed Knowledge Vault, the Agent Factory (owner-private agents, including a sandboxed browser agent), the Judge (evaluation), the Android device channel and push wake, the desktop companion's sign-in (`desktop.enabled`), server-side voice providers, and a read-only operator console API.
+**Built but off by default** (the operator turns each on in `config.yaml`): persistent memory and a Git-backed Knowledge Vault, the Agent Factory (owner-private agents, including a sandboxed browser agent), deterministic task evaluation (`RulesEvaluator` — no model, no authority; the LLM Judge was retired, see docs/DECISION_REGISTER.md D-JDG-RETIRE), the Android device channel and push wake, the desktop companion's sign-in (`desktop.enabled`), server-side voice providers, and a read-only operator console API.
 
 **Experimental:** the experiment harness in [`experiments/`](experiments/), which tests orchestration ideas on synthetic tasks. Production never imports it.
 
@@ -188,7 +188,10 @@ Build it yourself with `cd desktop && npm ci && npx tauri build`. Rust, Node 22+
 - **Experiment profiles do nothing in production.** They only feed the isolated harness. Offline harness runs are scripted, not real model output.
 - **Sign-in is Google OIDC only**, and the device platforms are `android` and the presentation-only `desktop` companion. There is no browser login and no chat page.
 - **Desktop companion packages are unsigned.** CI builds a DMG, an MSI, a `.deb` and an AppImage, but no signing or notarization credentials are configured, so macOS Gatekeeper and Windows SmartScreen will warn. On Wayland the companion cannot keep itself above other windows or remember its position.
-- **Signing in is open to any Google account by default.** Set `security.oidc.allowed_emails` or `allowed_domains` before exposing the server beyond your own machine. The pilot topology is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- **Signing in is open to any Google account on a local development server.** A server reachable beyond this machine (a non-loopback `server.host`, or a routable `server.base_url`) refuses to start until you set `security.oidc.allowed_emails` / `allowed_domains` — or deliberately set `allow_open_registration: true`. The pilot topology is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- **Only SecretStore values are encrypted at rest.** The database, persistent memory and its vector index, task responses and backups are not — see [docs/DATA_AT_REST.md](docs/DATA_AT_REST.md).
+- **The n8n automation target is a proposal, off by default**, loopback-only and limited to TEST-ONLY workflows; no external-write workflow is supported ([docs/32_AUTOMATION_N8N.md](docs/32_AUTOMATION_N8N.md)).
+- **The browser-agent egress proxy controls hosts and addresses, not the TLS/HTTP origin** inside a tunnel ([docs/ADR_EGRESS_TLS_ORIGIN.md](docs/ADR_EGRESS_TLS_ORIGIN.md)).
 - **Not yet verified in this release:** the Google sign-in step and the Android client on hardware.
 - **Not built:** see [Current capabilities](#current-capabilities).
 

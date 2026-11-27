@@ -520,7 +520,7 @@ CONTRACT = "Only the gateway reaches superuser authority (12 §4, SUPER-001)"
     ("server/agent/runtime.py", "from server.composition.break_glass import BreakGlassRegistry\n"),
     ("server/execution/process.py", "import server.composition.break_glass\n"),
     ("server/tools/platforms.py", "from server.composition.break_glass import BreakGlassRecord\n"),
-    # JUDGE != AUTHORITY: the Judge's package can reach no control or break-glass path.
+    # EVALUATION != AUTHORITY: the evaluation package can reach no control or break-glass path.
     ("server/evaluation/__init__.py", "from server.composition.break_glass import BreakGlassRegistry\n"),
     ("server/evaluation/__init__.py", "from server.gateway.superuser_auth import get_superuser\n"),
 ])
@@ -546,7 +546,7 @@ async def test_the_control_modules_are_import_restricted(tmp_path, module, line)
     assert f"{CONTRACT} BROKEN" in result.stdout
 
 
-JUDGE_CONTRACT = "The Judge is never an authority (19, JDG-T2)"
+JUDGE_CONTRACT = "The rules evaluator is never an authority (D-JDG-RETIRE, JDG-T2)"
 
 
 @pytest.mark.parametrize("line", [
@@ -556,7 +556,7 @@ JUDGE_CONTRACT = "The Judge is never an authority (19, JDG-T2)"
     "from server.execution.process import ConstrainedProcessExecutor\n",
     "import server.tools.registry\n",
 ])
-async def test_the_judge_cannot_reach_authority_or_execution(tmp_path, line):
+async def test_the_evaluator_cannot_reach_authority_or_execution(tmp_path, line):
     script = Path(sys.executable).parent / "lint-imports"
     clean = subprocess.run([str(script), "--config", "pyproject.toml"], cwd=REPO_ROOT,
                            capture_output=True, text=True)
@@ -578,7 +578,7 @@ async def test_the_judge_cannot_reach_authority_or_execution(tmp_path, line):
     assert f"{JUDGE_CONTRACT} BROKEN" in result.stdout
 
 
-async def test_the_runtime_cannot_depend_on_the_judge(tmp_path):
+async def test_the_runtime_cannot_depend_on_evaluation(tmp_path):
     script = Path(sys.executable).parent / "lint-imports"
     copy = tmp_path / "repo"
     shutil.copytree(REPO_ROOT / "server", copy / "server", ignore=shutil.ignore_patterns("__pycache__"))

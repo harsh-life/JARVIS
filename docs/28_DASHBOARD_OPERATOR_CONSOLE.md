@@ -22,7 +22,7 @@ The owner calls the dashboard a "control surface" exposing configuration and rec
 `[PROPOSED]` resolution that satisfies both:
 
 - `server/dashboard/` stays **read-only** — every route is `GET`, and it imports no mutation path (DASH-002 holds at the module level, enforceable by import-linter).
-- Operator **controls** (stop, global stop/clear, break-glass activation, Judge enable/disable, improvement-candidate approval) are superuser endpoints under `/api/v1/admin/control/*`, owned by the modules that enforce them (`18` breaker, `20` break-glass, `19` review queue) — not by the dashboard.
+- Operator **controls** (stop, global stop/clear, break-glass activation; the retired Judge's enable/disable and candidate approval were removed, D-JDG-RETIRE) are superuser endpoints under `/api/v1/admin/control/*`, owned by the modules that enforce them (`18` breaker, `20` break-glass, `19` review queue) — not by the dashboard.
 - The operator **console UI** may present both side by side. Viewing uses dashboard routes; acting calls control routes. The user experiences one console; the code keeps observation and administration separate.
 
 `[OPEN — OWNER]` OD-DASH-1: ratify this split, or amend DASH-002 in the PRD. Recommended: ratify the split — it is what DASH-002 was protecting.
@@ -50,8 +50,8 @@ The owner calls the dashboard a "control surface" exposing configuration and rec
 | Tasks | running/paused/terminal counts; per-task status, mode, counters, failure codes, worker switches | `agent_tasks` + audit |
 | Recovery & breaker | switches, stalls, trips by source, global latch state | `18` audit events |
 | Break-glass | enablement banner; active records with task, reason, expiry, invocations | `20` |
-| Evaluations | Judge scores and findings, **redacted**; improvement-candidate queue | `19` |
-| Usage & budget | per-user and global spend and rate usage, including Judge spend | usage ledger (`13`) |
+| Evaluations | rules-evaluator findings, **redacted**; counts of retired Judge records (no queue) | `RUNNING_EVALUATION.md` |
+| Usage & budget | per-user and global spend and rate usage, including historical (retired) Judge spend | usage ledger (`13`) |
 | Memory & vault | fact counts per user (no content by default); vault documents, last reindex, index errors | `21` |
 | Devices | registered devices, connected state, last seen, revoked | `03`, `23` |
 | Audit | filterable audit log; resource ids and results, never values | audit ledger |

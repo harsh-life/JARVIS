@@ -127,20 +127,14 @@ vault:
 intelligence:
   enabled: false
 
-# The Judge (docs/19, docs/RUNNING_EVALUATION.md). Optional and off: Track B is
-# fully functional without it. It scores tasks and records findings; it never
-# authorizes or executes. Its only effect on a running task is a stop request to
-# the deterministic breaker, and only if `may_request_stop` is set. A non-local
-# `provider` receives redacted task traces — a disclosed choice (19 §4).
+# Deterministic task evaluation (docs/RUNNING_EVALUATION.md). Optional and off:
+# Track B is fully functional without it. The rules evaluator reads one finished
+# task's redacted trace and records findings — no model call, no credential, no
+# authority, no effect on any task, prompt or setting. (The LLM Judge was retired,
+# D-JDG-RETIRE; its keys — provider, live, may_request_stop, budget, … — are refused.)
 evaluation:
   enabled: false
-  evaluator: llm            # llm (needs `provider`) | rules (no model)
-  provider: null
-  live:
-    enabled: false
-  may_request_stop: false
-  budget: 0.0               # the Judge's own daily budget; 0.0 refuses a paid Judge call
-  budget_scope: own_and_global   # OD-JDG-2 is open; see docs/DECISION_REGISTER.md §2G
+  evaluator: rules          # the only evaluator
 
 # Reminders tied to a task the user asked for (docs/22). A firing reminder delivers a message to the
 # owner's own devices; it never executes anything. Starting a task from it is

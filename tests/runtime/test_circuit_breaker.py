@@ -11,8 +11,9 @@ rule, the enforcement sequence, and token invalidation at every task end.
 | SUP-T12 (trip audited, no content) | `test_repeated_authorization_denials_trip_the_breaker` |
 | 18 §5.3 step 3 (tokens invalidated) | `test_every_way_a_task_ends_spends_its_confirmation_tokens` |
 
-Operator stops, the global latch (18 §5.4) and the Judge trigger (19 §6) are
-later units and are deliberately not exercised here.
+Operator stops and the global latch (18 §5.4) are later units and are
+deliberately not exercised here. (The retired Judge's stop trigger no longer
+exists, D-JDG-RETIRE.)
 """
 
 from __future__ import annotations

@@ -446,28 +446,6 @@ class TaskObserver(Protocol):
         ...
 
 
-# ── tuning (19 §9: human-approved, versioned configuration) ────────────────
-
-
-@dataclass(frozen=True)
-class WorkerTuning:
-    """Worker-facing values a **superuser** approved (19 §9), read at the start
-    of each task segment. Guidance for the worker and bounds for recovery —
-    never authority: the text is shown to the worker, whose every proposal is
-    still parsed and authorized from scratch, and a recovery value can only be
-    one the registry's ranges allow. `None` everywhere is the base config."""
-
-    system_prompt: str | None = None
-    tool_descriptions: Mapping[str, str] = field(default_factory=dict)
-    stall_window: int | None = None
-    loop_repeat_limit: int | None = None
-    max_worker_switches: int | None = None
-
-
-class TuningPort(Protocol):
-    async def current(self) -> WorkerTuning: ...
-
-
 @dataclass
 class TaskEnvironment:
     """Everything request-scoped the runtime uses for one API call."""
@@ -479,7 +457,6 @@ class TaskEnvironment:
     hydrator: HydratorPort
     supervisor: SupervisorGatePort
     memory: MemoryFormationPort | None = None
-    tuning: TuningPort | None = None
     # H-1: ends the request's store transaction before the runtime starts a long
     # wait — a model call, a tool run, a memory search or write — so no
     # transaction (and no lock) is held across one. What the task has written
@@ -509,8 +486,6 @@ __all__: Sequence[str] = [
     "TaskObserver",
     "TaskSnapshot",
     "TraceEvent",
-    "TuningPort",
-    "WorkerTuning",
     "ToolCatalog",
     "UsageLimitReached",
     "UsagePort",

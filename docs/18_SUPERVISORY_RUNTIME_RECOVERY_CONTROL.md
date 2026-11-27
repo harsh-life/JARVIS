@@ -134,6 +134,8 @@ Eligibility rules for every chain entry:
 | `[PROPOSED]` operator stop | superuser control endpoint (§5.4) | task / user / device / global |
 | `[PROPOSED]` anomaly signal | an EvaluationProvider (`19`) calling `trip()` | task |
 
+> *2026-11-27: the Judge trigger was removed with the Judge (D-JDG-RETIRE); the breaker's remaining triggers are unchanged and deterministic.*
+
 `[OWNER-RATIFIED]` Judge is **one** trigger among many. The breaker works identically with Judge disabled; every other trigger is deterministic code that exists regardless (`[OWNER-RATIFIED]` "Judge must never become the sole kill authority").
 
 ### 5.2 The one-way rule

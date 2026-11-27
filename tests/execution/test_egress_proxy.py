@@ -417,7 +417,9 @@ async def test_the_runs_byte_budget_ends_the_tunnel(sock_path, upstream) -> None
     finally:
         await proxy.stop()
     assert len(received) <= 1024
-    assert proxy.stats.bytes_up + proxy.stats.bytes_down <= 2048
+    # One budget for the run, both directions: never more than the policy allows (it used
+    # to be asserted against twice the budget, which tolerated the over-spend race).
+    assert proxy.stats.bytes_up + proxy.stats.bytes_down <= 1024
 
 
 async def test_an_idle_tunnel_is_closed(sock_path, upstream) -> None:

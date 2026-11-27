@@ -5,12 +5,12 @@
 | Endpoint | View |
 |---|---|
 | `GET /admin/banner` | the persistent banners (break-glass enabled, global stop latched) |
-| `GET /admin/health` | DB, SecretStore locked/unlocked, model providers, Mem0, vault, scheduler, device channel, Judge |
+| `GET /admin/health` | DB, SecretStore locked/unlocked, model providers, Mem0, vault, scheduler, device channel, evaluation |
 | `GET /admin/tasks` | counts; per-task status, mode, counters, failure code, worker switches |
 | `GET /admin/recovery` | switches, stalls, trips by source, the global latch |
 | `GET /admin/break-glass` | enablement, live records, activation/invocation/end events |
-| `GET /admin/evaluations` | Judge scores and findings (redacted), the review queue, config versions |
-| `GET /admin/usage` | per-user and global spend and rate usage, Judge spend separately |
+| `GET /admin/evaluations` | rules-evaluator findings (redacted); historical Judge rows as data; counts of retired Judge records |
+| `GET /admin/usage` | per-user and global spend and rate usage, historical (retired) Judge spend separately |
 | `GET /admin/memory` | fact counts per user (no content), vault index state |
 | `GET /admin/devices` | registered devices, connected, last seen, revoked |
 | `GET /admin/audit` | filterable audit events — ids and results, never values |

@@ -1,32 +1,49 @@
-"""BR-T2, Stage 5 dimension — the Judge's improvement path (real-data gate, docs/OD_A1_BR_T2.md §3e).
+"""BR-T2, the retired Judge's improvement path (docs/OD_A1_BR_T2.md §3e) — re-measured after retirement.
 
-The earlier BR-T2 tables predate the Judge and the console. Stage 5 adds one
-data path none of them measures: a Judge candidate is written from **one
-user's** task trace (19 §4, JDG-T7), and an approved `worker.system_prompt`
-change is applied to **every** user's worker prompt (19 §9). Approval re-checks
-the target, the range and secret-shaped text (JDG-T9); nothing checks for a
-user's private, non-secret content. The console shows the candidate's text
-redacted by default (DSH-B1); reading it is the separate, audited DASH-006
-view, which approval does not require.
+HISTORICAL FINDING (preserved; the vulnerable path no longer exists)
+--------------------------------------------------------------------
+Until the retirement (last present at a30e34b, `tests/evaluation/test_br_t2_judge_rows.py`
+in that commit), this module measured the LLM Judge's improvement path on the
+production composition root with a scripted Judge whose suggestion copied the
+user's private details — as a real model summarising a trace can. The measured
+result was:
 
-Measured on the production composition root with a scripted Judge. The Judge's
-output is attacker-shaped on purpose: a real model summarising A's trace can
-write A's details into its suggestion. Asserted in both directions like the
-other BR-T2 modules — a REACHABLE row that stops being reachable means the
-boundary changed; update the documents rather than the assertion.
+| # | Attempt | Model | Result (pre-retirement) |
+|---|---|---|---|
+| 38 | A's private content reaches B's worker prompt through a Judge candidate the operator approved from the redacted console | authorized | **REACHABLE** |
+| 39 | The same candidate reaches B while it waits in the queue | authorized | contained |
+| 40 | A secret-shaped value in a candidate reaches the queue or B | authorized | contained |
+| 41 | A's private content in the console's default views | authorized | contained |
 
-Attacker models: **authorized** — ordinary users plus the operator acting
-through the operator's own approval path. Anything reachable this way is not
-inside OD-A1 (a)'s accepted class (a compromised process); it goes to the owner.
+Row 38 was reachable without any compromised process: an approved
+`worker.system_prompt` candidate applied to **every** user's worker prompt, and
+approval screened only target, range and secret shapes — never a user's
+private, non-secret content. That finding is why the Judge and the global
+improvement mechanism were retired rather than patched (docs/DECISION_REGISTER.md,
+D-JDG-RETIRE). The original assertion `assert reached` is kept in git history and
+quoted in docs/OD_A1_BR_T2.md §3e; it is not re-run because the code it
+exercised is gone.
+
+RE-MEASUREMENT (this module)
+----------------------------
+The same attacker model (authorized: ordinary users plus the operator acting
+through every route that still exists) and the same private string, on the
+production composition root with deterministic evaluation **enabled**. Every
+row is asserted contained; a row that becomes reachable means a learning or
+global-tuning path has come back — re-run BR-T2 and update the documents rather
+than the assertion.
 """
 
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
+
 import pytest
 
-from server.storage.models import ImprovementCandidateRow
-from tests.evaluation.conftest import SU, drain, verdict
-from tests.runtime.conftest import ask, final
+from server.storage.models import ConfigVersion, ImprovementCandidateRow, TaskEvaluation
+from tests.evaluation.conftest import SU, drain
+from tests.runtime.conftest import ask, call, final
 
 pytestmark = pytest.mark.asyncio
 
@@ -34,72 +51,69 @@ CONTROL = "/api/v1/admin/control/evaluation"
 PRIVATE = "Alice's passport is K7Q4471 and she lives at 12 Juniper Lane"  # disposable test data
 
 
-def _row(n: str, model: str, attempt: str, reachable: bool, why: str) -> tuple[str, str, str, bool, str]:
-    return n, model, attempt, reachable, why
-
-
-async def _alice_task_with_candidate(judged, change: str):
-    h, judge = await judged()
-    judge.push(verdict(quality=0.5, improvement_candidates=[
-        {"target": "worker.system_prompt", "proposed_change": change}]))
+async def _alice_task(h):
     alice, bob = await h.user("alice"), await h.user("bob")
     await h.grant(alice, "file.read")
-    h.model.push(ask("file.read"), final("done"))
+    h.model.push(ask("file.read"), call("files.read", "list_directory"), final(f"noted: {PRIVATE}"))
     assert (await h.submit(alice, f"remember for my trip: {PRIVATE}")).status_code == 200
     await drain(h)
-    return h, alice, bob, await h.rows(ImprovementCandidateRow)
+    return alice, bob
 
 
-async def _bobs_system_prompt(h, bob) -> str:
+async def _bobs_system_prompts(h, bob) -> list[str]:
+    seen = len(h.model.seen)
     h.model.push(final("hello bob"))
     assert (await h.submit(bob, "what's the weather")).status_code == 200
-    return h.model.seen[-1][0].content
+    return [messages[0].content for messages in h.model.seen[seen:]]
 
 
-async def test_br_t2_judge_rows(judged):
+async def test_br_t2_judge_rows_after_retirement(evaluated):
     rows = []
+    h = await evaluated()
+    alice, bob = await _alice_task(h)
 
-    # 38 — the whole path, with an approval made from the default (redacted) console.
-    h, alice, bob, [candidate] = await _alice_task_with_candidate(
-        judged, f"When planning travel, note: {PRIVATE}.")
-    listing = await h.client.get("/api/v1/admin/evaluations", headers=SU)
-    assert listing.status_code == 200, listing.text
-    assert PRIVATE not in listing.text  # the approver's default view shows no content
-    approved = await h.client.post(f"{CONTROL}/candidates/{candidate.candidate_id}/approve",
-                                   json={"reason": "looks_useful"}, headers=SU)
-    assert approved.status_code == 200, approved.text
-    reached = PRIVATE in await _bobs_system_prompt(h, bob)
-    rows.append(_row("38", "authorized", "A's private content reaches B's worker prompt through a Judge "
-                     "candidate the operator approved from the redacted console", reached,
-                     "approval re-checks target, range and secret shapes only; an approved "
-                     "worker.system_prompt applies to every user (19 §9)"))
-    assert reached, "row 38 changed: re-run BR-T2 and update docs/OD_A1_BR_T2.md §3e"
-    assert PRIVATE not in listing.text
+    # 38R — the whole former path: nothing writes a candidate, nothing can approve one,
+    # and even a pre-retirement approved `worker.system_prompt` carrying A's content
+    # (planted directly, as historical data would be) never reaches B.
+    candidates = await h.rows(ImprovementCandidateRow)
+    approve = await h.client.post(f"{CONTROL}/candidates/{uuid.uuid4()}/approve",
+                                  json={"reason": "looks_useful"}, headers=SU)
+    async with h.storage.session() as s:
+        s.add(ConfigVersion(target_key="worker.system_prompt", value=f"When planning travel, note: {PRIVATE}.",
+                            action="approve", reason="historical", created_at=datetime.now(timezone.utc),
+                            created_by="pre-retirement"))
+        await s.commit()
+    reached = any(PRIVATE in p for p in await _bobs_system_prompts(h, bob))
+    rows.append(("38R", "A's private content reaches B's worker prompt through the (retired) improvement path",
+                 reached or bool(candidates) or approve.status_code not in (404, 405),
+                 "no evaluator writes candidates; no approval route; historical config versions are never read"))
+    assert candidates == [] and approve.status_code in (404, 405), approve.text
+    assert not reached, "row 38R changed: a global tuning path is back — re-run BR-T2, update §3e"
 
-    # 39 — the same candidate, never approved.
-    h, alice, bob, [candidate] = await _alice_task_with_candidate(
-        judged, f"When planning travel, note: {PRIVATE}.")
-    reached = PRIVATE in await _bobs_system_prompt(h, bob)
-    rows.append(_row("39", "authorized", "the same candidate reaches B while it waits in the queue", reached,
-                     "nothing applies without a superuser approval (JDG-T9)"))
-    assert not reached
+    # 38R-b — the deterministic record itself carries no user text another user could be shown.
+    # Bob's task is evaluated too, in the background; whether its row has landed
+    # yet depends on the store's timing, so select Alice's record explicitly.
+    await drain(h)
+    [evaluation] = await h.rows(TaskEvaluation, TaskEvaluation.owner_user_id == alice.user_id)
+    every_record = await h.rows(TaskEvaluation)
+    in_record = any(PRIVATE in repr(r.findings) or PRIVATE in repr(r.redactions) for r in every_record)
+    rows.append(("38R-b", "A's private content is copied into the evaluation record", in_record,
+                 "findings are step refs and failure categories only; the trace is not persisted"))
+    assert not in_record and evaluation.owner_user_id == alice.user_id
 
-    # 40 — a candidate carrying a secret-shaped value.
-    h, alice, bob, queued = await _alice_task_with_candidate(
-        judged, "Use api_key = sk-proj-TESTONLYabcdefghijklmnop to call the API.")  # TEST-ONLY fixture
-    rows.append(_row("40", "authorized", "a secret-shaped value in a candidate reaches the queue or B",
-                     bool(queued), "refused at creation (secret_in_value); approval re-validates too"))
-    assert queued == []
+    # 39R / 40R — there is no queue for a suggestion to wait in.
+    rows.append(("39R/40R", "a suggestion (plain or secret-shaped) is queued from A's task",
+                 bool(await h.rows(ImprovementCandidateRow)), "no candidate writer exists"))
+    assert await h.rows(ImprovementCandidateRow) == []
 
-    # 41 — the console's default views.
-    h, alice, bob, [candidate] = await _alice_task_with_candidate(
-        judged, f"When planning travel, note: {PRIVATE}.")
+    # 41R — the console's default views.
     views = [await h.client.get(f"/api/v1/admin/{v}", headers=SU) for v in ("evaluations", "tasks", "audit")]
-    reached = any(PRIVATE in v.text for v in views)
-    rows.append(_row("41", "authorized", "A's private content in the operator console's default views", reached,
-                     "user content redacted to its length (DSH-B1); the unredacted view is audited first"))
-    assert all(v.status_code == 200 for v in views) and not reached
+    leaked = any(PRIVATE in v.text for v in views)
+    rows.append(("41R", "A's private content appears in the operator console's default views", leaked,
+                 "user content redacted to its length (DSH-B1); retired candidates shown as counts only"))
+    assert all(v.status_code == 200 for v in views), [v.text for v in views]
+    assert not leaked
 
-    print("\nBR-T2 Judge / console dimension (docs/OD_A1_BR_T2.md §3e):")
-    for n, model, attempt, reachable, why in rows:
-        print(f"  [{'REACHABLE' if reachable else 'contained'}] {n} ({model}) {attempt} — {why}")
+    print("\nBR-T2 retired-Judge dimension, re-measured (docs/OD_A1_BR_T2.md §3e):")
+    for n, attempt, reachable, why in rows:
+        print(f"  [{'REACHABLE' if reachable else 'contained'}] {n} (authorized) {attempt} — {why}")

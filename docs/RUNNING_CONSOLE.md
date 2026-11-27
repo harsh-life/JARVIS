@@ -13,12 +13,12 @@ No browser UI ships in this build (OD-DASH-2).
 | `GET /api/v1/admin/…` | Shows |
 |---|---|
 | `banner` | the persistent banners only |
-| `health[?probe_models=true]` | database, SecretStore locked/unlocked, configured model providers (probed only on request — a probe is a call to the provider), Mem0, vault, scheduler, device channel, Judge |
+| `health[?probe_models=true]` | database, SecretStore locked/unlocked, configured model providers (probed only on request — a probe is a call to the provider), Mem0, vault, scheduler, device channel, evaluation (enabled, queue) |
 | `tasks[?status=&limit=]` | running / paused / terminal counts; live tasks; per-task status, mode, counters, failure code, worker switches |
 | `recovery` | worker switches, stalls, trips by source, recent trips, the global latch |
 | `break-glass` | enablement, live records (task, user, executables, reason, expiry), activation/invocation/end events |
-| `evaluations` | Judge state and queue, scores and findings, the improvement-candidate queue, config-version history |
-| `usage` | per-user and global calls and spend (24 h), rate usage (1 min), Judge spend separately, the limits |
+| `evaluations` | evaluation state and queue, rules-evaluator findings (redacted), historical Judge rows as data, **counts** of the retired Judge's candidates and config versions |
+| `usage` | per-user and global calls and spend (24 h), rate usage (1 min), historical (retired) Judge spend separately, the limits |
 | `memory` | facts per user (counts only), vault index state |
 | `devices` | registered devices, connected, last seen, revoked, step-up/push registered (never the key or token) |
 | `audit[?action=&user_id=&result=&resource_prefix=&since=&limit=]` | audit events — ids and results; `action=evaluation.*` filters by prefix |
@@ -59,7 +59,6 @@ Actions are the control endpoints, owned by the subsystems that enforce them:
 | stop a task / user / device | `POST /api/v1/admin/control/stop` | supervisor (18 §5.4) |
 | global stop / clear | `POST /api/v1/admin/control/global-stop`, `…/global-clear` | supervisor |
 | break-glass activate / revoke / list | `POST|GET /api/v1/admin/control/break-glass…` | break-glass (20 §2.2) |
-| Judge on/off, stop requests on/off | `POST /api/v1/admin/control/evaluation/switches` | evaluation control (19) |
 | approve / reject a candidate, roll back a version | `POST /api/v1/admin/control/evaluation/…` | review queue (19 §9) |
 | pause / release one agent `{reason}` | `POST /api/v1/admin/control/agents/{id}/pause`, `…/release` | supervisor (docs/29 §14.3): live runs stopped, run tokens revoked; its owner cannot resume past the hold; release restores nothing |
 

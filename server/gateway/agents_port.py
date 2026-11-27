@@ -24,8 +24,6 @@ from shared.schemas.agent_factory import (
     AgentExport,
     AgentInboxItemView,
     AgentInboxResponse,
-    AgentPurposeCandidateList,
-    AgentPurposeCandidateView,
     AgentListResponse,
     AgentRunListResponse,
     AgentRunView,
@@ -126,20 +124,6 @@ class AgentFactoryPort(Protocol):
         self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger
     ) -> None: ...
 
-
-    async def candidates(
-        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, audit: AuditLogger,
-    ) -> AgentPurposeCandidateList: ...
-
-    async def compile_candidate(
-        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, candidate_id: uuid.UUID,
-        audit: AuditLogger,
-    ) -> CompileOutcome: ...
-
-    async def dismiss_candidate(
-        self, session: AsyncSession, *, principal: Principal, agent_id: uuid.UUID, candidate_id: uuid.UUID,
-        audit: AuditLogger,
-    ) -> AgentPurposeCandidateView: ...
 
     # docs/29 §15.3–§15.4 (Phase 5): the owner's standing delegation.
     async def delegation(

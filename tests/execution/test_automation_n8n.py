@@ -20,6 +20,7 @@ from server.capabilities.registry import lookup
 from server.config.schema import AppConfig, N8nConfig
 from server.execution.automation import (
     IDEMPOTENCY_HEADER,
+    InMemoryInvocationLedger,
     InputField,
     N8nWorkflowExecutor,
     PinnedWorkflow,
@@ -56,6 +57,7 @@ class Recorder:
 
 
 def executor(recorder: Recorder, **kw) -> N8nWorkflowExecutor:
+    kw.setdefault("ledger", InMemoryInvocationLedger())
     return N8nWorkflowExecutor(
         base_url="http://127.0.0.1:5678", workflows=[ECHO, FAIL], token=_token,
         transport=httpx.MockTransport(recorder), **kw,
@@ -137,7 +139,8 @@ async def test_concurrent_duplicates_share_one_execution():
             await release.wait()
             return httpx.Response(200, json={"ok": True})
 
-    ex = N8nWorkflowExecutor(base_url="http://127.0.0.1:5678", workflows=[ECHO], token=_token, transport=Slow())
+    ex = N8nWorkflowExecutor(base_url="http://127.0.0.1:5678", workflows=[ECHO], token=_token, transport=Slow(),
+                             ledger=InMemoryInvocationLedger())
     args = {"workflow_id": "jarvis.echo", "inputs": {"message": "x"}}
     a = asyncio.create_task(ex.run(request(args)))
     await started.wait()
@@ -220,7 +223,7 @@ async def test_an_unavailable_credential_fails_closed_without_detail():
 
     rec = Recorder()
     ex = N8nWorkflowExecutor(base_url="http://127.0.0.1:5678", workflows=[ECHO], token=broken,
-                             transport=httpx.MockTransport(rec))
+                             transport=httpx.MockTransport(rec), ledger=InMemoryInvocationLedger())
     with pytest.raises(ExecutionError) as exc:
         await ex.run(request({"workflow_id": "jarvis.echo", "inputs": {"message": "x"}}))
     assert exc.value.code is ExecutionErrorCode.AUTOMATION_UNAVAILABLE
@@ -294,11 +297,14 @@ async def test_a_timeout_is_remembered_because_the_run_may_have_happened():
     rec = Recorder(lambda r: (_ for _ in ()).throw(httpx.ReadTimeout("slow", request=r)))
     ex = executor(rec)
     args = {"workflow_id": "jarvis.fail", "inputs": {}}
-    with pytest.raises(ExecutionError):
+    with pytest.raises(ExecutionError) as first:
         await ex.run(request(args))
+    assert first.value.code is ExecutionErrorCode.TIMEOUT
     with pytest.raises(ExecutionError) as exc:
         await ex.run(request(args))
-    assert "not re-executed" in exc.value.message and len(rec.requests) == 1
+    # The outcome is unknown: refused as such, never re-sent.
+    assert exc.value.code is ExecutionErrorCode.OUTCOME_UNCERTAIN
+    assert "not repeated automatically" in exc.value.message and len(rec.requests) == 1
 
 
 async def test_an_unexpected_error_never_leaves_a_concurrent_duplicate_waiting():
@@ -311,7 +317,8 @@ async def test_an_unexpected_error_never_leaves_a_concurrent_duplicate_waiting()
             await release.wait()
             raise RuntimeError("transport bug")
 
-    ex = N8nWorkflowExecutor(base_url="http://127.0.0.1:5678", workflows=[ECHO], token=_token, transport=Broken())
+    ex = N8nWorkflowExecutor(base_url="http://127.0.0.1:5678", workflows=[ECHO], token=_token, transport=Broken(),
+                             ledger=InMemoryInvocationLedger())
     args = {"workflow_id": "jarvis.echo", "inputs": {"message": "x"}}
     first = asyncio.create_task(ex.run(request(args)))
     await started.wait()

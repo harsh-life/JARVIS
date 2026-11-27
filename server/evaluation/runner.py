@@ -1,5 +1,6 @@
-"""The Judge runs beside tasks, never inside them (19 §6: "It runs
-asynchronously; the task does not wait for it").
+"""Evaluation runs beside tasks, never inside them: the task does not wait
+for it, and a running task's request may hold the store's write lock until it
+ends, so the record is written later, from this queue.
 
 `EvaluationQueue` is a bounded queue drained by one background worker. The
 runtime's observer only *enqueues* — a synchronous, non-blocking call — so an
@@ -47,7 +48,7 @@ class EvaluationQueue:
         if self._worker is None or self._worker.done():
             # A fresh context: nothing request-scoped (a secret resolver bound
             # to a request's transaction, a request id) is inherited by the
-            # Judge's worker from whichever request happened to start it.
+            # evaluation worker from whichever request happened to start it.
             self._worker = asyncio.get_running_loop().create_task(
                 self._loop(), name="evaluation-runner", context=contextvars.Context()
             )

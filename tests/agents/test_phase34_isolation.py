@@ -3,8 +3,7 @@
 
 Two users who share a graph are still two owners. An agent is its owner's
 alone (docs/29 §6: owner-private), so sharing a graph gives the other member
-nothing of it — not its runs, its reminder, its tap, the Judge's suggestions
-for it, or its notebook — and every refusal is `404`, indistinguishable from
+nothing of it — not its runs, its reminder, its tap, or its notebook — and every refusal is `404`, indistinguishable from
 an agent that does not exist. Leaving the agent's graph ends what the agent
 could do there: its reminder is no longer delivered, and nothing — a tap
 included — runs it outside that graph.
@@ -28,25 +27,21 @@ from server.storage.models import (
 )
 from shared.schemas.enums import JobStatus
 from tests.agents.harness import AGENTS_ON, API, DRAFT, create_agent
-from tests.evaluation.conftest import TOKEN, drain, judge_config, verdict
-from tests.runtime.conftest import ScriptedModel, final
+from tests.evaluation.conftest import TOKEN, drain, rules_config
+from tests.runtime.conftest import final
 from tests.scheduler.test_firing import next_frame, phone
 
 REMINDER_DRAFT = {
     **DRAFT,
     "trigger_request": {"kind": "reminder", "cron": "0 7 * * *", "timezone": "Asia/Kolkata"},
 }
-BETTER = "Summarize only the critical advisories, newest first."
 
 
 @pytest.fixture
 async def h(make_harness, monkeypatch):
     monkeypatch.setenv(SUPERUSER_TOKEN_ENV, TOKEN)
-    judge = ScriptedModel("scripted-judge")
-    harness = await make_harness(config={**AGENTS_ON, **judge_config(), "android": {"enabled": True}},
-                                 agent_tools=True, models={"scripted-judge": judge})
-    harness.judge = judge
-    return harness
+    return await make_harness(config={**AGENTS_ON, **rules_config(), "android": {"enabled": True}},
+                              agent_tools=True)
 
 
 async def _fire(h, job: ScheduledJob) -> bool:
@@ -61,14 +56,14 @@ async def test_a_member_of_the_same_graph_reaches_nothing_of_anothers_agent(h):
     assert definition.graph_id == graph              # made in the shared graph, still alice's alone
     agent_id = agent["agent_id"]
 
-    # A judged run of alice's, so there is a run, a suggestion and a notebook to reach for.
-    h.judge.push(verdict(quality=0.6, improvement_candidates=[
-        {"target": "agent.purpose", "proposed_change": BETTER, "expected_effect": "shorter"}]))
+    # An evaluated run of alice's, so there is a run, an evaluation and a notebook to reach for.
+    # (The retired Judge's purpose suggestions no longer exist; their routes are gone for
+    # everyone — tests/agents/test_agent_console.py.)
     h.model.push(final("Two critical advisories."))
     run = await h.client.post(f"{API}/{agent_id}/runs", json={}, headers=alice.auth)
     assert run.status_code == 202, run.text
     await drain(h)
-    [candidate] = await h.rows(ImprovementCandidateRow)
+    assert await h.rows(ImprovementCandidateRow) == []
 
     # Alice's phone gets the reminder; bob's sees nothing of it.
     alices_phone = await phone(h, alice, features=("reminders", "agent_reminders"))
@@ -93,9 +88,6 @@ async def test_a_member_of_the_same_graph_reaches_nothing_of_anothers_agent(h):
         ("POST", f"{API}/{agent_id}/resume", {}),
         ("GET", f"{API}/{agent_id}/notebook", None),
         ("GET", f"{API}/{agent_id}/export", None),
-        ("GET", f"{API}/{agent_id}/candidates", None),
-        ("POST", f"{API}/{agent_id}/candidates/{candidate.candidate_id}/compile", {}),
-        ("POST", f"{API}/{agent_id}/candidates/{candidate.candidate_id}/dismiss", {}),
         ("DELETE", f"/api/v1/jobs/{job.job_id}", None),
     ]:
         resp = await h.client.request(method, path, json=body, headers=bob.auth)
@@ -107,8 +99,6 @@ async def test_a_member_of_the_same_graph_reaches_nothing_of_anothers_agent(h):
     [definition] = await h.rows(AgentDefinitionRow)
     assert definition.status == "active"
     assert len(await h.rows(AgentRunRow)) == 1
-    [candidate] = await h.rows(ImprovementCandidateRow)
-    assert candidate.status == "pending"
     [job] = await h.rows(ScheduledJob)
     assert job.status is JobStatus.ACTIVE
 

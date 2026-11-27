@@ -1,117 +1,132 @@
-# Running the Judge (docs/19)
+# Running evaluation (deterministic `RulesEvaluator`)
 
-The Judge is **optional** and **off by default**. With `evaluation.enabled: false`
-Track B is fully functional and every circuit-breaker trigger except the
-evaluator's still works (JDG-T1).
+Evaluation is **optional** and **off by default**. With `evaluation.enabled: false`
+Track B is fully functional and every circuit-breaker trigger still works.
 
-> The Judge observes and scores. It never authorizes, never executes, and never
-> kills on its own authority. Its only effect on a running task is a stop
-> request that the deterministic breaker enforces. (19 §0)
+> The rules evaluator reads one finished task's redacted trace and records
+> deterministic findings. It makes no model call, holds no credential, cannot
+> stop a task, and cannot change a prompt, a setting, a grant, or anything any
+> other user's task reads. It is a diagnostic, not a decision-maker.
+
+**The LLM Judge is retired** (`docs/DECISION_REGISTER.md`, D-JDG-RETIRE). The
+LLM evaluator, its prompt and rubric, metering and budget, live-window
+monitoring, stop requests, operator switches, improvement candidates,
+candidate approval, versioned prompt/tool-description/recovery tuning and the
+agent-purpose suggestions are **gone from the code**, not disabled. Why:
+`docs/OD_A1_BR_T2.md` §3e row 38 — one user's private task content reached
+every other user's worker prompt through an operator-approved candidate.
+`docs/19_JUDGE_EVALUATION.md` is kept as the superseded design record.
 
 ## 1. Configuration
 
 ```yaml
 evaluation:
   enabled: false                 # the whole feature
-  evaluator: llm                 # llm | rules  (rules: deterministic, no model, no cost)
-  provider: null                 # required for `llm`; shaped like `agent` (06)
-  #  provider: ollama            # local: traces stay on this host
-  #  model: qwen2.5:7b-instruct
-  #  timeout_seconds: 60
+  evaluator: rules               # the only evaluator
   post_hoc: { sample_successful: 0.1, always_on_failure: true }
-  live: { enabled: false, every_n_steps: 1, window_steps: 20 }
-  may_request_stop: false        # the operator must opt in before any evaluator can call trip()
-  stop_alert_threshold: 5
-  stop_alert_window_minutes: 60
-  budget: 0.0                    # the Judge's own daily budget; 0.0 refuses any paid Judge call
-  budget_scope: own_and_global   # OD-JDG-2 (open): also counts toward the global daily budget
   max_observation_chars: 2000
   queue_size: 64
 ```
 
-* A **non-local provider receives redacted task traces**. That is a disclosed
-  operator choice (19 §4); the server logs a warning at startup when you make it.
-  Its `secret_ref` is a handle (`env:` or `secretstore:`), resolved per call,
-  and only a SecretStore handle of class `model_api_key` is ever handed to it.
-* Judge spend is metered as `model_call` usage attributed to
-  `evaluator:<id>` (OD-JDG-4). It never counts against the evaluated task's
-  budget, nor against the user's own daily budget or rate limits.
+A configuration that still names a retired Judge key — `evaluator: llm`,
+`provider`, `live`, `may_request_stop`, `stop_alert_threshold`,
+`stop_alert_window_minutes`, `budget`, `budget_scope` — is **refused at
+startup** with a message naming the keys. It is refused even with
+`enabled: false`: a configuration that describes a Judge is wrong about the
+system it configures. Delete those keys when upgrading.
 
 ## 2. What happens
 
-* **Post-hoc**: when a task ends, the runtime hands an observer a copy of it
-  (the user's request, the worker's proposals, the observations it was fed,
-  its audited events with each authorization's tier and decision, counters,
-  the final result). Every failed task (and `sample_successful` of the rest)
-  is evaluated in the background.
-* **Live window** (`live.enabled`): after every `every_n_steps` tool
-  executions, the last `window_steps` steps are evaluated asynchronously. The
-  task never waits.
-* Before any Judge call the trace is redacted with the repository's secret
-  patterns; each hit is audited (`evaluation.trace.redacted`) by pattern name.
-  One call sees one task of one user, and never who the user is.
-* The result is stored in `evaluations` (owner-private) with one of four
-  outcomes: `recorded`, `unavailable`, `malformed` (the output is rejected,
-  never repaired), `over_budget` (skipped before any call). None affects the
-  task.
+* When a task ends, the runtime hands an observer a copy of it (the user's
+  request, the worker's proposals, the observations it was fed, its audited
+  events with each authorization's tier and decision, counters, the final
+  result). Every failed task (and `sample_successful` of the rest) is queued.
+  Nothing observes a running task.
+* The trace is redacted with the repository's secret patterns and bounded;
+  each hit is audited (`evaluation.trace.redacted`) by pattern name only.
+* `RulesEvaluator` records: redundant (repeated) proposals by step ref,
+  failed/blocked events as `{step_ref, category}`, an `efficiency` ratio, and
+  an informational anomaly flag (`suspicious` / `boundary_violation` or
+  `repeated_denials`). Same trace in, same record out.
+* The result is stored in `evaluations` (owner-private) with outcome
+  `recorded`, or `unavailable` if the evaluator raised. `quality` is always
+  NULL and the stop columns always false for new rows. No usage is metered;
+  the evaluator costs nothing.
+* None of it affects the task, any other task, or any configuration.
 
-## 3. Stop requests
+## 3. Boundaries (mechanically enforced)
 
-A live evaluation that answers `anomaly: stop_requested` is handed to the
-circuit breaker (`trip()`, source `evaluator`) **only** if `may_request_stop`
-is true and the operator switch allows it. The breaker then runs its usual
-sequence (18 §5.3): the in-flight call is abandoned, the task ends
-`emergency_stop`, its confirmation tokens are spent, its grants revoked, any
-break-glass record ended, and the user is told an automated evaluator flagged
-the task. The stopped task is never resumed. Otherwise the request is recorded
-with why it was not honoured.
+`pyproject.toml` contracts, each tested with a deliberate violation
+(`tests/evaluation/test_stage5_boundaries.py`):
 
-More than `stop_alert_threshold` honoured stops in the window writes one
-`evaluation.stop_alert` audit row (and a warning log). Switch the Judge off if
-it is misbehaving:
+* **The rules evaluator is never an authority** — `server.evaluation` cannot
+  import authorization, secrets, execution, fs, net, tools, the runtime,
+  identity, the gateway, the composition root or the audit writer.
+* **The rules evaluator makes no model call** — `server.evaluation` cannot
+  import `server.models`, `server.modeltools` or `httpx`, directly or
+  indirectly. Bringing an LLM evaluator back means deleting this contract in
+  review.
+* **The runtime never depends on evaluation**, and **evaluation opens no
+  process or socket**.
 
-```bash
-curl -X POST "$BASE/api/v1/admin/control/evaluation/switches" \
-  -H "Authorization: Superuser $HYPERMIND_SUPERUSER_TOKEN" \
-  -d '{"judge_enabled": false, "reason": "too_many_stops"}'
-```
+The composition root hands the evaluator a storage sink and nothing else —
+no breaker, secret resolver, model, switchboard or prompt writer
+(`server/composition/evaluation.py`).
 
-A switch can turn the Judge or its stop requests **off**, and back on only as
-far as the configuration allows.
-
-## 4. Improvement candidates (19 §9)
-
-The Judge may suggest a change to one of: `worker.system_prompt`,
-`worker.tool_description:<tool_id>`, `recovery.stall_window`,
-`recovery.loop_repeat_limit`, `recovery.max_worker_switches`,
-`evaluation.rubric`, `suggestion.template`. Anything else — capabilities,
-operations, tiers, authorization, graph roles, visibility, confinement,
-sandbox/egress, break-glass, secrets, the breaker, the Judge's own permissions
-— is refused at creation and audited (`improvement.candidate.refused`).
-
-Nothing applies automatically. Review the queue in the console
-(`GET /api/v1/admin/evaluations`; read a candidate's text through the audited
-`GET /api/v1/admin/privileged/tasks/{task_id}?reason=…`), then:
+## 4. Reading the results
 
 ```bash
-# approve → a new config version (re-validated at approval)
-curl -X POST "$BASE/api/v1/admin/control/evaluation/candidates/$ID/approve" \
-  -H "Authorization: Superuser $HYPERMIND_SUPERUSER_TOKEN" -d '{"reason": "reviewed"}'
-# reject
-curl -X POST "$BASE/api/v1/admin/control/evaluation/candidates/$ID/reject" \
-  -H "Authorization: Superuser $HYPERMIND_SUPERUSER_TOKEN" -d '{"reason": "not_useful"}'
-# roll back a target's current version (a new version restoring the previous value)
-curl -X POST "$BASE/api/v1/admin/control/evaluation/config-versions/$VERSION/rollback" \
-  -H "Authorization: Superuser $HYPERMIND_SUPERUSER_TOKEN" -d '{"reason": "revert"}'
+curl -H "Authorization: Superuser $HYPERMIND_SUPERUSER_TOKEN" \
+  "$BASE/api/v1/admin/evaluations?limit=50"
 ```
 
-Applied worker text is shown to the worker as operator guidance that **grants
-nothing**: every proposal is still parsed, authorized and confirmed exactly as
-before. There is no training loop in this build.
+Findings are shown **redacted**. Historical rows written by the retired Judge
+(evaluator `llm_judge`) are shown as data, with whatever `quality`, reward
+and stop flags they were written with.
 
-## 5. Verifying
+## 5. Historical Judge records
 
-```bash
-python -m pytest tests/evaluation -q     # contract, runtime wiring, review queue, boundaries
-lint-imports --config pyproject.toml     # "The Judge is never an authority", "The runtime never depends on the Judge", …
-```
+The Judge's tables are kept **inert** so no history is destroyed and no
+destructive migration is needed:
+
+| Table | Status | Who touches it now |
+|---|---|---|
+| `evaluations` | live (rules evaluator) + historical Judge rows | sink writes new rows; console reads |
+| `improvement_candidates` | **inert** | nothing writes or reads content; console shows a **count**; an agent's rows are deleted with the agent |
+| `config_versions` | **inert** | nothing — **not read** by the runtime; console shows a **count** |
+| `evaluation_control` | **inert** | nothing |
+| `usage` rows with `tool_id` `evaluator:*` | historical | still excluded from per-user budgets/rates; still counted in the global budget |
+| audit actions `improvement.candidate.*`, `config.version.*`, `control.evaluation`, `evaluation.stop_*`, `agent.candidate.*` | historical | never written again |
+
+`tests/evaluation/test_judge_retirement.py` checks structurally that no
+server module constructs or updates these rows, and that a historical
+approved `worker.system_prompt` planted in `config_versions` never reaches a
+worker prompt.
+
+**`improvement_candidates.proposed_value` / `expected_effect` and
+`config_versions.value` may contain one user's private content** (that is
+the row-38 finding). Treat them as user data.
+
+### Retention and manual cleanup
+
+The rows are kept until the owner decides to remove them. To clean up, with
+the server stopped:
+
+1. **Back up first** (this is the recovery path):
+   `pg_dump --table=improvement_candidates --table=config_versions --table=evaluation_control "$DB" > judge-history-$(date +%F).sql`
+   (SQLite: `sqlite3 data/hypermind.db ".dump improvement_candidates config_versions evaluation_control" > judge-history.sql`).
+   Store the dump where you store other user data backups; it is user data.
+2. Delete in foreign-key order:
+   ```sql
+   DELETE FROM config_versions;
+   DELETE FROM improvement_candidates;
+   DELETE FROM evaluation_control;
+   ```
+3. Optionally, historical Judge rows in `evaluations`:
+   `DELETE FROM evaluations WHERE evaluator_id <> 'rules_evaluator';`
+   (only after step 2: `improvement_candidates.evaluation_id` references them).
+4. To restore, load the dump from step 1.
+
+Dropping the tables themselves is a future migration, to be written when the
+owner confirms no history is needed; it is deliberately not part of the
+retirement change.

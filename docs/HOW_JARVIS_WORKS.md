@@ -120,10 +120,12 @@ infrastructure** the whole way through:
 Worth over-stating, because getting this wrong is the single most likely
 way to introduce a real vulnerability in this codebase:
 
-- **The Judge** (`server/evaluation`) reads finished traces and produces a
-  score or a recommendation. It never gates a live run, never authorizes,
-  never resolves a secret. `server.evaluation` is barred by import-linter
-  from importing anything that would let it try.
+- **Evaluation** (`server/evaluation`, the deterministic `RulesEvaluator`)
+  reads finished traces and records findings. It never gates a live run,
+  never authorizes, never resolves a secret and never calls a model;
+  `server.evaluation` is barred by import-linter from importing anything that
+  would let it try. (The LLM Judge, which could also *recommend* changes that
+  an operator applied to every user's prompt, was retired — D-JDG-RETIRE.)
 - **The Scheduler** (`server/scheduler`) only ever fires a reminder that
   delivers a message to an inbox, or — for an unattended agent — starts a
   run through the exact same gate every other run goes through. It never

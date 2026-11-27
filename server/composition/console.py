@@ -2,7 +2,7 @@
 
 `server.dashboard` declares what live state it reads (`server/dashboard/ports.py`)
 and cannot import the runtime, the break-glass registry, the device hub, memory,
-the vault or the Judge. This module satisfies those ports with **snapshots**:
+the vault or evaluation. This module satisfies those ports with **snapshots**:
 plain data copied out of each component, never a handle that could act.
 
 Two deliberate limits:
@@ -24,7 +24,6 @@ from typing import Any
 from server.agent import AgentRuntime
 from server.composition.break_glass import BreakGlassRegistry
 from server.composition.evaluation import EvaluationJobs
-from server.composition.improvements import EvaluationSwitchboard
 from server.composition.latch import InProcessLatch
 from server.composition.memory import MemoryFacade, VaultFacade
 from server.composition.models import ProviderFactory, spec_from_entry
@@ -86,7 +85,7 @@ class LiveState:
 class Probes:
     def __init__(self, *, config: AppConfig, core: SecurityCore, factory: ProviderFactory,
                  memory: MemoryFacade | None, provider: MemoryProvider | None, vault: VaultFacade | None,
-                 device_hub: DeviceHub | None, scheduler_runner, switchboard: EvaluationSwitchboard,
+                 device_hub: DeviceHub | None, scheduler_runner,
                  jobs: EvaluationJobs | None) -> None:
         self._config = config
         self._core = core
@@ -96,7 +95,6 @@ class Probes:
         self._vault = vault
         self._hub = device_hub
         self._runner = scheduler_runner
-        self._switchboard = switchboard
         self._jobs = jobs
 
     def _model_entries(self) -> list[tuple[str, Any]]:
@@ -107,8 +105,6 @@ class Probes:
         if config.agent.recovery is not None:
             entries += [(f"agent.recovery.chain[{i}]", e) for i, e in enumerate(config.agent.recovery.chain)]
         entries += [(f"models_as_tools.{e.id}", e) for e in config.models_as_tools]
-        if config.evaluation.provider is not None:
-            entries.append(("evaluation.provider", config.evaluation.provider))
         return entries
 
     async def _probe(self, entry) -> str:
@@ -152,7 +148,7 @@ class Probes:
                 "status": "disabled" if self._hub is None else "enabled",
                 "connected": len(self._hub.connected_device_ids()) if self._hub is not None else 0,
             },
-            "judge": self.judge_state(),
+            "evaluation": self.evaluation_state(),
         }
 
     async def connected_device_ids(self) -> set[uuid.UUID]:
@@ -182,15 +178,15 @@ class Probes:
         return {"status": "ok" if status.get("available") else "unavailable",
                 "indexed_commit": status.get("indexed_commit")}
 
-    def judge_state(self) -> dict:
-        view = self._switchboard.view()
+    def evaluation_state(self) -> dict:
+        """Deterministic evaluation only: whether it is on, and its queue. (The
+        retired LLM Judge's switches, stop requests and live monitoring no
+        longer exist.)"""
+
+        enabled = self._config.evaluation.enabled
         state: dict[str, Any] = {
-            "configured_enabled": view.configured_enabled,
-            "configured_may_request_stop": view.configured_may_request_stop,
-            "judge_enabled": view.judge_enabled,
-            "stop_requests_enabled": view.stop_requests_enabled,
-            "evaluator": self._config.evaluation.evaluator if self._config.evaluation.enabled else None,
-            "live_monitoring": self._config.evaluation.enabled and self._config.evaluation.live.enabled,
+            "enabled": enabled,
+            "evaluator": "rules_evaluator" if enabled else None,
         }
         if self._jobs is not None:
             queue = self._jobs.queue
@@ -222,14 +218,14 @@ class MetadataResolvability:
 def build_console(
     config: AppConfig, *, runtime: AgentRuntime, latch: InProcessLatch, break_glass: BreakGlassRegistry | None,
     core: SecurityCore, factory: ProviderFactory, memory: MemoryFacade | None, provider: MemoryProvider | None,
-    vault: VaultFacade | None, device_hub: DeviceHub | None, scheduler_runner, switchboard: EvaluationSwitchboard,
+    vault: VaultFacade | None, device_hub: DeviceHub | None, scheduler_runner,
     jobs: EvaluationJobs | None, storage: StorageBackend,
 ) -> OperatorConsole:
     return OperatorConsole(
         config=config,
         live=LiveState(runtime=runtime, latch=latch, break_glass=break_glass),
         probes=Probes(config=config, core=core, factory=factory, memory=memory, provider=provider, vault=vault,
-                      device_hub=device_hub, scheduler_runner=scheduler_runner, switchboard=switchboard, jobs=jobs),
+                      device_hub=device_hub, scheduler_runner=scheduler_runner, jobs=jobs),
         secrets=MetadataResolvability(storage),
     )
 

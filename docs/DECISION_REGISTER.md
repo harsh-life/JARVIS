@@ -271,6 +271,13 @@ found that needs a decision is listed here; everything else is in
 
 ## 2G. Stage 5 — Judge and operator console (`[PROPOSED]`, pending ratification)
 
+> **SUPERSEDED for the Judge (2026-11-27, D-JDG-RETIRE, §2P).** The LLM Judge,
+> its stop requests, switches, budget, improvement candidates and versioned
+> tuning were retired and removed from the code. The OD-JDG-* and JDG-B1…B5
+> rows below are kept as the historical record of what was built; none of
+> them describes current behaviour. The OD-DASH / DSH rows still apply to the
+> console (minus the Judge's control routes and review-queue view).
+
 The Stage 5 build (`docs/19_JUDGE_EVALUATION.md`, `docs/28_DASHBOARD_OPERATOR_CONSOLE.md`;
 operator guides `docs/RUNNING_EVALUATION.md`, `docs/RUNNING_CONSOLE.md`) keeps
 19 §0 — *the Judge observes and scores; it never authorizes, never executes, and
@@ -318,7 +325,7 @@ in `docs/RELEASE_VALIDATION.md`. Findings that need a decision:
 
 | ID | Finding | What the code does now | Status |
 |---|---|---|---|
-| OD-JDG-5 | **One user's content can reach every user through an approved Judge candidate** (BR-T2 §3e row 38, *authorized* path). A candidate is written from one user's trace. An approved `worker.system_prompt` applies to every user's worker prompt. Approval screens for secret-shaped text only, and the approver's default console view shows the candidate redacted. | Judge off by default. Superuser-only approval, audited, can be rolled back. Secret-shaped values refused. | **OPEN — OWNER**. Mandatory before the Judge runs with real data. Options include: require the audited unredacted view (DASH-006) before an approval; scope approved guidance to the source user; or keep `evaluation.enabled: false` for real data. Not decided here. |
+| OD-JDG-5 *(superseded — resolved by retirement, §2P D-JDG-RETIRE)* | **One user's content can reach every user through an approved Judge candidate** (BR-T2 §3e row 38, *authorized* path). A candidate is written from one user's trace. An approved `worker.system_prompt` applies to every user's worker prompt. Approval screens for secret-shaped text only, and the approver's default console view shows the candidate redacted. | Judge off by default. Superuser-only approval, audited, can be rolled back. Secret-shaped values refused. | **OPEN — OWNER**. Mandatory before the Judge runs with real data. Options include: require the audited unredacted view (DASH-006) before an approval; scope approved guidance to the source user; or keep `evaluation.enabled: false` for real data. Not decided here. |
 | H-1 (update) | PRD #32 now **measured** (`tests/memory/test_prd32_service_measurement.py`). Ten users submitting at once are all served but fully serialized: 11.6 s wall clock for ten 0.5 s tasks, median task latency 8.7 s, 15 retryable `503`s across 9 of 10 users. One task whose model call passes the 5 s busy timeout refuses **9/9** other users' writes `503 storage`. Reads are unaffected. | Unchanged. | ~~OPEN — owner/engineering~~ → **OWNER DECISION: PostgreSQL** (2026-09-28): §2I. The baseline figures in this row are the "before" of `docs/RELEASE_VALIDATION.md` §I. |
 | H-2 (scope) | The push-token at-rest row (BR-T2 36) exists only when push is enabled. With the default `android.push.provider: none` the server refuses to store a token (`409`; `test_push_is_off_by_default_and_nothing_can_be_registered`). | As §2F. | **OPEN — owner**: accept or encrypt before enabling FCM with real data. It does not arise in a push-off deployment. |
 | OD-MB-4 (scope) | Memory at-rest rows (BR-T2 27–28) exist only when `memory.enabled: true` (default false). | As §2C. | **OPEN — owner**. Mandatory before memory runs with real data. |
@@ -958,6 +965,70 @@ presentation-only platform, not that model.
 
 ---
 
+## 2P. Judge retirement and security hardening (OWNER DECISION, 2026-11-27)
+
+Owner instruction of 2026-11-27 ("JARVIS — Complete Judge Retirement &
+Security Hardening"), implemented on branch `security/judge-retirement-hardening`.
+
+### D-JDG-RETIRE — retire the LLM Judge and the global improvement mechanism
+
+**Decision (owner).** Remove the LLM-based Judge and every global
+improvement / prompt-learning path. Keep deterministic, rules-based
+evaluation as `RulesEvaluator`. Do not disable the Judge by configuration and
+do not keep it dormant; do not replace it with another LLM-based evaluator or
+learning mechanism.
+
+**Why.** BR-T2 §3e row 38 (`docs/OD_A1_BR_T2.md`): one user's private task
+content reached **every** user's worker prompt through an operator-approved
+`worker.system_prompt` candidate. The path needed no compromise — only an
+approval made from the redacted console. OD-JDG-5 asked how to control it; the
+owner's answer is that a shared prompt must not learn from user traces at all.
+
+**What was removed** (code, not configuration): `LLMJudge`, `parse_judge_output`,
+`JudgeVerdict`, `ImprovementCandidate`, `Reward`, the `stop_requested`
+anomaly, `MeteredJudgeModel` and Judge metering/budget, the closed candidate
+registry, live-window evaluation, the breaker port for evaluator stops
+(`TripSource.EVALUATOR`), the operator switchboard, `TuningCache` /
+`WorkerTuning` / `TuningPort` (the runtime's global prompt, tool-description
+and recovery tuning), `EvaluationControl` and its four control routes, the
+agent `agent.purpose` candidate routes and `server/agents/revision.py`, the
+Judge's SecretStore key resolution, and the retired audit actions. Every
+retired configuration key is refused at startup by name.
+
+**What remains.** `server/evaluation`: the redacted, bounded `TaskTrace`,
+`RulesEvaluator` (formerly `RulesJudge`, same rules), a post-hoc-only service,
+and the bounded queue that writes the record off the task's path. Its output
+is a frozen `RulesEvaluation` with no authority-shaped field. A new import
+contract — *The rules evaluator makes no model call* — forbids
+`server.models`, `server.modeltools` and `httpx` in `server.evaluation`,
+directly or indirectly.
+
+**Data.** No migration. `evaluations` stays live; `improvement_candidates`,
+`config_versions` and `evaluation_control` stay **inert** (no writer, no
+reader that changes behaviour, counts only in the console; an agent's rows are
+deleted with the agent). Retention and the manual, backed-up cleanup
+procedure: `docs/RUNNING_EVALUATION.md` §5.
+
+**Evidence.** `tests/evaluation/test_judge_retirement.py`,
+`tests/evaluation/test_rules_evaluator.py`, `tests/evaluation/test_rules_runtime.py`,
+and `tests/evaluation/test_br_t2_judge_rows.py` (the historical row-38 result
+preserved in its docstring; rows re-measured contained after retirement).
+
+### Hardening decisions in the same pass (implementation facts, 2026-11-27)
+
+| ID | Decision | Where |
+|---|---|---|
+| HARD-EXEC-1 | Child processes are spawned as `server/execution/launcher.py` (a fresh single-threaded interpreter, validated JSON spec, no `preexec_fn`); it applies rlimits, `no_new_privs`, Landlock and seccomp, then `execve`s, and fails closed. Mandatory limits: CPU, NOFILE, FSIZE, AS (Linux). NPROC optional (per-UID). | `server/execution/process.py`, `launcher.py` |
+| HARD-EXEC-2 | Process-tree cleanup runs on every ending; on Linux the leader stays unreaped until the session is ended (no PID/PGID reuse), members signalled by pidfd, cleanup reported `verified`/`survivors`/`unverified`. | `server/execution/process.py` (`ProcessTree`) |
+| HARD-EXEC-3 | **No aggregate process-tree budget is claimed.** cgroup v2 per-execution limits are **not implemented** (need a delegated cgroup; not validated here). Results carry `aggregate_limits: not_enforced`. A `setsid()` escape from the session is a known limit. | `docs/RUNNING_EXECUTION.md` §5 |
+| HARD-EXEC-4 | Output: one combined budget, ¾ stdout / ¼ stderr, drained past the cap; explicit truncation metadata. | `server/execution/process.py` |
+| HARD-NET-1 | Egress admission and the per-run byte budget are reserved synchronously before any await; attempts count at admission, slots until the handler ends, bytes when admitted for forwarding (never refunded); spending the budget closes every tunnel. | `server/net/egress_proxy.py` |
+| HARD-NET-2 | The proxy is documented as an address-level control: no TLS SNI / HTTP authority verification; shared-IP reach is a known residual. Alternatives (bounded SNI check, TLS-terminating proxy, …) are **proposals** needing an owner decision (OD-AF-13 unchanged). | `docs/ADR_EGRESS_TLS_ORIGIN.md` |
+| HARD-AUTO-1 | n8n responses are bounded while streaming; idempotency is a durable table (`automation_invocations`) written before sending; uncertain outcomes are refused, never retried; no exactly-once claim. n8n stays off by default, loopback-only, TEST-ONLY workflows; OD-AUTO-1…4 remain **open** (not ratified by this change). | `server/execution/automation.py`, `server/composition/automation_ledger.py`, `docs/32_AUTOMATION_N8N.md` |
+| HARD-AUTH-1 | A remotely exposed server (non-loopback `server.host`, or routable `server.base_url`) refuses to start without an explicit admission policy (allow-list, or `security.oidc.allow_open_registration: true`, logged). Local development unchanged. | `server/config/preconditions.py` |
+| HARD-DATA-1 | Data-at-rest inventory; only SecretStore values are encrypted. Memory encryption is a **design, not implemented**; OD-MB-4 stays open and blocks real data. KEK rotation not implemented. | `docs/DATA_AT_REST.md` |
+| HARD-ISO-1 | Application-level RCE blast radius: phased isolation ADR, **proposed only**. OD-A1 (a) remains the accepted residual for the pilot; multi-user real data stays blocked. | `docs/ADR_MULTI_USER_ISOLATION.md` |
+
 ## 3. Genuinely unresolved owner decisions
 
 | ID | Question | Why it is the owner's |
@@ -969,13 +1040,9 @@ presentation-only platform, not that model.
 | OD-SCH-2 | Fire-time `suggest` task with a sessionless principal | Not implemented (docs/22 recommendation); would introduce a principal with no session. |
 | OD-VOI-1 | Whether any server STT provider is enabled at pilot | A cloud STT receives user audio; default is on-device only (§2E). |
 | VOI-B3 | Opt-in raw-audio retention (LIFE-002) | Not built; where retained audio would live and for how long is a privacy call. |
-| OD-JDG-1 | Ratify EvaluationProvider as separate from DecisionProvider | Built as recommended behind `evaluation.enabled` (§2G); not ratified. |
-| OD-JDG-2 | Judge budget scope | Own budget always; `budget_scope` default `own_and_global` (§2G); not ratified. |
-| OD-JDG-3 | Pilot Judge provider (model, cloud or local) | None chosen; the Judge is off by default. |
-| OD-JDG-4 | `usage.kind` extension vs `model_call` + attribution | `model_call` + `evaluator:` attribution; the locked enum is unchanged. |
 | OD-DASH-1 | Dashboard/control split vs amending DASH-002 | Split built as recommended; DASH-002 unchanged; not ratified. |
+| *(closed)* OD-JDG-1…5 | — | **Closed 2026-11-27 by D-JDG-RETIRE (§2P)**: the LLM Judge and its improvement path no longer exist, so there is no evaluator provider, budget scope, provider choice or guidance policy left to decide. |
 | OD-DASH-2 | Console UI | Not built; JSON API only (§2G). |
-| OD-JDG-5 | How approved Judge guidance may carry user content (§2H) | Global guidance with secret screening only reaches every user with one user's content (BR-T2 row 38); which control fits is a product and privacy call. |
 | OD-AF-1, 9, 10 | The Agent Factory's abstractions, attribution form and `01` entities (§2J) | Still open. OD-AF-2, 3, 4, 5, 7 and 8 were ratified on 2026-10-02 (§2K); OD-AF-6 (`browser_use`, P2), OD-TOOL-3 (no MCP) and OD-AF-11…15 (Browser Use's infrastructure) on 2026-10-02 (§2L). |
 
 ---

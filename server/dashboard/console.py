@@ -223,7 +223,7 @@ class OperatorConsole:
             ],
         }
 
-    # ── 5. evaluations & the review queue ──────────────────────────────
+    # ── 5. evaluations (rules evaluator; historical Judge rows read as data) ─
 
     async def evaluations(self, session: AsyncSession, *, limit: int = 100) -> dict:
         rows = (await session.execute(
@@ -232,37 +232,22 @@ class OperatorConsole:
         outcomes = dict((await session.execute(
             select(TaskEvaluation.outcome, func.count()).group_by(TaskEvaluation.outcome)
         )).all())
-        candidates = (await session.execute(
-            select(ImprovementCandidateRow).order_by(ImprovementCandidateRow.created_at.desc())
-            .limit(_limit(limit))
-        )).scalars().all()
-        versions = (await session.execute(
-            select(ConfigVersion).order_by(ConfigVersion.version_id.desc()).limit(_limit(limit))
-        )).scalars().all()
+        # The retired Judge's review queue and configuration versions are no
+        # longer listed: nothing can approve, apply or roll them back, and their
+        # text came from user traces. Only their counts are shown, so an
+        # operator can see that historical rows exist (docs/RUNNING_EVALUATION.md
+        # "Historical Judge records").
+        retired = {
+            "improvement_candidates": int((await session.execute(
+                select(func.count()).select_from(ImprovementCandidateRow))).scalar_one()),
+            "config_versions": int((await session.execute(
+                select(func.count()).select_from(ConfigVersion))).scalar_one()),
+        }
         return {
-            "judge": self._probes.judge_state(),
+            "evaluation": self._probes.evaluation_state(),
             "outcomes": outcomes,
             "evaluations": [self._evaluation(r) for r in rows],
-            "candidates": [
-                {
-                    "candidate_id": str(c.candidate_id), "evaluation_id": str(c.evaluation_id),
-                    "task_id": str(c.task_id), "source_user_id": str(c.source_user_id),
-                    "evaluator_id": c.evaluator_id, "target": c.target, "subject": c.subject,
-                    "status": c.status, "created_at": _iso(c.created_at), "decided_at": _iso(c.decided_at),
-                    "decision_reason": c.decision_reason, "config_version_id": c.config_version_id,
-                    "evidence": list(c.evidence or []),
-                    "proposed_value": redact_user_text(c.proposed_value),
-                    "expected_effect": redact_user_text(c.expected_effect),
-                }
-                for c in candidates
-            ],
-            "config_versions": [
-                {"version_id": v.version_id, "target_key": v.target_key, "action": v.action,
-                 "candidate_id": _id(v.candidate_id), "rolled_back_version_id": v.rolled_back_version_id,
-                 "reason": v.reason, "created_at": _iso(v.created_at),
-                 "value": redact_user_text(v.value)}
-                for v in versions
-            ],
+            "retired_judge_records": retired,
         }
 
     @staticmethod
@@ -317,13 +302,14 @@ class OperatorConsole:
             "global": {
                 "last_24h": await totals(UsageEvent.timestamp >= day, not_judge),
                 "last_minute": await totals(UsageEvent.timestamp >= minute, not_judge),
-                "judge_last_24h": await totals(UsageEvent.timestamp >= day, judge),
+                # Historical LLM Judge calls (retired; nothing new is metered here).
+                "retired_judge_last_24h": await totals(UsageEvent.timestamp >= day, judge),
             },
             "per_user": [
                 {"user_id": str(uid), "calls_24h": spent.get(uid, (0, 0.0))[0],
                  "cost_24h": spent.get(uid, (0, 0.0))[1],
-                 "judge_calls_24h": per_user_judge.get(uid, (0, 0.0))[0],
-                 "judge_cost_24h": per_user_judge.get(uid, (0, 0.0))[1]}
+                 "retired_judge_calls_24h": per_user_judge.get(uid, (0, 0.0))[0],
+                 "retired_judge_cost_24h": per_user_judge.get(uid, (0, 0.0))[1]}
                 for uid in sorted(users, key=str)
             ],
             "limits": {
@@ -331,8 +317,6 @@ class OperatorConsole:
                 "global_daily_cost_limit": budgets.global_daily_cost_limit,
                 "per_user_requests_per_minute": rates.per_user_requests_per_minute,
                 "global_requests_per_minute": rates.global_requests_per_minute,
-                "evaluation_budget": self._config.evaluation.budget,
-                "evaluation_budget_scope": self._config.evaluation.budget_scope,
             },
         }
 
@@ -513,19 +497,10 @@ class OperatorConsole:
         evaluations = (await session.execute(
             select(TaskEvaluation).where(TaskEvaluation.task_id == task_id).order_by(TaskEvaluation.created_at)
         )).scalars().all()
-        candidates = (await session.execute(
-            select(ImprovementCandidateRow).where(ImprovementCandidateRow.task_id == task_id)
-        )).scalars().all()
         return {
             "task_id": str(task.task_id), "user_id": str(task.user_id), "status": task.status,
             "response": scrub(task.response) if task.response is not None else None,
             "evaluations": [self._evaluation(r, unredacted=True) for r in evaluations],
-            "candidates": [
-                {"candidate_id": str(c.candidate_id), "target": c.target, "subject": c.subject,
-                 "status": c.status, "proposed_value": scrub(c.proposed_value),
-                 "expected_effect": scrub(c.expected_effect)}
-                for c in candidates
-            ],
         }
 
 

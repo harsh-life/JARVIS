@@ -969,6 +969,10 @@ Only through the existing hydration (`AuthorizedContextHydrator`): owner-filtere
 
 ## 18. Judge
 
+> **Superseded 2026-11-27 (D-JDG-RETIRE).** The Judge, its stop requests and its `agent.purpose` candidates were
+> removed. Agent runs are evaluated like any task by the deterministic `RulesEvaluator` (no model, no suggestions);
+> an owner changes an agent only through `agent.define.update`. The section below is the historical design.
+
 - **Trace source:** agent runs are tasks, so the existing JDG-B1 trace (volatile runtime events plus decisions, tiers, units and cost) applies unchanged, with `agent_id`/`run_id` added to trace events. Phase 6 external runs are traced from gateway events (`gateway_trace_only`).
 - **The Judge may:** evaluate (`post_hoc`, `live_window`); request a stop through the breaker (existing JDG-B2 gating); propose improvement candidates.
 - **The Judge may not:** create agents, grant authority, modify envelopes, approve itself, override confirmations, change budgets or choose policy (AF-C5 + existing contract "The Judge is never an authority").

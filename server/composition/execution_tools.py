@@ -10,10 +10,12 @@ call, so a request can never widen what it was configured with.
 
 from __future__ import annotations
 
+import logging
+
 from server.composition.secret_context import key_provider_for
 from server.config.schema import AppConfig
 from server.execution.android import DeviceTransport
-from server.execution.automation import InputField, N8nWorkflowExecutor, PinnedWorkflow
+from server.execution.automation import InputField, InvocationLedger, N8nWorkflowExecutor, PinnedWorkflow
 from server.tools.device_vision import ScreenshotVision
 from server.execution.break_glass import BreakGlassLookup
 from server.execution.process import ConstrainedProcessExecutor
@@ -32,6 +34,8 @@ from server.secrets.requester import SecretRequester
 from server.tools.registry import ToolDefinition
 from shared.schemas.execution import EgressPolicy
 
+logger = logging.getLogger("hypermind.composition.execution_tools")
+
 
 def build_execution_tools(
     config: AppConfig,
@@ -39,6 +43,7 @@ def build_execution_tools(
     break_glass: BreakGlassLookup | None = None,
     device_transport: DeviceTransport | None = None,
     screenshot_vision: ScreenshotVision | None = None,
+    automation_ledger: InvocationLedger | None = None,
 ) -> list[ToolDefinition]:
     """`file.read`/`file.write` are always real and immediately usable
     (sandboxed, quota-capped) once a principal is granted the capability —
@@ -107,20 +112,29 @@ def build_execution_tools(
             device_transport, operation_ttl_seconds=config.android.operation_ttl_seconds, vision=screenshot_vision
         ),
     ]
-    automation = build_automation_executor(config)
+    automation = build_automation_executor(config, ledger=automation_ledger)
     if automation is not None:
         tools.append(automation_workflow_tool(automation))
     return tools
 
 
-def build_automation_executor(config: AppConfig) -> N8nWorkflowExecutor | None:
+def build_automation_executor(config: AppConfig, *, ledger: InvocationLedger | None = None,
+                              ) -> N8nWorkflowExecutor | None:
     """docs/32 ([PROPOSAL] OD-AUTO-1): nothing at all unless
     `automation.n8n.enabled`. The webhook token is a server-owned operator
     credential, resolved by reference at call time here in the composition
-    root — the execution layer receives only an opaque callable."""
+    root — the execution layer receives only an opaque callable.
+
+    The idempotency record must be durable (`StorageInvocationLedger`). With
+    none supplied the tool is **not registered**: a webhook POST without a
+    durable duplicate record could be re-sent after a restart."""
 
     n8n = config.automation.n8n
     if not n8n.enabled:
+        return None
+    if ledger is None:
+        logger.error("automation.n8n is enabled but no durable idempotency ledger was wired; "
+                     "the automation tool is not registered")
         return None
     token = key_provider_for(n8n.secret_ref, SecretRequester.server())
     if token is None:  # config validation already refuses this; fail closed anyway
@@ -137,6 +151,7 @@ def build_automation_executor(config: AppConfig) -> N8nWorkflowExecutor | None:
             for w in n8n.workflows
         ],
         token=token,
+        ledger=ledger,
         auth_header=n8n.auth_header,
         max_request_bytes=n8n.max_request_bytes,
         max_response_bytes=n8n.max_response_bytes,

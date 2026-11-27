@@ -13,16 +13,22 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
 import pytest
+import pytest_asyncio
 
+from server.composition.automation_ledger import StorageInvocationLedger
 from server.execution.automation import InputField, N8nWorkflowExecutor, PinnedWorkflow
 from server.security.events import AuditAction
+from server.storage import SQLAlchemyStorageBackend
 from server.storage.models import AuditEvent, CapabilityGrant, ConfirmationToken, UsageEvent
 from server.tools.platforms import automation_workflow_tool
 from shared.schemas.enums import UsageKind
+from tests.dbsupport import database_url_for
 from tests.runtime.conftest import ask, call, final, pending_of
 
 LIVE_TOKEN_FILE = os.environ.get("JARVIS_N8N_LIVE_TOKEN_FILE")
@@ -54,8 +60,12 @@ class FakeN8n:
         return httpx.Response(404, json={"code": 404})
 
 
-@pytest.fixture
-def n8n():
+@pytest_asyncio.fixture
+async def n8n(tmp_path):
+    # The production ledger: durable, table-backed (its own throwaway store).
+    store = SQLAlchemyStorageBackend(database_url_for(tmp_path / f"ledger-{uuid.uuid4().hex}.db"))
+    await store.init_models()
+    ledger = StorageInvocationLedger(store, stale_after=timedelta(minutes=2))
     if LIVE_TOKEN_FILE:
         token = Path(LIVE_TOKEN_FILE).read_text().strip()
         fake = None
@@ -69,8 +79,9 @@ def n8n():
         return token
 
     executor = N8nWorkflowExecutor(base_url="http://127.0.0.1:5678", workflows=[ECHO, FAIL], token=source,
-                                   transport=transport)
-    return executor, fake
+                                   transport=transport, ledger=ledger)
+    yield executor, fake
+    await store.dispose()
 
 
 def completed(resp: httpx.Response) -> dict:

@@ -94,17 +94,11 @@ vault:
 intelligence:
   enabled: false
 
-# D7 — the Judge on rules: no model, no cost, no authority. Improvements stay
-# unapproved (OD-JDG-5).
+# D7 — deterministic evaluation only: no model, no cost, no authority. (The LLM
+# Judge and its improvement path were retired, D-JDG-RETIRE.)
 evaluation:
   enabled: true
   evaluator: rules
-  provider: null
-  live:
-    enabled: false
-  may_request_stop: false
-  budget: 0.0
-  budget_scope: own_and_global
 
 scheduler:
   enabled: true

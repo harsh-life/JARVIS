@@ -211,10 +211,6 @@ class AuditAction(str, Enum):
     AGENT_TOKEN_ISSUED = "agent.token.issued"
     AGENT_TOKEN_REVOKED = "agent.token.revoked"
     AGENT_GATEWAY_DENIED = "agent.gateway.denied"
-    # docs/29 §18: the owner's decision on a Judge's `agent.purpose`
-    # suggestion — `candidate:<id>` and the preview id, never its text.
-    AGENT_CANDIDATE_COMPILED = "agent.candidate.compiled"
-    AGENT_CANDIDATE_DISMISSED = "agent.candidate.dismissed"
 
     # ── voice (docs/27). `resource` names a voice event id or a refusal
     # reason — never a transcript, never audio, never synthesized text.
@@ -222,22 +218,17 @@ class AuditAction(str, Enum):
     VOICE_SYNTHESIZED = "voice.synthesized"
     VOICE_REFUSED = "voice.refused"
 
-    # ── the Judge (docs/19). `resource` names the task, the evaluation, the
-    # outcome and identifiers only — never trace content, scores' reasons in
-    # prose, or a candidate's text.
+    # ── the rules evaluator. `resource` names the task, the evaluation, the
+    # outcome and identifiers only — never trace content.
     EVALUATION_RECORDED = "evaluation.recorded"
     EVALUATION_UNAVAILABLE = "evaluation.unavailable"
-    EVALUATION_REJECTED = "evaluation.rejected"          # malformed output
-    EVALUATION_SKIPPED = "evaluation.skipped"            # over budget
     EVALUATION_TRACE_REDACTED = "evaluation.trace.redacted"
-    EVALUATION_STOP_REQUESTED = "evaluation.stop_requested"
-    EVALUATION_STOP_ALERT = "evaluation.stop_alert"
-    IMPROVEMENT_CANDIDATE_QUEUED = "improvement.candidate.queued"
-    IMPROVEMENT_CANDIDATE_REFUSED = "improvement.candidate.refused"   # at creation (19 §9)
-    IMPROVEMENT_CANDIDATE_APPROVED = "improvement.candidate.approved"
-    IMPROVEMENT_CANDIDATE_REJECTED = "improvement.candidate.rejected"
-    CONFIG_VERSION_APPLIED = "config.version.applied"
-    CONFIG_VERSION_ROLLED_BACK = "config.version.rolled_back"
+    # Retired with the LLM Judge (D-JDG-RETIRE) and never written any more;
+    # historical rows may still carry them: evaluation.rejected,
+    # evaluation.skipped, evaluation.stop_requested, evaluation.stop_alert,
+    # improvement.candidate.{queued,refused,approved,rejected},
+    # config.version.{applied,rolled_back}, control.evaluation,
+    # agent.candidate.{compiled,dismissed}.
     # Pilot plan C7: a user chose (or cleared) their own primary model.
     MODEL_CONFIG_CHANGED = "config.model.changed"
     # docs/30: a user created, versioned or deleted one of their own
@@ -245,8 +236,6 @@ class AuditAction(str, Enum):
     INTELLIGENCE_PROFILE_CREATED = "config.intelligence_profile.created"
     INTELLIGENCE_PROFILE_VERSIONED = "config.intelligence_profile.versioned"
     INTELLIGENCE_PROFILE_DELETED = "config.intelligence_profile.deleted"
-    # A superuser request on the Judge's control path (switches, review queue).
-    CONTROL_EVALUATION = "control.evaluation"
 
     # ── operator console (docs/28, DASH-006): viewing unredacted user content
     # is a separate, privileged, audited action.

@@ -74,9 +74,10 @@ class UsageLimits:
     global_calls_per_minute: int
     per_user_daily_cost_limit: float
     global_daily_cost_limit: float
-    # 19 §8 / OD-JDG-2: Judge spend never counts toward a user's own budget or
-    # any rate; whether it counts toward the global budget is this switch
-    # (`evaluation.budget_scope`), defaulting to the more restrictive reading.
+    # Historical LLM Judge spend (rows whose tool id has EVALUATOR_USAGE_PREFIX;
+    # the Judge is retired and writes none) never counts toward a user's own
+    # budget or any rate. It still counts toward the global budget — the more
+    # restrictive reading it was written under. No configuration changes this.
     evaluation_counts_toward_global_budget: bool = True
 
 
@@ -91,7 +92,6 @@ def usage_limits_from_config(config: AppConfig) -> UsageLimits:
         global_calls_per_minute=rates.global_requests_per_minute,
         per_user_daily_cost_limit=budgets.per_user_daily_cost_limit,
         global_daily_cost_limit=budgets.global_daily_cost_limit,
-        evaluation_counts_toward_global_budget=config.evaluation.budget_scope == "own_and_global",
     )
 
 

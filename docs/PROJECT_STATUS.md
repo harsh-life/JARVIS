@@ -29,7 +29,7 @@ HUMAN CONFIRMS WHERE REQUIRED
 
 Model output is never the security boundary.
 
-## Current state: Phase H (final hardening and release validation) and Stage 5 (Judge + operator console)
+## Current state: Phase H (final hardening and release validation) and Stage 5 (operator console; the Judge was later retired)
 
 Everything below is merged: five foundation branches, the runtime foundation
 (U0–U6), the memory build, the Android client (docs/23, Phases B–G), the
@@ -298,27 +298,23 @@ detachable.*
   stored.
 - **Detachable**: every setting `null` → Track B unchanged (VOI-T1).
 
-**Judge build** — evaluation and human-approved improvement (`docs/19_JUDGE_EVALUATION.md`,
-operator guide `docs/RUNNING_EVALUATION.md`). *The Judge observes and scores. It
-never authorizes, never executes, and never kills on its own authority.*
+**Evaluation** — deterministic and informational only (`RulesEvaluator`, operator
+guide `docs/RUNNING_EVALUATION.md`). **Implemented and tested; off by default.**
 
-- **Optional, off by default** (`evaluation.enabled`): Track B is unchanged
-  without it. The runtime never imports it — it notifies an observer port, never
-  waits, and never reads anything back.
-- **One task, one user, redacted**: the trace is the worker's own proposals, the
-  observations it was fed, and the task's audited events (with each
-  authorization's tier) — secret patterns redacted and audited before any call.
-- **Strict output**: a typed `Evaluation` with no field that could carry
-  authority; malformed output (including "approve"/"resume"/"authorize") is
-  rejected and recorded, never coerced. Scores are records, never controls.
-- **Stop only through the breaker**: a live `stop_requested` becomes a breaker
-  `trip()` only with `may_request_stop` (off by default); the breaker enforces.
-- **Metered on its own budget**: never charged to the task or to the user's own
-  budget or rates (OD-JDG-2 open on the global budget).
-- **Improvement under human oversight**: candidates only for a closed set of
-  targets (worker guidance, tool descriptions, recovery bounds, rubric,
-  suggestion template); security policy is refused at creation; nothing applies
-  until a superuser approves; every change is a versioned, rollback-able row.
+- **Optional** (`evaluation.enabled`): Track B is unchanged without it. The
+  runtime never imports it — it notifies an observer port after a task ends,
+  never waits, and never reads anything back.
+- **One task, one user, redacted, bounded**; findings are step refs, failure
+  categories, an efficiency ratio and an informational anomaly flag. No model
+  call, no credential, no cost, no effect on any task, prompt or setting
+  (import contract *The rules evaluator makes no model call*).
+- **The LLM Judge was retired (2026-11-27, D-JDG-RETIRE)** — removed, not
+  disabled: its LLM evaluator, stop requests, switches, budget, improvement
+  candidates and versioned global prompt/tool-description/recovery tuning are
+  gone, and every retired config key is refused at startup. Reason: BR-T2
+  §3e row 38 (one user's content reached every user's worker prompt through
+  an approved candidate). The original design is kept, marked superseded, in
+  `docs/19_JUDGE_EVALUATION.md`; its tables are inert history.
 
 **Operator console** — `GET /api/v1/admin/*` (`docs/28_DASHBOARD_OPERATOR_CONSOLE.md`,
 operator guide `docs/RUNNING_CONSOLE.md`). *The dashboard shows. Controls live
@@ -327,11 +323,13 @@ breaker, break-glass, evaluations, usage, memory & vault, devices, audit,
 configuration) with a persistent banner while break-glass is enabled or a global
 stop is latched. Secret-free (handles plus whether they resolve) and
 PII-redacted server-side; unredacted content is a separate, audited request.
-Actions stay in `/api/v1/admin/control/*`, owned by the supervisor, break-glass
-and the Judge's control layer. No browser UI ships (OD-DASH-2).
+Actions stay in `/api/v1/admin/control/*`, owned by the supervisor and
+break-glass (the Judge's control routes were removed with it). No browser UI
+ships (OD-DASH-2).
 
-The owner decisions these builds leave open — OD-JDG-1..4, OD-DASH-1/2 — are
-listed in `docs/DECISION_REGISTER.md` §2G/§3; none is ratified by being built.
+The owner decisions this build leaves open — OD-DASH-1/2 — are listed in
+`docs/DECISION_REGISTER.md` §2G/§3; none is ratified by being built.
+(OD-JDG-1..5 were closed by the Judge's retirement, §2P.)
 
 **Agent Factory, Phases 1 to 4** (`docs/29`, `[PROPOSAL — NOT CANONICAL UNTIL
 RATIFIED]`; off by default, `agents.enabled: false`). An ordinary user task can
@@ -374,10 +372,9 @@ tests) put every run behind the in-process **Agent Gateway** and add the
   tool the envelope names), re-checks the owner's model policy at every call,
   and enforces the agent's monthly budget live across concurrent runs; keys
   stay server-side;
-- the **Judge** sees which agent a run was and may suggest a clearer wording
-  of that agent's purpose — shown to its owner only, applied only by the
-  owner's confirmed update, never by a superuser — and nothing else about an
-  agent;
+- *(retired 2026-11-27)* the Judge's `agent.purpose` suggestions and their
+  routes were removed with the Judge (D-JDG-RETIRE); an agent run is now
+  evaluated like any task by the deterministic `RulesEvaluator`;
 - the operator console lists agents and runs (redacted), and the operator can
   pause one agent through the existing stop; its owner cannot resume past it;
 - an agent with a reminder trigger gets an ordinary private scheduler job
@@ -451,8 +448,9 @@ DSH-T1..T5 pass and are mutation-tested. What blocks real data:
 - The Android release-blocking set has not run on a phone. No device was
   available.
 - At-rest BR-T2 rows wait for owner decisions: memory 27–28 and push token 36.
-- A new authorized-path row: approved Judge guidance can carry one user's
-  content to every user (row 38).
+- ~~A new authorized-path row: approved Judge guidance can carry one user's
+  content to every user (row 38).~~ Resolved by retiring the Judge and every
+  global tuning path (D-JDG-RETIRE); re-measured contained (BR-T2 §3e 38R).
 - The real-integration smoke was not run: it needs an OIDC client, a stable
   hostname and a phone. The single-host deployment it would run on (systemd,
   PostgreSQL, Caddy or a Cloudflare named tunnel, invite-only sign-in,
@@ -466,6 +464,23 @@ it. SQLite stays for development and does not meet #32.
 
 `docs/RELEASE_VALIDATION.md` §P has the exact blockers. Until they are cleared:
 **disposable or test data only.**
+
+### Security hardening pass (2026-11-27, `docs/DECISION_REGISTER.md` §2P)
+
+| Item | Status |
+|---|---|
+| LLM Judge, improvement candidates, global prompt/tool/recovery tuning | **Removed** (code deleted; config keys refused); history inert (`docs/RUNNING_EVALUATION.md` §5) |
+| `RulesEvaluator` (deterministic, informational) | Implemented and tested; **off by default** |
+| Process launcher (no `preexec_fn`), mandatory rlimits fail closed | Implemented and tested (Linux, Landlock ABI 8 in a container; macOS break-glass path) |
+| Process-tree cleanup after parent exit / timeout / cancel / error | Implemented and tested; **verified on Linux only**; a `setsid()` escape is a known limit |
+| Aggregate (process-tree) CPU/memory/pids limits — cgroup v2 | **Not implemented**; results say `aggregate_limits: not_enforced` |
+| Egress: atomic connection admission and byte budget | Implemented and stress-tested |
+| Egress: TLS SNI / HTTP origin enforcement | **Not implemented** — known residual (`docs/ADR_EGRESS_TLS_ORIGIN.md`) |
+| n8n: streamed response bounds, durable idempotency ledger | Implemented and tested (unit + composition-root e2e); **n8n off by default; TEST-ONLY workflows; no external writes** |
+| Remote deployment requires explicit admission policy | Implemented and tested |
+| Memory encryption at rest | **Not implemented** — design only (`docs/DATA_AT_REST.md` §3); sensitive memory prohibited |
+| KEK rotation | **Not implemented** |
+| Multi-user isolation under application RCE | **Not implemented** — proposed phased ADR (`docs/ADR_MULTI_USER_ISOLATION.md`); known residual (OD-A1 (a)) |
 
 ## Repository layout
 
