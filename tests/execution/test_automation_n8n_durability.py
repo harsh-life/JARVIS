@@ -235,19 +235,27 @@ async def test_two_instances_sharing_the_store_send_once(store):
     at the same time: one sends, the other is refused — never both."""
 
     calls = 0
+    sent = asyncio.Event()
     release = asyncio.Event()
 
     class Slow(httpx.AsyncBaseTransport):
         async def handle_async_request(self, r):
             nonlocal calls
             calls += 1
+            sent.set()
             await release.wait()
             return httpx.Response(200, json={"ok": True})
 
     a, b = make(store, Slow()), make(store, Slow())
     first = asyncio.ensure_future(a.run(request(ARGS)))
     second = asyncio.ensure_future(b.run(request(ARGS)))
-    await asyncio.sleep(0.3)
+    # Ordered by events, not by a sleep: one instance's POST is in flight, and
+    # the other has reached its decision while it is, before the POST answers.
+    # (A fixed sleep let the second instance arrive after the first completed
+    # under load, where it correctly replays the result instead of refusing.)
+    await asyncio.wait_for(sent.wait(), timeout=30)
+    done, _ = await asyncio.wait({first, second}, timeout=30, return_when=asyncio.FIRST_COMPLETED)
+    assert len(done) == 1, "the instance that did not send should have decided while the other's call was open"
     release.set()
     results = await asyncio.gather(first, second, return_exceptions=True)
     assert calls == 1
