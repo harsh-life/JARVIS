@@ -465,6 +465,23 @@ it. SQLite stays for development and does not meet #32.
 `docs/RELEASE_VALIDATION.md` §P has the exact blockers. Until they are cleared:
 **disposable or test data only.**
 
+### Security hardening pass (2026-11-27, `docs/DECISION_REGISTER.md` §2P)
+
+| Item | Status |
+|---|---|
+| LLM Judge, improvement candidates, global prompt/tool/recovery tuning | **Removed** (code deleted; config keys refused); history inert (`docs/RUNNING_EVALUATION.md` §5) |
+| `RulesEvaluator` (deterministic, informational) | Implemented and tested; **off by default** |
+| Process launcher (no `preexec_fn`), mandatory rlimits fail closed | Implemented and tested (Linux, Landlock ABI 8 in a container; macOS break-glass path) |
+| Process-tree cleanup after parent exit / timeout / cancel / error | Implemented and tested; **verified on Linux only**; a `setsid()` escape is a known limit |
+| Aggregate (process-tree) CPU/memory/pids limits — cgroup v2 | **Not implemented**; results say `aggregate_limits: not_enforced` |
+| Egress: atomic connection admission and byte budget | Implemented and stress-tested |
+| Egress: TLS SNI / HTTP origin enforcement | **Not implemented** — known residual (`docs/ADR_EGRESS_TLS_ORIGIN.md`) |
+| n8n: streamed response bounds, durable idempotency ledger | Implemented and tested (unit + composition-root e2e); **n8n off by default; TEST-ONLY workflows; no external writes** |
+| Remote deployment requires explicit admission policy | Implemented and tested |
+| Memory encryption at rest | **Not implemented** — design only (`docs/DATA_AT_REST.md` §3); sensitive memory prohibited |
+| KEK rotation | **Not implemented** |
+| Multi-user isolation under application RCE | **Not implemented** — proposed phased ADR (`docs/ADR_MULTI_USER_ISOLATION.md`); known residual (OD-A1 (a)) |
+
 ## Repository layout
 
 ```

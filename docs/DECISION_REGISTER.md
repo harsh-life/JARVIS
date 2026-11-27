@@ -1014,6 +1014,21 @@ procedure: `docs/RUNNING_EVALUATION.md` §5.
 and `tests/evaluation/test_br_t2_judge_rows.py` (the historical row-38 result
 preserved in its docstring; rows re-measured contained after retirement).
 
+### Hardening decisions in the same pass (implementation facts, 2026-11-27)
+
+| ID | Decision | Where |
+|---|---|---|
+| HARD-EXEC-1 | Child processes are spawned as `server/execution/launcher.py` (a fresh single-threaded interpreter, validated JSON spec, no `preexec_fn`); it applies rlimits, `no_new_privs`, Landlock and seccomp, then `execve`s, and fails closed. Mandatory limits: CPU, NOFILE, FSIZE, AS (Linux). NPROC optional (per-UID). | `server/execution/process.py`, `launcher.py` |
+| HARD-EXEC-2 | Process-tree cleanup runs on every ending; on Linux the leader stays unreaped until the session is ended (no PID/PGID reuse), members signalled by pidfd, cleanup reported `verified`/`survivors`/`unverified`. | `server/execution/process.py` (`ProcessTree`) |
+| HARD-EXEC-3 | **No aggregate process-tree budget is claimed.** cgroup v2 per-execution limits are **not implemented** (need a delegated cgroup; not validated here). Results carry `aggregate_limits: not_enforced`. A `setsid()` escape from the session is a known limit. | `docs/RUNNING_EXECUTION.md` §5 |
+| HARD-EXEC-4 | Output: one combined budget, ¾ stdout / ¼ stderr, drained past the cap; explicit truncation metadata. | `server/execution/process.py` |
+| HARD-NET-1 | Egress admission and the per-run byte budget are reserved synchronously before any await; attempts count at admission, slots until the handler ends, bytes when admitted for forwarding (never refunded); spending the budget closes every tunnel. | `server/net/egress_proxy.py` |
+| HARD-NET-2 | The proxy is documented as an address-level control: no TLS SNI / HTTP authority verification; shared-IP reach is a known residual. Alternatives (bounded SNI check, TLS-terminating proxy, …) are **proposals** needing an owner decision (OD-AF-13 unchanged). | `docs/ADR_EGRESS_TLS_ORIGIN.md` |
+| HARD-AUTO-1 | n8n responses are bounded while streaming; idempotency is a durable table (`automation_invocations`) written before sending; uncertain outcomes are refused, never retried; no exactly-once claim. n8n stays off by default, loopback-only, TEST-ONLY workflows; OD-AUTO-1…4 remain **open** (not ratified by this change). | `server/execution/automation.py`, `server/composition/automation_ledger.py`, `docs/32_AUTOMATION_N8N.md` |
+| HARD-AUTH-1 | A remotely exposed server (non-loopback `server.host`, or routable `server.base_url`) refuses to start without an explicit admission policy (allow-list, or `security.oidc.allow_open_registration: true`, logged). Local development unchanged. | `server/config/preconditions.py` |
+| HARD-DATA-1 | Data-at-rest inventory; only SecretStore values are encrypted. Memory encryption is a **design, not implemented**; OD-MB-4 stays open and blocks real data. KEK rotation not implemented. | `docs/DATA_AT_REST.md` |
+| HARD-ISO-1 | Application-level RCE blast radius: phased isolation ADR, **proposed only**. OD-A1 (a) remains the accepted residual for the pilot; multi-user real data stays blocked. | `docs/ADR_MULTI_USER_ISOLATION.md` |
+
 ## 3. Genuinely unresolved owner decisions
 
 | ID | Question | Why it is the owner's |
