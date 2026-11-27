@@ -17,15 +17,30 @@ that isolation boundary's implementation:
   scratch (`_BASE_ENV` plus the tool's own declared overrides), never
   `os.environ.copy()`, so no ambient credential, API key, or `PYTHONPATH`
   reaches a spawned process by accident;
+* **no Python between fork and exec** — the child is spawned as the
+  launcher (`launcher.py`, a fresh single-threaded interpreter) with no
+  `preexec_fn`; the launcher applies the limits and the kernel confinement and
+  then `execve`s the target, failing closed if a mandatory restriction cannot
+  be applied (a `preexec_fn` in this multi-threaded server could deadlock the
+  child before exec);
 * **bounded in every dimension that matters**: wall-clock timeout, `rlimit`
-  CPU/memory/file-descriptor/process-count ceilings (POSIX), and a hard cap
-  on captured stdout/stderr enforced by *not reading past it* — a runaway
-  process cannot be turned into a memory-exhaustion primitive by producing
-  unbounded output;
-* **whole-process-tree cleanup** — the child starts its own session
-  (`start_new_session=True`); a timeout or cancellation signals the whole
-  process group, not just the direct child, so a forked grandchild cannot
-  outlive the call that spawned it;
+  CPU/address-space/file-descriptor/file-size ceilings (**mandatory**: the
+  target never runs without them) plus `RLIMIT_NPROC` (optional — it is a
+  per-UID count, see below), and a **combined** cap on retained
+  stdout+stderr enforced by *not keeping past it* while still draining;
+* **rlimits are per process, not per tree**: each descendant gets its own
+  CPU/memory/file allowance, and `RLIMIT_NPROC` counts every process of the
+  server's UID, not this tree. There is **no aggregate process-tree budget**
+  here; the result says so (`aggregate_limits: not_enforced`). The bound on a
+  tree is the wall clock plus the tree kill below;
+* **whole-process-tree cleanup** — the child starts its own session. After a
+  normal exit, a timeout, a cancellation or any error, every live process of
+  the session is terminated (`SIGTERM`, then `SIGKILL`), not just the direct
+  child — a descendant does not survive because its parent exited first. On
+  Linux the leader stays unreaped until then, so the group/session ID cannot
+  be reused by an unrelated process, and the tree is verified empty
+  (`ProcessTree`). A descendant that calls `setsid()` escapes; only a cgroup
+  would contain it;
 * **kernel confinement, with no switch** — every child is confined by Landlock
   and seccomp (`confinement.py`), or does not run. The one exception is a
   break-glass record (20 §2): superuser-activated for one task, its owner and
@@ -36,17 +51,21 @@ that isolation boundary's implementation:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import dataclasses
+import errno
 import hashlib
 import json
 import logging
 import os
-import resource
 import shutil
 import signal
 import subprocess
+import sys
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Mapping, Sequence
 
 from server.execution import confinement
@@ -101,6 +120,29 @@ _RLIMIT_NPROC = 2048
 # not storage (13 §2's "unlimited ... storage").
 _RLIMIT_FSIZE_BYTES = 64 * 1024 * 1024
 
+# Which limits must hold or the target does not run (the launcher fails
+# closed). RLIMIT_NPROC is optional: it is a per-real-UID count, so it is a
+# fork-bomb backstop for the whole account, never a per-execution guarantee,
+# and some hosts refuse it. RLIMIT_AS is mandatory where the kernel enforces
+# it (Linux); macOS accepts the call without enforcing an address-space limit.
+MANDATORY_RLIMITS: tuple[str, ...] = ("cpu", "nofile", "fsize") + (
+    ("as",) if sys.platform.startswith("linux") else ())
+
+# The launcher: a fixed file in this package, run by this server's own
+# interpreter — never configurable, never supplied by a caller.
+LAUNCHER_PATH = Path(__file__).with_name("launcher.py")
+
+_READ_CHUNK = 65536
+_LAUNCH_GRACE_SECONDS = 5.0     # interpreter start-up, on top of the run's own wall clock
+_DRAIN_GRACE_SECONDS = 0.5      # after the leader exits, for its output to finish
+_STREAM_CLOSE_SECONDS = 2.0     # after the tree is ended, for the pipes to report EOF
+_TERM_GRACE_SECONDS = 1.0       # SIGTERM → SIGKILL
+_KILL_WAIT_SECONDS = 2.0        # after SIGKILL, before reporting survivors
+
+_HAS_PROC = sys.platform.startswith("linux") and os.path.isdir("/proc/self")
+# Observe the leader's exit without reaping it (Linux): see ProcessTree.
+_CAN_WAIT_WITHOUT_REAPING = _HAS_PROC and hasattr(os, "waitid") and hasattr(os, "WNOWAIT")
+
 
 def argv_digest(argv: Sequence[str]) -> str:
     """What the audit trail records about a break-glass command line: a
@@ -114,8 +156,15 @@ class ProcessOutcome:
     exit_code: int
     stdout: str
     stderr: str
-    truncated: bool
+    truncated: bool               # stdout_truncated or stderr_truncated
     timed_out: bool
+    stdout_truncated: bool = False
+    stderr_truncated: bool = False
+    # Per limit: `enforced` / `unavailable`, as the launcher applied it.
+    limits: Mapping[str, str] = field(default_factory=dict)
+    # `verified` / `survivors` / `unverified` (ProcessTree.finish).
+    cleanup: str = "unverified"
+    kernel_confinement: bool = False
 
 
 def _resolve_bare_names(entries: Sequence[str]) -> dict[str, str]:
@@ -291,41 +340,6 @@ class ConstrainedProcessExecutor:
             env[key] = value
         return env
 
-    @classmethod
-    def _child_setup(cls, cpu_seconds: int, plan: "confinement.ConfinementPlan | None") -> None:
-        # Runs in the child after fork, before exec. Confinement goes last so the
-        # rlimit calls are not themselves subject to it; a failure applying it
-        # raises, which aborts the exec — a child meant to be confined never
-        # starts unconfined. `plan` is None only under a claimed break-glass record.
-        cls._set_child_rlimits(cpu_seconds)
-        if plan is not None:
-            plan.apply_in_child()
-
-    @staticmethod
-    def _set_child_rlimits(cpu_seconds: int) -> None:
-        # Runs in the child, after fork and before exec (POSIX preexec_fn).
-        # Best-effort: a platform without one of these limits (e.g. a
-        # sandboxed CI container that refuses RLIMIT_NPROC) degrades to
-        # "fewer limits enforced", never to "the call fails" — the wall-clock
-        # timeout and the allow-list are the guarantees that do not depend on
-        # host rlimit support.
-        for limit, value in (
-            (resource.RLIMIT_CPU, cpu_seconds),
-            (resource.RLIMIT_AS, _RLIMIT_AS_BYTES),
-            (resource.RLIMIT_NOFILE, _RLIMIT_NOFILE),
-            (resource.RLIMIT_FSIZE, _RLIMIT_FSIZE_BYTES),
-            (getattr(resource, "RLIMIT_NPROC", None), _RLIMIT_NPROC),
-        ):
-            if limit is None:
-                continue
-            try:
-                resource.setrlimit(limit, (value, value))
-            except (ValueError, OSError):
-                pass
-        # No os.setsid() here: start_new_session=True (passed to
-        # create_subprocess_exec) already does it before preexec_fn runs;
-        # calling it again would raise (already a process group leader).
-
     async def run(
         self,
         argv: Sequence[str],
@@ -353,8 +367,9 @@ class ConstrainedProcessExecutor:
         if broken is not None:
             # 20 §2.1: a live record removes the kernel layer from this one
             # child — and nothing else. The environment was built from scratch
-            # and checked above; rlimits, the timeout, the output caps and the
-            # process-group kill below apply exactly as they do when confined.
+            # and checked above; the launcher, its mandatory rlimits, the
+            # timeout, the output caps and the tree kill apply exactly as they
+            # do when confined.
             claim, cleaned_argv[0] = broken
         else:
             claim = None
@@ -375,6 +390,7 @@ class ConstrainedProcessExecutor:
             outcome = await self._spawn_under_break_glass(
                 claim, argv, cleaned_argv, cwd, child_env, effective_timeout
             )
+        stdout_cap, stderr_cap = self.output_limits()
         return ExecutionResult(
             content=outcome.stdout,
             units=1,
@@ -382,7 +398,17 @@ class ConstrainedProcessExecutor:
                 "exit_code": outcome.exit_code,
                 "stderr": outcome.stderr,
                 "truncated": outcome.truncated,
+                "stdout_truncated": outcome.stdout_truncated,
+                "stderr_truncated": outcome.stderr_truncated,
                 "timed_out": outcome.timed_out,
+                "output_limit_bytes": self._max_output_bytes,
+                "stdout_limit_bytes": stdout_cap,
+                "stderr_limit_bytes": stderr_cap,
+                "limits": dict(outcome.limits),
+                # rlimits are per process; nothing here bounds a whole tree.
+                "aggregate_limits": "not_enforced",
+                "cleanup": outcome.cleanup,
+                "kernel_confinement": outcome.kernel_confinement,
             },
         )
 
@@ -414,117 +440,406 @@ class ConstrainedProcessExecutor:
             except Exception:  # pragma: no cover - the store's contract is not to raise
                 logger.exception("break-glass invocation could not be recorded")
 
+    # ── spawning: no Python between fork and exec ──────────────────────────
+
+    def output_limits(self) -> tuple[int, int]:
+        """The combined output budget, split deterministically: stderr may
+        keep at most a quarter, stdout the rest. Retained output never exceeds
+        `max_output_bytes` in total, however the two streams interleave."""
+
+        stderr_cap = self._max_output_bytes // 4
+        return self._max_output_bytes - stderr_cap, stderr_cap
+
+    def _start(self, cleaned_argv: list[str], cwd: str, env: Mapping[str, str], timeout: float,
+               plan: "confinement.ConfinementPlan | None") -> tuple[subprocess.Popen, int]:
+        """Runs in a worker thread. `subprocess` forks and execs the launcher
+        in C: no `preexec_fn`, so no Python ever runs in the forked child of
+        this multi-threaded server. Returns the process and the read end of
+        the launcher's status pipe."""
+
+        rlimits = {
+            "cpu": int(timeout) + 5,
+            "as": _RLIMIT_AS_BYTES,
+            "nofile": _RLIMIT_NOFILE,
+            "fsize": _RLIMIT_FSIZE_BYTES,
+            "nproc": _RLIMIT_NPROC,
+        }
+        spec = {
+            "target": cleaned_argv[0], "argv": cleaned_argv, "env": dict(env),
+            "rlimits": rlimits, "mandatory": list(MANDATORY_RLIMITS),
+            "ruleset_fd": plan.ruleset_fd if plan is not None else None,
+            "seccomp_filter": plan.seccomp_filter() if plan is not None else None,
+        }
+        payload = json.dumps(spec, separators=(",", ":")).encode()
+        spec_r, spec_w = os.pipe()
+        status_r, status_w = os.pipe()
+        pass_fds = (spec_r, status_w, *((plan.ruleset_fd,) if plan is not None else ()))
+        try:
+            process = subprocess.Popen(
+                [sys.executable, "-I", "-S", "-B", str(LAUNCHER_PATH),
+                 "--spec-fd", str(spec_r), "--status-fd", str(status_w)],
+                cwd=cwd, env={}, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                pass_fds=pass_fds, close_fds=True, start_new_session=True,
+            )
+        except BaseException:
+            for fd in (spec_r, spec_w, status_r, status_w):
+                os.close(fd)
+            raise
+        os.close(spec_r)
+        os.close(status_w)
+        try:
+            view = memoryview(payload)
+            while view:
+                view = view[os.write(spec_w, view):]
+        except OSError:
+            pass  # the launcher died before reading: its status (or silence) says so
+        finally:
+            os.close(spec_w)
+        return process, status_r
+
+    @staticmethod
+    async def _read_status(status_r: int) -> list[dict]:
+        """Read the launcher's status pipe to EOF, without tying up a worker
+        thread. EOF comes when the target is exec'd (the pipe is
+        close-on-exec) or the launcher exits."""
+
+        loop = asyncio.get_running_loop()
+        reader = asyncio.StreamReader()
+        transport, _ = await loop.connect_read_pipe(
+            lambda: asyncio.StreamReaderProtocol(reader), os.fdopen(status_r, "rb", buffering=0))
+        data = b""
+        try:
+            while len(data) <= 65536:
+                chunk = await reader.read(65536)
+                if not chunk:
+                    break
+                data += chunk
+        finally:
+            transport.close()
+        records = []
+        for line in data.splitlines():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(record, dict):
+                records.append(record)
+        return records
+
+    @staticmethod
+    def _check_launch(records: list[dict]) -> dict:
+        """The launcher's `ready` record, or the refusal it reported. A target
+        that was not confirmed as launched under its restrictions never ran."""
+
+        errors = [r for r in records if "error" in r]
+        if errors:
+            error = errors[0]
+            if error.get("error") == "exec_failed":
+                if error.get("errno") in (errno.ENOENT, errno.ENOTDIR):
+                    raise ExecutionError(ExecutionErrorCode.INVALID_ARGUMENTS, "executable not found")
+                raise ExecutionError(ExecutionErrorCode.INTERNAL,
+                                     f"failed to start process (errno {error.get('errno')})")
+            raise ExecutionError(
+                ExecutionErrorCode.SANDBOX_VIOLATION,
+                f"process restrictions could not be applied ({error.get('error')}); nothing was run",
+            )
+        ready = [r for r in records if r.get("ready") is True]
+        if not ready:
+            raise ExecutionError(ExecutionErrorCode.SANDBOX_VIOLATION,
+                                 "the launcher did not confirm the process restrictions; nothing was run")
+        return ready[0]
+
     async def _spawn(
         self, cleaned_argv: list[str], cwd: str, env: Mapping[str, str], timeout: float,
         plan: "confinement.ConfinementPlan | None",
     ) -> ProcessOutcome:
-        cpu_seconds = int(timeout) + 5
+        loop = asyncio.get_running_loop()
         try:
-            process = await asyncio.create_subprocess_exec(
-                *cleaned_argv,
-                cwd=cwd,
-                env=dict(env),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                preexec_fn=lambda: self._child_setup(cpu_seconds, plan),
-                pass_fds=(plan.ruleset_fd,) if plan is not None else (),
-                start_new_session=True,
-            )
+            process, status_r = await asyncio.to_thread(self._start, cleaned_argv, cwd, env, timeout, plan)
         except FileNotFoundError as exc:
-            raise ExecutionError(
-                ExecutionErrorCode.INVALID_ARGUMENTS, f"executable not found: {exc}"
-            ) from exc
-        except subprocess.SubprocessError as exc:
-            # The child could not apply its limits/confinement and never exec'd.
-            raise ExecutionError(
-                ExecutionErrorCode.SANDBOX_VIOLATION, "process confinement could not be applied; nothing was run"
-            ) from exc
+            raise ExecutionError(ExecutionErrorCode.INVALID_ARGUMENTS, f"executable not found: {exc}") from exc
         except OSError as exc:
             raise ExecutionError(ExecutionErrorCode.INTERNAL, f"failed to start process: {exc}") from exc
         finally:
             if plan is not None:
                 plan.close()
 
+        # The wall clock is the child's: it starts when the child exists, not
+        # while the spawn waited for a worker thread.
+        deadline = loop.time() + timeout
+        tree = ProcessTree(process)
         try:
-            return await self._communicate_bounded(process, timeout)
+            try:
+                records = await asyncio.wait_for(self._read_status(status_r), timeout + _LAUNCH_GRACE_SECONDS)
+            except asyncio.TimeoutError:
+                raise ExecutionError(ExecutionErrorCode.SANDBOX_VIOLATION,
+                                     "the launcher did not start in time; nothing was run") from None
+            ready = self._check_launch(records)
+            outcome = await self._communicate_bounded(tree, deadline)
+            cleanup = await tree.finish()
+            return dataclasses.replace(
+                outcome, limits=dict(ready.get("limits") or {}), cleanup=cleanup,
+                kernel_confinement=bool(ready.get("kernel_confinement")),
+            )
         finally:
-            await self._ensure_process_group_dead(process)
+            # Normal completion, timeout, a refused launch, cancellation and any
+            # exception all end here: every live process of the tree is
+            # terminated and the leader reaped — even if this coroutine is
+            # cancelled again while that happens.
+            await tree.finish_shielded()
 
-    async def _communicate_bounded(
-        self, process: asyncio.subprocess.Process, timeout: float
-    ) -> ProcessOutcome:
+    async def _communicate_bounded(self, tree: "ProcessTree", deadline: float) -> ProcessOutcome:
+        loop = asyncio.get_running_loop()
+        stdout_cap, stderr_cap = self.output_limits()
+        out, err = _CappedStream(stdout_cap), _CappedStream(stderr_cap)
+        transports = []
+        tasks: list[asyncio.Future] = []
         try:
-            stdout_task = asyncio.ensure_future(self._read_capped(process.stdout))
-            stderr_task = asyncio.ensure_future(self._read_capped(process.stderr))
-            done, pending = await asyncio.wait(
-                {stdout_task, stderr_task, asyncio.ensure_future(process.wait())},
-                timeout=timeout,
-            )
-            if pending:
-                # Timeout: kill the whole group before touching anything else
-                # (§11 — a timeout is a deterministic failure, not a hang).
-                for task in pending:
-                    task.cancel()
-                await self._ensure_process_group_dead(process)
-                stdout_text, _ = await self._safe_result(stdout_task)
-                stderr_text, _ = await self._safe_result(stderr_task)
-                return ProcessOutcome(
-                    exit_code=-1, stdout=stdout_text, stderr=stderr_text,
-                    truncated=True, timed_out=True,
-                )
-            stdout_text, stdout_truncated = await stdout_task
-            stderr_text, _ = await stderr_task
-            exit_code = await process.wait()
+            for stream, pipe in ((out, tree.process.stdout), (err, tree.process.stderr)):
+                transports.append(await stream.attach(pipe))
+            out_task, err_task = asyncio.ensure_future(out.drain()), asyncio.ensure_future(err.drain())
+            exit_task = asyncio.ensure_future(tree.wait_exit())
+            tasks = [out_task, err_task, exit_task]
+            timed_out = False
+            try:
+                await asyncio.wait_for(asyncio.shield(exit_task), timeout=max(0.0, deadline - loop.time()))
+            except asyncio.TimeoutError:
+                # A timeout is a deterministic failure, not a hang: the whole
+                # tree is ended before anything else is read.
+                timed_out = True
+                await tree.finish()
+            else:
+                # The leader is done, but a descendant may still hold the output
+                # pipes open. Give the streams a short, bounded drain; then end
+                # the tree, which closes them.
+                _, pending = await asyncio.wait(
+                    {out_task, err_task}, timeout=min(_DRAIN_GRACE_SECONDS, max(0.0, deadline - loop.time())))
+                if pending:
+                    await tree.finish()
+            await asyncio.wait({out_task, err_task}, timeout=_STREAM_CLOSE_SECONDS)
+            exit_code = -1 if timed_out else exit_task.result()
             return ProcessOutcome(
-                exit_code=exit_code, stdout=stdout_text, stderr=stderr_text,
-                truncated=stdout_truncated, timed_out=False,
+                exit_code=exit_code, stdout=out.text(), stderr=err.text(),
+                truncated=out.truncated or err.truncated, timed_out=timed_out,
+                stdout_truncated=out.truncated, stderr_truncated=err.truncated,
             )
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            for transport in transports:
+                transport.close()
+
+
+class _CappedStream:
+    """One output pipe, read to EOF with bounded memory: at most `cap` bytes
+    are kept; the rest is read and discarded so the child never blocks on a
+    full pipe. What was kept survives cancellation of the reader."""
+
+    def __init__(self, cap: int) -> None:
+        self.cap = cap
+        self.kept = bytearray()
+        self.truncated = False
+        self._reader: asyncio.StreamReader | None = None
+
+    async def attach(self, pipe) -> asyncio.BaseTransport:
+        loop = asyncio.get_running_loop()
+        self._reader = asyncio.StreamReader(limit=2 * _READ_CHUNK)
+        transport, _ = await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(self._reader), pipe)
+        return transport
+
+    async def drain(self) -> None:
+        assert self._reader is not None
+        while chunk := await self._reader.read(_READ_CHUNK):
+            room = self.cap - len(self.kept)
+            if room > 0:
+                self.kept += chunk[:room]
+            if len(chunk) > max(room, 0):
+                self.truncated = True
+
+    def text(self) -> str:
+        return bytes(self.kept).decode("utf-8", errors="replace")
+
+
+def _session_members(sid: int) -> list[int] | None:
+    """Live (non-zombie) processes in session `sid`, from /proc — or `None`
+    where there is no /proc to ask (the tree cannot be enumerated)."""
+
+    if not _HAS_PROC:
+        return None
+    members = []
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        stat = _proc_stat(int(name))
+        if stat is not None and stat[2] == sid and stat[0] != "Z":
+            members.append(int(name))
+    return members
+
+
+def _proc_stat(pid: int) -> tuple[str, int, int] | None:
+    """(state, pgrp, session) of one process, or `None` if it is gone."""
+
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as handle:
+            fields = handle.read().rsplit(b")", 1)[1].split()
+        return fields[0].decode(), int(fields[2]), int(fields[3])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _signal_member(pid: int, sid: int, sig: int) -> None:
+    """Signal one session member without a PID-reuse race: open a pidfd,
+    re-check that it is still in `sid`, signal through the pidfd."""
+
+    try:
+        pidfd = os.pidfd_open(pid)
+    except (ProcessLookupError, OSError):
+        return
+    try:
+        stat = _proc_stat(pid)
+        if stat is not None and stat[2] == sid:
+            signal.pidfd_send_signal(pidfd, sig)
+    except (ProcessLookupError, OSError):
+        pass
+    finally:
+        os.close(pidfd)
+
+
+class ProcessTree:
+    """One launched child and every process it starts in its session.
+
+    The child is started with `start_new_session=True`, so its PID is also its
+    process-group and session ID. **On Linux the leader is not reaped until
+    the whole tree has been dealt with**: its exit is observed with
+    `waitid(WNOWAIT)`, which leaves it a zombie, and a zombie's PID — and so
+    the group and session IDs — cannot be reused by an unrelated process.
+    Signalling the group can therefore never hit a stranger, even after the
+    direct child has exited. Live members are enumerated from /proc by
+    session (catching a descendant that moved to another group with
+    `setpgid`) and signalled through pidfds, then the leader is reaped.
+
+    Elsewhere (macOS, where only break-glass runs can occur) there is no
+    `waitid`/pidfd/procfs: the leader is reaped when it exits and the group is
+    signalled `SIGTERM` → `SIGKILL` without being able to verify that it is
+    empty; the cleanup status says `unverified`.
+
+    Known limit, everywhere: a descendant that calls `setsid()` leaves the
+    session and the group, and is not reached. Only a per-execution cgroup
+    (not implemented here — docs/RUNNING_EXECUTION.md "Process trees") closes
+    that.
+    """
+
+    def __init__(self, process: subprocess.Popen) -> None:
+        self.process = process
+        self.pid = process.pid
+        self.exit_code: int | None = None
+        self._reaped = False
+        self._finish: asyncio.Task | None = None
+
+    def poll_exit(self) -> int | None:
+        if self.exit_code is not None:
+            return self.exit_code
+        try:
+            if _CAN_WAIT_WITHOUT_REAPING:
+                info = os.waitid(os.P_PID, self.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                if info is None:
+                    return None
+                code = info.si_status if info.si_code == os.CLD_EXITED else -info.si_status
+            else:
+                pid, status = os.waitpid(self.pid, os.WNOHANG)
+                if pid == 0:
+                    return None
+                code = os.waitstatus_to_exitcode(status)
+                self._reaped = True
+        except ChildProcessError:  # reaped by someone else: it has exited
+            code, self._reaped = -1, True
+        self.exit_code = code
+        return code
+
+    async def wait_exit(self) -> int:
+        delay = 0.002
+        while (code := self.poll_exit()) is None:
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 0.05)
+        return code
+
+    def members(self) -> list[int] | None:
+        return _session_members(self.pid)
+
+    def _signal(self, sig: int) -> None:
+        # The group: safe on Linux because the unreaped leader pins its ID.
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(self.pid, sig)
+        # Members that left the group but not the session.
+        for pid in self.members() or ():
+            _signal_member(pid, self.pid, sig)
+
+    async def _settled(self, seconds: float) -> bool:
+        """True once the tree is verifiably empty within `seconds`."""
+
+        loop = asyncio.get_running_loop()
+        end = loop.time() + seconds
+        while True:
+            members = self.members()
+            if members == []:
+                return True
+            if members is None and self.poll_exit() is not None:
+                return False  # the leader is gone; the rest cannot be verified here
+            if loop.time() >= end:
+                return False
+            await asyncio.sleep(0.01)
+
+    async def _finish_now(self) -> str:
+        if self.members() == []:
+            status = "verified"
+        else:
+            self._signal(signal.SIGTERM)
+            if not await self._settled(_TERM_GRACE_SECONDS):
+                self._signal(signal.SIGKILL)
+                await self._settled(_KILL_WAIT_SECONDS)
+            members = self.members()
+            status = "unverified" if members is None else ("verified" if not members else "survivors")
+            if status == "survivors":
+                logger.error("process tree %d still has %d live member(s) after SIGKILL", self.pid, len(members))
+        await self._reap()
+        return status
+
+    async def _reap(self) -> None:
+        loop = asyncio.get_running_loop()
+        end = loop.time() + _KILL_WAIT_SECONDS
+        while self.poll_exit() is None:
+            if loop.time() >= end:
+                logger.error("process %d did not exit after SIGKILL; it is left to the OS", self.pid)
+                return
+            await asyncio.sleep(0.01)
+        if not self._reaped:
+            with contextlib.suppress(ChildProcessError):
+                os.waitpid(self.pid, 0)
+            self._reaped = True
+        self.process.returncode = self.exit_code
+
+    async def finish(self) -> str:
+        """End every live process of the tree, then reap the leader. Safe to
+        call more than once: the work is done once. Returns `verified` (the
+        tree is empty), `survivors` (something outlived SIGKILL) or
+        `unverified` (no way to enumerate the tree on this platform)."""
+
+        if self._finish is None:
+            self._finish = asyncio.ensure_future(self._finish_now())
+        return await asyncio.shield(self._finish)
+
+    async def finish_shielded(self) -> None:
+        try:
+            await self.finish()
         except asyncio.CancelledError:
-            await self._ensure_process_group_dead(process)
+            # Cancelled while cleaning up: finish anyway, then propagate.
+            assert self._finish is not None
+            await asyncio.gather(self._finish, return_exceptions=True)
             raise
 
-    async def _read_capped(self, stream: asyncio.StreamReader | None) -> tuple[str, bool]:
-        if stream is None:
-            return "", False
-        chunks: list[bytes] = []
-        total = 0
-        truncated = False
-        while True:
-            chunk = await stream.read(65536)
-            if not chunk:
-                break
-            if total >= self._max_output_bytes:
-                truncated = True
-                continue  # keep draining so the child is never blocked on a full pipe
-            take = min(len(chunk), self._max_output_bytes - total)
-            chunks.append(chunk[:take])
-            total += take
-            if take < len(chunk):
-                truncated = True
-        return b"".join(chunks).decode("utf-8", errors="replace"), truncated
 
-    @staticmethod
-    async def _safe_result(task: "asyncio.Future") -> tuple[str, bool]:
-        try:
-            return await task
-        except (asyncio.CancelledError, Exception):
-            return "", True
-
-    @staticmethod
-    async def _ensure_process_group_dead(process: asyncio.subprocess.Process) -> None:
-        if process.returncode is not None:
-            return
-        pid = process.pid
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(os.getpgid(pid), sig)
-            except (ProcessLookupError, PermissionError, OSError):
-                return
-            try:
-                await asyncio.wait_for(process.wait(), timeout=2.0)
-                return
-            except asyncio.TimeoutError:
-                continue
-
-
-__all__ = ["ConstrainedProcessExecutor", "ProcessOutcome", "argv_digest"]
+__all__ = ["LAUNCHER_PATH", "MANDATORY_RLIMITS", "ConstrainedProcessExecutor", "ProcessOutcome", "ProcessTree",
+           "argv_digest"]

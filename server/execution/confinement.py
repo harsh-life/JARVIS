@@ -10,8 +10,9 @@ through `server.net`. That is 09 §8's "a tool that ignores the helper" and
 10 §3's "any network mechanism", reached through an *authorized* call rather
 than a compromise. Hence this module.
 
-Two unprivileged Linux mechanisms, applied in the child between `fork` and
-`exec`, after `no_new_privs`:
+Two unprivileged Linux mechanisms, built here in the parent and applied by the
+launcher (`launcher.py`) in the child just before it `exec`s the target, after
+`no_new_privs` (no Python runs between `fork` and `exec`):
 
 * **Landlock** (`landlock(7)`): filesystem access is denied everywhere except
   read/execute on the system directories programs need, and read/write inside
@@ -68,7 +69,6 @@ _READ_WRITE_DEVICES = ("/dev/null",)
 # landlock(7) syscall numbers are the same on every architecture; the rest are not.
 _SYS_LANDLOCK_CREATE_RULESET = 444
 _SYS_LANDLOCK_ADD_RULE = 445
-_SYS_LANDLOCK_RESTRICT_SELF = 446
 _ARCHES = {
     # machine: (AUDIT_ARCH_*, socket, io_uring_setup, has_x32)
     "x86_64": (0xC000003E, 41, 425, True),
@@ -95,9 +95,6 @@ _NET_CONNECT_TCP = 1 << 1  # ABI 4
 _SCOPE_ABSTRACT_UNIX_SOCKET = 1 << 0  # ABI 6
 _SCOPE_SIGNAL = 1 << 1  # ABI 6
 
-_PR_SET_NO_NEW_PRIVS = 38
-_PR_SET_SECCOMP = 22
-_SECCOMP_MODE_FILTER = 2
 _SECCOMP_RET_ALLOW = 0x7FFF0000
 _SECCOMP_RET_ERRNO_EPERM = 0x00050000 | 1
 _X32_SYSCALL_BIT = 0x40000000
@@ -132,10 +129,6 @@ class _SockFilter(ctypes.Structure):
         ("jf", ctypes.c_uint8),
         ("k", ctypes.c_uint32),
     ]
-
-
-class _SockFprog(ctypes.Structure):
-    _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(_SockFilter))]
 
 
 def _libc() -> ctypes.CDLL:
@@ -203,28 +196,17 @@ def _seccomp_program(machine: str) -> ctypes.Array:
 
 @dataclass
 class ConfinementPlan:
-    """A ruleset built in the parent, applied in the child.
-
-    Everything that allocates or opens paths happens in the parent; the child
-    only makes four syscalls, so the work between `fork` and `exec` is minimal.
-    """
+    """A Landlock ruleset and a seccomp program, built in the parent and handed
+    to the launcher, which applies them (no_new_privs, landlock_restrict_self,
+    seccomp) and fails closed if any step fails."""
 
     ruleset_fd: int
     _program: ctypes.Array = field(repr=False)
-    _fprog: _SockFprog = field(repr=False)
 
-    def apply_in_child(self) -> None:
-        """Runs in the forked child, before `exec`. Any failure raises, which
-        makes `subprocess` abort the exec: an unconfined child never runs."""
+    def seccomp_filter(self) -> list[list[int]]:
+        """The BPF program as `[code, jt, jf, k]` rows for the launcher's spec."""
 
-        libc = _libc()
-        if libc.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
-            raise OSError(ctypes.get_errno(), "no_new_privs")
-        if libc.syscall(_SYS_LANDLOCK_RESTRICT_SELF, self.ruleset_fd, ctypes.c_uint32(0)) != 0:
-            raise OSError(ctypes.get_errno(), "landlock_restrict_self")
-        os.close(self.ruleset_fd)
-        if libc.prctl(_PR_SET_SECCOMP, _SECCOMP_MODE_FILTER, ctypes.byref(self._fprog), 0, 0) != 0:
-            raise OSError(ctypes.get_errno(), "seccomp")
+        return [[ins.code, ins.jt, ins.jf, ins.k] for ins in self._program]
 
     def close(self) -> None:
         try:
@@ -296,9 +278,7 @@ def build_plan(*, writable: str, read_only: Iterable[str] = ()) -> ConfinementPl
         os.close(ruleset_fd)
         raise
 
-    program = _seccomp_program(platform.machine())
-    fprog = _SockFprog(len(program), ctypes.cast(program, ctypes.POINTER(_SockFilter)))
-    return ConfinementPlan(ruleset_fd=ruleset_fd, _program=program, _fprog=fprog)
+    return ConfinementPlan(ruleset_fd=ruleset_fd, _program=_seccomp_program(platform.machine()))
 
 
 __all__ = [

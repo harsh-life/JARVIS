@@ -144,6 +144,76 @@ What confinement does **not** cover: CPU and memory (the rlimits do), a kernel
 exploit, and — like every in-process boundary here — a compromised server
 process itself (OD-A1).
 
+#### How a child is started (2026-11-27 hardening)
+
+No Python runs between `fork` and `exec`. `process.py` starts the **launcher**
+(`server/execution/launcher.py`) — a fresh, single-threaded interpreter
+(`<server python> -I -S -B launcher.py`) — through `subprocess` with no
+`preexec_fn`. The launcher reads a JSON spec from a pipe (absolute target,
+argv starting with it, env, limits, the Landlock ruleset fd and the seccomp
+program, all validated), applies the rlimits, then `no_new_privs`, Landlock
+and seccomp, reports what it enforced on a close-on-exec status pipe, and
+`execve`s the target. If a **mandatory** restriction cannot be applied the
+target is never executed (`sandbox_violation … nothing was run`). The old
+`preexec_fn` could deadlock a child forked while another server thread held a
+lock. The launcher is not setuid, takes no user input and is never run by
+anything but `process.py`; break-glass uses it too, without the kernel layer.
+
+#### Resource limits — per process, and what is *not* bounded
+
+| Limit | Value | Status |
+|---|---|---|
+| `RLIMIT_CPU` | wall-clock timeout + 5 s | **mandatory** |
+| `RLIMIT_AS` | 512 MiB | **mandatory on Linux**; macOS does not enforce it (reported `unavailable`) |
+| `RLIMIT_NOFILE` | 64 | **mandatory** |
+| `RLIMIT_FSIZE` | 64 MiB per file | **mandatory** |
+| `RLIMIT_NPROC` | 2048 | optional — it counts **every process of the server's UID**, so it is an account-wide fork-bomb backstop, never a per-execution limit |
+
+A requested value above the current hard limit is lowered to it (stricter,
+never looser). Each result reports `limits: {name: enforced|unavailable}`.
+
+**These are per-process limits. There is no aggregate budget for a process
+tree**: each descendant gets its own CPU seconds, address space and file
+allowance, and the number of descendants is bounded only by `RLIMIT_NPROC`
+(per UID). Every result says `aggregate_limits: not_enforced`. A tree is
+bounded by the wall-clock timeout and the tree kill below. Aggregate CPU,
+memory and process-count limits need a per-execution **cgroup v2** (a
+delegated subtree, `cgroup.kill`, `memory.max`, `pids.max`, `cpu.max`); that is
+**not implemented** — it requires the server to run with a delegated cgroup
+(systemd `Delegate=yes`) and has not been validated here. Until it is, do not
+rely on any per-execution CPU/memory/process budget beyond the per-process
+rlimits.
+
+#### Process trees
+
+The child starts its own session. After **every** ending — normal exit,
+timeout, cancellation, refused launch, unexpected error — every live process
+of the session is sent `SIGTERM`, then `SIGKILL` after 1 s; a background
+descendant does not survive because its parent exited first, and a
+descendant still holding the output pipes cannot hold the call open (0.5 s
+drain after the parent exits, then the tree is ended). On Linux the direct
+child is **not reaped** until this is done (`waitid(WNOWAIT)`), so its PID —
+which is the group and session ID — cannot be reused by an unrelated process
+while it is being signalled; members are enumerated from `/proc` by session
+(catching a `setpgid` escape) and signalled through pidfds; the result's
+`cleanup` is `verified` once the session is empty (`survivors` if something
+outlived `SIGKILL`, e.g. an uninterruptible process). Elsewhere (macOS — only
+break-glass runs can happen there) the tree is signalled without
+verification (`cleanup: unverified`).
+
+**Known limit:** a descendant that calls `setsid()` leaves the session and the
+group and is not reached. Landlock and seccomp do not prevent `setsid`. Only
+a cgroup contains that; see above.
+
+#### Output
+
+`max_output_bytes` is **one combined budget**: stdout keeps at most ¾ of it,
+stderr at most ¼ — a fixed, deterministic split, so the total retained never
+exceeds the budget however the streams interleave. Output beyond a stream's
+share is read and discarded (the child never blocks on a full pipe). Results
+carry `stdout_truncated`, `stderr_truncated`, `truncated` (either),
+`timed_out`, `exit_code` (`-1` on timeout), and the three limits.
+
 ### 5.1 Break-glass: unconfined execution for one task (20 §2, OD-EXEC-2)
 
 For recovery when confinement itself is in the way. It removes **only** the
