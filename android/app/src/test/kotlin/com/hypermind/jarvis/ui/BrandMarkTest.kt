@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.test.core.app.ApplicationProvider
-import com.hypermind.jarvis.BuildConfig
 import com.hypermind.jarvis.R
 import com.hypermind.jarvis.presentation.character.CharacterProfile
 import com.hypermind.jarvis.presentation.character.Expression
@@ -29,12 +28,12 @@ class BrandMarkTest {
     @Test
     fun `the brand mark is the built-in profile's satisfied image`() {
         val satisfied = CharacterProfile.BUILT_IN.assetFor(Expression.SATISFIED)
-        assertEquals("${CharacterProfile.ASSET_ROOT}/default/$satisfied", BuildConfig.BRAND_ASSET)
+        assertEquals("${CharacterProfile.ASSET_ROOT}/default/$satisfied", context.getString(R.string.brand_asset))
     }
 
     @Test
     fun `the header draws the original byte for byte - not a copy or a redrawing`() {
-        val packaged = context.assets.open(BuildConfig.BRAND_ASSET).use { it.readBytes() }
+        val packaged = context.assets.open(context.getString(R.string.brand_asset)).use { it.readBytes() }
         assertArrayEquals(characterDir.resolve("default/satisfied.png").readBytes(), packaged)
     }
 
@@ -42,7 +41,7 @@ class BrandMarkTest {
     fun `the frame holds the whole hood and face`() {
         // The sticker's opaque extent around the hood in satisfied.png (843 x 1264): x 161..680,
         // from the top of the hood (y 241) down past the raised fists (y 660).
-        val frame = BrandFrame.SOURCE
+        val frame = BrandFrame.source(context.resources)
         assertTrue(frame.left <= 161 && frame.left + frame.side >= 681)
         assertTrue(frame.top <= 241 && frame.top + frame.side >= 660)
         assertNotNull(frame.visiblePart(843, 1264, 120f))

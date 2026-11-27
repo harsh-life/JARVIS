@@ -1,5 +1,6 @@
 package com.hypermind.jarvis.ui
 
+import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Canvas
@@ -29,7 +30,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import com.hypermind.jarvis.BuildConfig
+import com.hypermind.jarvis.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -37,8 +38,8 @@ import java.io.IOException
 /**
  * JARVIS's brand mark: the satisfied face, the owner's original artwork
  * (`assets/character/default/satisfied.png`), framed as a launcher shows the
- * app icon (BuildConfig.BRAND_FRAME_*, derived beside renderBrandIcons in
- * app/build.gradle.kts), on the launcher icon's navy disc.
+ * app icon (the `brand_*` resources that renderBrandIcons generates in
+ * app/build.gradle.kts beside the icons), on the launcher icon's navy disc.
  *
  * It is the logo, not the character: it never changes with the character's
  * expression and reads nothing the character reads. The character portrait
@@ -62,16 +63,19 @@ fun BrandBadge(
     size: Dp,
     modifier: Modifier = Modifier,
 ) {
-    val assets = LocalContext.current.assets
+    val context = LocalContext.current
+    val assets = context.assets
+    val asset = remember { context.getString(R.string.brand_asset) }
+    val source = remember { BrandFrame.source(context.resources) }
     val targetPx = with(LocalDensity.current) { size.roundToPx() }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(targetPx) {
         bitmap =
             withContext(Dispatchers.IO) {
                 try {
-                    val sample = BrandFrame.SOURCE.sampleSize(targetPx)
+                    val sample = source.sampleSize(targetPx)
                     val options = BitmapFactory.Options().apply { inSampleSize = sample }
-                    assets.open(BuildConfig.BRAND_ASSET).use { BitmapFactory.decodeStream(it, null, options) }
+                    assets.open(asset).use { BitmapFactory.decodeStream(it, null, options) }
                 } catch (ignored: IOException) {
                     null
                 }
@@ -80,8 +84,8 @@ fun BrandBadge(
     Canvas(modifier = modifier.size(size).clip(CircleShape)) {
         drawRect(BrandBackground)
         val image = bitmap ?: return@Canvas
-        val sample = BrandFrame.SOURCE.sampleSize(targetPx)
-        val frame = BrandFrame.SOURCE.scaledBy(sample)
+        val sample = source.sampleSize(targetPx)
+        val frame = source.scaledBy(sample)
         val part = frame.visiblePart(image.width, image.height, this.size.width) ?: return@Canvas
         drawImage(
             image.asImageBitmap(),
@@ -155,6 +159,12 @@ data class BrandFrame(
     )
 
     companion object {
-        val SOURCE = BrandFrame(BuildConfig.BRAND_FRAME_LEFT, BuildConfig.BRAND_FRAME_TOP, BuildConfig.BRAND_FRAME_SIDE)
+        /** The badge's frame on the artwork, from the resources renderBrandIcons generates. */
+        fun source(res: Resources): BrandFrame =
+            BrandFrame(
+                res.getInteger(R.integer.brand_frame_left),
+                res.getInteger(R.integer.brand_frame_top),
+                res.getInteger(R.integer.brand_frame_side),
+            )
     }
 }
